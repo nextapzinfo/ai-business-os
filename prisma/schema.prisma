@@ -1,10 +1,12 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
 }
 
 enum Role {
@@ -70,7 +72,26 @@ model Document {
   status         String       @default("PENDING") // PENDING, PROCESSED, FAILED
   createdAt      DateTime     @default(now())
 
+  chunks DocumentChunk[]
+
   @@index([organizationId])
+}
+
+// RAG: chunked + embedded pieces of each Document, used for similarity search.
+// The `embedding` column is written/read via raw SQL ($executeRaw/$queryRaw) since
+// Prisma Client can't set or select Unsupported("vector") fields directly.
+model DocumentChunk {
+  id             String   @id @default(cuid())
+  organizationId String
+  documentId     String
+  document       Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  content        String
+  chunkIndex     Int
+  embedding      Unsupported("vector(1024)")?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([documentId])
 }
 
 model Conversation {
