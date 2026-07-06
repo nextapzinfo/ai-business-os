@@ -77,16 +77,14 @@ async function askQuestion(formData: FormData) {
   const queryEmbedding = await embedText(question, "query");
   const vectorLiteral = toVectorLiteral(queryEmbedding);
 
-  const results = await prisma.$queryRaw
-    { content: string; documentTitle: string }[]
-  >`
+  const results = (await prisma.$queryRaw`
     SELECT dc.content as content, d.title as "documentTitle"
     FROM "DocumentChunk" dc
     JOIN "Document" d ON d.id = dc."documentId"
     WHERE dc."organizationId" = ${user.organizationId}
     ORDER BY dc.embedding <=> ${vectorLiteral}::vector ASC
     LIMIT 5
-  `;
+  `) as { content: string; documentTitle: string }[];
 
   let answer: string;
   if (results.length === 0) {
