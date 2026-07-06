@@ -13,7 +13,9 @@ export async function logAudit(params: {
       organizationId: params.organizationId,
       userId: params.userId,
       action: params.action,
-      metadata: params.metadata,
+      // Prisma's JSON field type doesn't accept an explicit `undefined` value —
+      // omit the key entirely when no metadata was passed, instead of setting it to undefined.
+      ...(params.metadata !== undefined ? { metadata: params.metadata } : {}),
     },
   });
 }
