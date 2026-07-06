@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 
 // Compliance Notes requires access/action logs for Tax/Law clients from day 1.
 // Call this from every server action that creates/modifies/views sensitive data.
@@ -8,14 +9,17 @@ export async function logAudit(params: {
   action: string;
   metadata?: Record<string, unknown>;
 }) {
-  await prisma.auditLog.create({
-    data: {
-      organizationId: params.organizationId,
-      userId: params.userId,
-      action: params.action,
-      // Prisma's JSON field type doesn't accept an explicit `undefined` value —
-      // omit the key entirely when no metadata was passed, instead of setting it to undefined.
-      ...(params.metadata !== undefined ? { metadata: params.metadata } : {}),
-    },
-  });
+  const data: Prisma.AuditLogUncheckedCreateInput = {
+    organizationId: params.organizationId,
+    userId: params.userId,
+    action: params.action,
+  };
+
+  // Assign metadata only when provided — Prisma's JSON field type doesn't
+  // accept an explicit `undefined` value, so the key must be left unset instead.
+  if (params.metadata !== undefined) {
+    data.metadata = params.metadata as Prisma.InputJsonValue;
+  }
+
+  await prisma.auditLog.create({ data });
 }
