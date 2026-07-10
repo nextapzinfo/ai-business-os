@@ -1,8 +1,13 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import SignOutButton from "@/components/SignOutButton";
 
-const navItems = [
+// `verticals: undefined` means "show for every vertical" (core engine features).
+// Tag a nav item with specific verticals (e.g. ["RETAIL"]) once a feature only
+// applies to that business type — the Super Admin panel (Phase 8) will manage
+// which vertical each Organization is, this just reads that one field.
+const navItems: { href: string; label: string; verticals?: string[] }[] = [
   { href: "/dashboard", label: "Overview" },
   { href: "/dashboard/clients", label: "Clients" },
   { href: "/dashboard/conversations", label: "Conversations" },
@@ -19,6 +24,20 @@ export default async function DashboardLayout({
 }) {
   const session = await getServerSession(authOptions);
 
+  let vertical = "RETAIL";
+  const organizationId = (session?.user as { organizationId?: string } | undefined)?.organizationId;
+  if (organizationId) {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { vertical: true },
+    });
+    if (org?.vertical) vertical = org.vertical;
+  }
+
+  const visibleNavItems = navItems.filter(
+    (item) => !item.verticals || item.verticals.includes(vertical)
+  );
+
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
       <aside
@@ -33,7 +52,7 @@ export default async function DashboardLayout({
       >
         <h2 style={{ fontSize: 18, marginBottom: 24 }}>AI Business OS</h2>
         <nav style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <a key={item.href} href={item.href}>
               {item.label}
             </a>
