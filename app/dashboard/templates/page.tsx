@@ -201,6 +201,19 @@ export default async function TemplatesPage() {
               </td>
             </tr>
           ))}
+          {templates.some((t) => t.status === "REJECTED" && t.rejectionReason) && (
+            <tr>
+              <td style={{ ...tdStyle, fontSize: 12, color: "#991b1b" }} colSpan={6}>
+                {templates
+                  .filter((t) => t.status === "REJECTED" && t.rejectionReason)
+                  .map((t) => (
+                    <div key={t.id} style={{ marginBottom: 4 }}>
+                      <strong>{t.name}:</strong> {t.rejectionReason}
+                    </div>
+                  ))}
+              </td>
+            </tr>
+          )}
           {templates.length === 0 && (
             <tr>
               <td style={tdStyle} colSpan={6}>
