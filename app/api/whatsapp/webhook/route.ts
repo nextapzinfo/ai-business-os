@@ -1,0 +1,128 @@
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { embedText, toVectorLiteral } from "@/lib/embeddings";
+import { askAI } from "@/lib/llm";
+import { sendWhatsAppMessage } from "@/lib/whatsapp";
+import { logAudit } from "@/lib/audit";
+
+// Meta calls this once when the webhook URL is configured, to verify ownership.
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const mode = searchParams.get("hub.mode");
+  const token = searchParams.get("hub.verify_token");
+  const challenge = searchParams.get("hub.challenge");
+
+  if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+    return new NextResponse(challenge, { status: 200 });
+  }
+
+  return new NextResponse("Forbidden", { status: 403 });
+}
+
+// Meta calls this every time a message (or status update) happens on the connected number.
+export async function POST(req: NextRequest) {
+  const body = await req.json();
+
+  try {
+    const entry = body.entry?.[0];
+    const change = entry?.changes?.[0];
+    const value = change?.value;
+    const phoneNumberId = value?.metadata?.phone_number_id;
+    const message = value?.messages?.[0];
+
+    // Ignore anything that isn't an inbound text message (delivery/read status updates, etc.)
+    if (!message || message.type !== "text" || !phoneNumberId) {
+      return NextResponse.json({ status: "ignored" });
+    }
+
+    const from = message.from as string; // sender's WhatsApp number
+    const text = message.text.body as string;
+    const contactName = value.contacts?.[0]?.profile?.name ?? from;
+
+    const organization = await prisma.organization.findUnique({
+      where: { whatsappPhoneNumberId: phoneNumberId },
+    });
+
+    if (!organization) {
+      console.error("No organization matches WhatsApp phone_number_id:", phoneNumberId);
+      return NextResponse.json({ status: "no-org" });
+    }
+
+    let client = await prisma.client.findFirst({
+      where: { organizationId: organization.id, phone: from },
+    });
+    if (!client) {
+      client = await prisma.client.create({
+        data: {
+          organizationId: organization.id,
+          name: contactName,
+          phone: from,
+        },
+      });
+    }
+
+    let conversation = await prisma.conversation.findFirst({
+      where: {
+        organizationId: organization.id,
+        clientId: client.id,
+        channel: "WHATSAPP",
+        status: "OPEN",
+      },
+    });
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          organizationId: organization.id,
+          clientId: client.id,
+          channel: "WHATSAPP",
+          status: "OPEN",
+        },
+      });
+    }
+
+    await prisma.message.create({
+      data: { conversationId: conversation.id, sender: "CLIENT", content: text },
+    });
+
+    const queryEmbedding = await embedText(text, "query");
+    const vectorLiteral = toVectorLiteral(queryEmbedding);
+
+    const results = (await prisma.$queryRaw`
+      SELECT dc.content as content, d.title as "documentTitle"
+      FROM "DocumentChunk" dc
+      JOIN "Document" d ON d.id = dc."documentId"
+      WHERE dc."organizationId" = ${organization.id}
+      ORDER BY dc.embedding <=> ${vectorLiteral}::vector ASC
+      LIMIT 5
+    `) as { content: string; documentTitle: string }[];
+
+    let answer: string;
+    if (results.length === 0) {
+      answer =
+        "Thanks for your message — we don't have an answer ready for that yet, our team will get back to you shortly.";
+    } else {
+      answer = await askAI(
+        text,
+        results.map((r) => ({ title: r.documentTitle, content: r.content }))
+      );
+    }
+
+    await prisma.message.create({
+      data: { conversationId: conversation.id, sender: "AI", content: answer },
+    });
+
+    await sendWhatsAppMessage(from, answer);
+
+    await logAudit({
+      organizationId: organization.id,
+      action: "WHATSAPP_MESSAGE_ANSWERED",
+      metadata: { clientId: client.id, question: text },
+    });
+
+    return NextResponse.json({ status: "ok" });
+  } catch (err) {
+    console.error("WhatsApp webhook processing failed:", err);
+    // Always return 200 so Meta doesn't retry-storm us over our own bugs.
+    return NextResponse.json({ status: "error" });
+  }
+}
