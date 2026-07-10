@@ -106,7 +106,10 @@ export async function createMetaMessageTemplate(params: {
   const data = await res.json();
 
   if (!res.ok) {
-    const errMessage = data?.error?.message || JSON.stringify(data);
+    const e = data?.error;
+    const errMessage = e
+      ? `${e.message || ""} ${e.error_user_title || ""} ${e.error_user_msg || ""} (subcode ${e.error_subcode ?? "n/a"}, fbtrace_id ${e.fbtrace_id ?? "n/a"})`.trim()
+      : JSON.stringify(data);
     throw new Error(`Meta template creation failed: ${res.status} ${errMessage}`);
   }
 
