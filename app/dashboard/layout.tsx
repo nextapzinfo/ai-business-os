@@ -8,6 +8,8 @@ const navItems = [
   { href: "/dashboard/conversations", label: "Conversations" },
   { href: "/dashboard/documents", label: "Knowledge Base" },
   { href: "/dashboard/reminders", label: "Reminders" },
+  { href: "/dashboard/templates", label: "Templates" },
+  { href: "/dashboard/broadcasts", label: "Broadcasts" },
 ];
 
 export default async function DashboardLayout({

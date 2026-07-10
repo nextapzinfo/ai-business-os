@@ -17,19 +17,21 @@ enum Role {
 
 // Every business table carries organizationId from day 1 (multi-tenant by design)
 model Organization {
-  id                    String   @id @default(cuid())
-  name                  String
-  slug                  String   @unique
-  whatsappPhoneNumberId String?  @unique
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                     String   @id @default(cuid())
+  name                   String
+  slug                   String   @unique
+  whatsappPhoneNumberId  String?  @unique
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
-  users         User[]
-  clients       Client[]
-  documents     Document[]
-  conversations Conversation[]
-  reminders     Reminder[]
-  auditLogs     AuditLog[]
+  users            User[]
+  clients          Client[]
+  documents        Document[]
+  conversations    Conversation[]
+  reminders        Reminder[]
+  auditLogs        AuditLog[]
+  messageTemplates MessageTemplate[]
+  broadcasts       Broadcast[]
 }
 
 model User {
@@ -57,8 +59,9 @@ model Client {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  conversations Conversation[]
-  reminders     Reminder[]
+  conversations        Conversation[]
+  reminders            Reminder[]
+  broadcastRecipients  BroadcastRecipient[]
 
   @@index([organizationId])
 }
@@ -146,4 +149,56 @@ model AuditLog {
   createdAt      DateTime     @default(now())
 
   @@index([organizationId])
+}
+
+// WhatsApp message templates — must be submitted to Meta and approved before
+// they can be used to message a customer outside the 24-hour service window.
+model MessageTemplate {
+  id               String       @id @default(cuid())
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id])
+  name             String // internal label, e.g. "Eid Offer"
+  metaTemplateName String // exact name registered with Meta (lowercase_snake_case)
+  metaTemplateId   String? // id Meta assigns after creation, used to poll approval status
+  category         String // MARKETING, UTILITY, AUTHENTICATION
+  language         String       @default("bn")
+  bodyText         String // template text, e.g. "Hi {{1}}, ..." — {{1}} etc are variables
+  status           String       @default("PENDING") // PENDING, APPROVED, REJECTED
+  rejectionReason  String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  broadcasts Broadcast[]
+
+  @@index([organizationId])
+}
+
+// A single bulk-send job: one approved template sent to a list of clients.
+model Broadcast {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  templateId     String
+  template       MessageTemplate @relation(fields: [templateId], references: [id])
+  name           String
+  status         String          @default("DRAFT") // DRAFT, SENDING, SENT, FAILED
+  createdAt      DateTime        @default(now())
+
+  recipients BroadcastRecipient[]
+
+  @@index([organizationId])
+}
+
+// Per-client delivery status within a broadcast.
+model BroadcastRecipient {
+  id           String    @id @default(cuid())
+  broadcastId  String
+  broadcast    Broadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+  clientId     String
+  client       Client    @relation(fields: [clientId], references: [id])
+  status       String    @default("PENDING") // PENDING, SENT, FAILED
+  errorMessage String?
+  sentAt       DateTime?
+
+  @@index([broadcastId])
 }
