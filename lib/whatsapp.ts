@@ -75,6 +75,16 @@ export async function sendWhatsAppTemplateMessage(
   }
 }
 
+// Counts {{1}}, {{2}}, ... placeholders in a template body and builds the
+// generic example values Meta requires alongside any templated body text.
+function buildBodyExample(bodyText: string): string[] | null {
+  const matches = [...bodyText.matchAll(/\{\{(\d+)\}\}/g)];
+  if (matches.length === 0) return null;
+  const maxIndex = Math.max(...matches.map((m) => parseInt(m[1], 10)));
+  const sampleWords = ["Karim", "Rahim", "Dhaka", "50", "Monday"];
+  return Array.from({ length: maxIndex }, (_, i) => sampleWords[i % sampleWords.length]);
+}
+
 // Submits a new message template to Meta for approval. Approval usually takes
 // minutes to a couple of days; status is APPROVED / PENDING / REJECTED.
 export async function createMetaMessageTemplate(params: {
@@ -89,6 +99,12 @@ export async function createMetaMessageTemplate(params: {
     throw new Error("WHATSAPP_ACCESS_TOKEN or WHATSAPP_BUSINESS_ACCOUNT_ID is not set");
   }
 
+  const example = buildBodyExample(params.bodyText);
+  const bodyComponent: Record<string, unknown> = { type: "BODY", text: params.bodyText };
+  if (example) {
+    bodyComponent.example = { body_text: [example] };
+  }
+
   const res = await fetch(`${WHATSAPP_API_BASE}/${wabaId}/message_templates`, {
     method: "POST",
     headers: {
@@ -99,7 +115,7 @@ export async function createMetaMessageTemplate(params: {
       name: params.metaTemplateName,
       category: params.category,
       language: params.language,
-      components: [{ type: "BODY", text: params.bodyText }],
+      components: [bodyComponent],
     }),
   });
 
