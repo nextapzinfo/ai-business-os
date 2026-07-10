@@ -21,6 +21,7 @@ model Organization {
   name                   String
   slug                   String   @unique
   whatsappPhoneNumberId  String?  @unique
+  vertical               String   @default("RETAIL") // RETAIL, CA, HEALTH, EDUCATION, REAL_ESTATE — drives which dashboard tabs/features show
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
