@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit";
 import { chunkText } from "@/lib/chunk";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import { revalidatePath } from "next/cache";
+import { put } from "@vercel/blob";
 
 export type AgentProfileData = {
   businessName: string;
@@ -15,6 +16,7 @@ export type AgentProfileData = {
   languageStyle: string;
   skillOrderConfirm: boolean;
   skillReminders: boolean;
+  skillSendQr: boolean;
 };
 
 export async function saveAgentProfile(data: AgentProfileData) {
@@ -124,6 +126,43 @@ export async function deleteKnowledgeDocument(formData: FormData) {
     userId: user.id,
     action: "DOCUMENT_DELETED",
     metadata: { documentId, title: document.title },
+  });
+
+  revalidatePath("/dashboard/agent");
+}
+
+// Payment QR — this is a fixed image the owner uploads once (their real UPI/payment
+// QR); the AI never generates one, it just re-sends this exact image when a
+// customer asks about payment (see the skillSendQr check in the WhatsApp webhook).
+export async function uploadQrCode(formData: FormData) {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const file = formData.get("qr") as File | null;
+  if (!file || file.size === 0) return;
+
+  let blobUrl: string;
+  try {
+    const blob = await put(`qr/${user.organizationId}-${file.name}`, file, {
+      access: "public",
+      addRandomSuffix: true,
+    });
+    blobUrl = blob.url;
+  } catch (err) {
+    console.error("QR code upload failed:", err);
+    return;
+  }
+
+  await prisma.agentProfile.upsert({
+    where: { organizationId: user.organizationId },
+    update: { qrCodeUrl: blobUrl },
+    create: { organizationId: user.organizationId, qrCodeUrl: blobUrl },
+  });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "QR_CODE_UPLOADED",
   });
 
   revalidatePath("/dashboard/agent");

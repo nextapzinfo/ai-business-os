@@ -28,6 +28,7 @@ export default async function AgentStudioPage() {
     languageStyle: profile?.languageStyle ?? "mixed",
     skillOrderConfirm: profile?.skillOrderConfirm ?? false,
     skillReminders: profile?.skillReminders ?? false,
+    skillSendQr: profile?.skillSendQr ?? false,
   };
 
   const initialDocuments = documents.map((d) => ({
@@ -49,7 +50,11 @@ export default async function AgentStudioPage() {
       </div>
 
       <div className="mt-5 flex-1">
-        <AgentStudioClient initialProfile={initialProfile} initialDocuments={initialDocuments} />
+        <AgentStudioClient
+          initialProfile={initialProfile}
+          initialDocuments={initialDocuments}
+          qrCodeUrl={profile?.qrCodeUrl ?? null}
+        />
       </div>
     </div>
   );
