@@ -41,28 +41,11 @@ export default async function ConversationsPage() {
           {conversations.map((c) => (
             <tr key={c.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
               <td style={tdStyle} colSpan={4}>
-                
-                  href={`/dashboard/conversations/${c.id}`}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr 1fr 3fr",
-                    gap: 12,
-                    color: "inherit",
-                    textDecoration: "none",
-                  }}
-                >
+                <a href={`/dashboard/conversations/${c.id}`} style={rowLinkStyle}>
                   <span>{c.client.name}</span>
                   <span>{c.channel}</span>
                   <span>{c.status}</span>
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {c.messages[0]?.content ?? "-"}
-                  </span>
+                  <span style={lastMessageStyle}>{c.messages[0]?.content ?? "-"}</span>
                 </a>
               </td>
             </tr>
@@ -82,3 +65,5 @@ export default async function ConversationsPage() {
 
 const thStyle = { padding: "10px 12px", fontSize: 13, color: "#666" };
 const tdStyle = { padding: "10px 12px", fontSize: 14 };
+const rowLinkStyle = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 3fr", gap: 12, color: "inherit", textDecoration: "none" };
+const lastMessageStyle = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
