@@ -34,6 +34,25 @@ model Organization {
   messageTemplates MessageTemplate[]
   broadcasts       Broadcast[]
   products         Product[]
+  agentProfile     AgentProfile?
+}
+
+// Configures how the WhatsApp AI presents itself and behaves — replaces the
+// old hardcoded "Tax/Law firm" system prompt with per-organization settings,
+// editable from the Agent Studio dashboard page.
+model AgentProfile {
+  id                  String       @id @default(cuid())
+  organizationId      String       @unique
+  organization        Organization @relation(fields: [organizationId], references: [id])
+  businessName         String?
+  greetingMessage      String?
+  businessDescription  String?
+  tone                 String   @default("friendly") // friendly, formal, casual
+  languageStyle        String   @default("mixed") // bn, en, mixed (Bengali/English/Banglish mix)
+  skillOrderConfirm    Boolean  @default(false) // placeholder toggle — order-confirmation automation not yet built
+  skillReminders       Boolean  @default(false) // placeholder toggle — auto-reminder automation not yet built
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }
 
 model User {
