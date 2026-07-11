@@ -134,6 +134,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: "ai-paused" });
     }
 
+    // Payment QR skill: a lightweight keyword trigger (not full AI function-calling
+    // yet) — if enabled and a QR image has been uploaded in Agent Studio, send that
+    // exact fixed image whenever the customer's message looks payment-related.
+    const QR_TRIGGER_REGEX = /\b(qr|payment|pay|upi)\b|টাকা|পেমেন্ট|কিউআর|পে\s*করব/i;
+    if (agentProfile?.skillSendQr && agentProfile.qrCodeUrl && QR_TRIGGER_REGEX.test(text)) {
+      try {
+        await sendWhatsAppImageMessage(from, agentProfile.qrCodeUrl, "Payment QR Code");
+        const qrCaption = "এই QR কোড স্ক্যান করে পেমেন্ট করতে পারেন।";
+        await sendWhatsAppMessage(from, qrCaption);
+        await prisma.message.create({
+          data: { conversationId: conversation.id, sender: "AI", content: `[Sent payment QR code] ${qrCaption}` },
+        });
+        await logAudit({
+          organizationId: organization.id,
+          action: "WHATSAPP_QR_SENT",
+          metadata: { clientId: client.id },
+        });
+        return NextResponse.json({ status: "qr-sent" });
+      } catch (err) {
+        console.error("QR send failed:", err);
+        // fall through to the normal RAG answer if sending the QR fails
+      }
+    }
+
     const queryEmbedding = await embedText(text, "query");
     const vectorLiteral = toVectorLiteral(queryEmbedding);
 
