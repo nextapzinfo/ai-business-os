@@ -49,6 +49,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: "no-org" });
     }
 
+    const agentProfile = await prisma.agentProfile.findUnique({
+      where: { organizationId: organization.id },
+    });
+
     let client = await prisma.client.findFirst({
       where: { organizationId: organization.id, phone: from },
     });
@@ -88,6 +92,7 @@ export async function POST(req: NextRequest) {
         status: "OPEN",
       },
     });
+    let isNewConversation = false;
     if (!conversation) {
       conversation = await prisma.conversation.create({
         data: {
@@ -97,11 +102,25 @@ export async function POST(req: NextRequest) {
           status: "OPEN",
         },
       });
+      isNewConversation = true;
     }
 
     await prisma.message.create({
       data: { conversationId: conversation.id, sender: "CLIENT", content: text },
     });
+
+    // First message of a brand-new conversation: send the configured greeting
+    // (if any) word-for-word before the AI's normal RAG-based answer.
+    if (isNewConversation && agentProfile?.greetingMessage?.trim()) {
+      try {
+        await sendWhatsAppMessage(from, agentProfile.greetingMessage.trim());
+        await prisma.message.create({
+          data: { conversationId: conversation.id, sender: "AI", content: agentProfile.greetingMessage.trim() },
+        });
+      } catch (err) {
+        console.error("Greeting message send failed:", err);
+      }
+    }
 
     // If staff has "intervened" on this conversation (sent a manual reply), the AI
     // stays silent so it doesn't talk over a human agent — staff must resume it
@@ -135,7 +154,8 @@ export async function POST(req: NextRequest) {
     } else {
       answer = await askAI(
         text,
-        results.map((r) => ({ title: r.documentTitle, content: r.content }))
+        results.map((r) => ({ title: r.documentTitle, content: r.content })),
+        agentProfile ?? undefined
       );
     }
 
