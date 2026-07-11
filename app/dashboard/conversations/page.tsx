@@ -4,6 +4,16 @@ import AutoRefresh from "@/components/AutoRefresh";
 
 export const dynamic = "force-dynamic";
 
+function initialOf(name: string) {
+  return (name?.trim()?.[0] ?? "?").toUpperCase();
+}
+
+const AVATAR_COLORS = ["bg-emerald-500", "bg-sky-500", "bg-amber-500", "bg-violet-500", "bg-rose-500"];
+function avatarColor(seed: string) {
+  const idx = seed.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[idx];
+}
+
 export default async function ConversationsPage() {
   const user = await getCurrentUser();
   if (!user) return null;
@@ -20,54 +30,42 @@ export default async function ConversationsPage() {
   return (
     <div>
       <AutoRefresh intervalMs={8000} />
-      <h1>Conversations</h1>
-      <p style={{ color: "#666", fontSize: 14 }}>
-        Click any row to open the full message thread and reply manually.
-      </p>
+      <h1 className="text-xl font-semibold text-gray-900">Conversations</h1>
+      <p className="mt-1 text-sm text-gray-500">Click any conversation to open the full thread and reply manually.</p>
 
-      <table
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          background: "#fff",
-          marginTop: 16,
-        }}
-      >
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e5e5" }}>
-            <th style={thStyle}>Client</th>
-            <th style={thStyle}>Channel</th>
-            <th style={thStyle}>Status</th>
-            <th style={thStyle}>Last Message</th>
-          </tr>
-        </thead>
-        <tbody>
-          {conversations.map((c) => (
-            <tr key={c.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-              <td style={tdStyle} colSpan={4}>
-                <a href={`/dashboard/conversations/${c.id}`} style={rowLinkStyle}>
-                  <span>{c.client.name}</span>
-                  <span>{c.channel}</span>
-                  <span>{c.status}</span>
-                  <span style={lastMessageStyle}>{c.messages[0]?.content ?? "-"}</span>
-                </a>
-              </td>
-            </tr>
-          ))}
-          {conversations.length === 0 && (
-            <tr>
-              <td style={tdStyle} colSpan={4}>
-                No conversations yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      <div className="mt-4 divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-200 bg-white">
+        {conversations.map((c) => (
+          <a
+            key={c.id}
+            href={`/dashboard/conversations/${c.id}`}
+            className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-gray-50"
+          >
+            <div className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white ${avatarColor(c.client.name)}`}>
+              {initialOf(c.client.name)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-medium text-gray-900">{c.client.name}</span>
+                <span className="flex-shrink-0 text-xs text-gray-400">{c.channel}</span>
+              </div>
+              <p className="truncate text-sm text-gray-500">{c.messages[0]?.content ?? "No messages yet"}</p>
+            </div>
+            <div className="flex flex-shrink-0 flex-col items-end gap-1">
+              <span
+                className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                  c.aiPaused ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+                }`}
+              >
+                {c.aiPaused ? "Staff Handling" : "AI Active"}
+              </span>
+              <span className="text-xs text-gray-400">{c.status}</span>
+            </div>
+          </a>
+        ))}
+        {conversations.length === 0 && (
+          <p className="px-4 py-6 text-sm text-gray-500">No conversations yet.</p>
+        )}
+      </div>
     </div>
   );
 }
-
-const thStyle = { padding: "10px 12px", fontSize: 13, color: "#666" };
-const tdStyle = { padding: "10px 12px", fontSize: 14 };
-const rowLinkStyle = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 3fr", gap: 12, color: "inherit", textDecoration: "none" };
-const lastMessageStyle = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
