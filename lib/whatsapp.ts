@@ -27,6 +27,42 @@ export async function sendWhatsAppMessage(to: string, text: string): Promise<voi
   }
 }
 
+// Sends a product photo (by public image URL) with an optional caption.
+// Used when a RAG-matched answer traces back to a Product with an imageUrl.
+export async function sendWhatsAppImageMessage(
+  to: string,
+  imageUrl: string,
+  caption?: string
+): Promise<void> {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!accessToken || !phoneNumberId) {
+    throw new Error("WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID is not set");
+  }
+
+  const res = await fetch(`${WHATSAPP_API_BASE}/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "image",
+      image: {
+        link: imageUrl,
+        ...(caption ? { caption } : {}),
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`WhatsApp image send failed: ${res.status} ${errText}`);
+  }
+}
+
 // Sends an already-Meta-approved template message. Required for messaging a
 // customer outside the 24-hour service window (e.g. bulk broadcasts).
 export async function sendWhatsAppTemplateMessage(

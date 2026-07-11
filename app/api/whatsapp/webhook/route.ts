@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import { askAI } from "@/lib/llm";
-import { sendWhatsAppMessage } from "@/lib/whatsapp";
+import { sendWhatsAppMessage, sendWhatsAppImageMessage } from "@/lib/whatsapp";
 import { logAudit } from "@/lib/audit";
+import { appendSheetRow } from "@/lib/googleSheets";
 
 // Meta calls this once when the webhook URL is configured, to verify ownership.
 export async function GET(req: NextRequest) {
@@ -59,6 +60,24 @@ export async function POST(req: NextRequest) {
           phone: from,
         },
       });
+
+      // Log every brand-new WhatsApp customer to a Google Sheet, if configured,
+      // so Banglar Doi always has an up-to-date customer log in a format they
+      // already use (optional — silently skipped if the env vars aren't set).
+      const newCustomersSheetId = process.env.NEW_CUSTOMERS_SHEET_ID;
+      const newCustomersSheetRange = process.env.NEW_CUSTOMERS_SHEET_RANGE;
+      if (newCustomersSheetId && newCustomersSheetRange) {
+        try {
+          await appendSheetRow(newCustomersSheetId, newCustomersSheetRange, [
+            contactName,
+            from,
+            "WhatsApp",
+            new Date().toISOString(),
+          ]);
+        } catch (err) {
+          console.error("New customer Sheet append failed:", err);
+        }
+      }
     }
 
     let conversation = await prisma.conversation.findFirst({
@@ -88,13 +107,13 @@ export async function POST(req: NextRequest) {
     const vectorLiteral = toVectorLiteral(queryEmbedding);
 
     const results = (await prisma.$queryRaw`
-      SELECT dc.content as content, d.title as "documentTitle"
+      SELECT dc.content as content, d.title as "documentTitle", d.id as "documentId"
       FROM "DocumentChunk" dc
       JOIN "Document" d ON d.id = dc."documentId"
       WHERE dc."organizationId" = ${organization.id}
       ORDER BY dc.embedding <=> ${vectorLiteral}::vector ASC
       LIMIT 5
-    `) as { content: string; documentTitle: string }[];
+    `) as { content: string; documentTitle: string; documentId: string }[];
 
     let answer: string;
     if (results.length === 0) {
@@ -112,6 +131,20 @@ export async function POST(req: NextRequest) {
     });
 
     await sendWhatsAppMessage(from, answer);
+
+    // If the top-matching source is a Retail Product with a photo, send it too.
+    if (results.length > 0) {
+      try {
+        const product = await prisma.product.findUnique({
+          where: { documentId: results[0].documentId },
+        });
+        if (product?.imageUrl) {
+          await sendWhatsAppImageMessage(from, product.imageUrl, product.name);
+        }
+      } catch (err) {
+        console.error("Product image send failed:", err);
+      }
+    }
 
     await logAudit({
       organizationId: organization.id,

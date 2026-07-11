@@ -33,6 +33,7 @@ model Organization {
   auditLogs        AuditLog[]
   messageTemplates MessageTemplate[]
   broadcasts       Broadcast[]
+  products         Product[]
 }
 
 model User {
@@ -77,7 +78,8 @@ model Document {
   status         String       @default("PENDING") // PENDING, PROCESSED, FAILED
   createdAt      DateTime     @default(now())
 
-  chunks DocumentChunk[]
+  chunks  DocumentChunk[]
+  product Product? // set when this Document was auto-created from a Product Sheet import
 
   @@index([organizationId])
 }
@@ -202,4 +204,25 @@ model BroadcastRecipient {
   sentAt       DateTime?
 
   @@index([broadcastId])
+}
+
+// Retail-vertical only (see Organization.vertical). One row per product row
+// imported from a Google Sheet. Linked 1:1 to a Document so its text (name +
+// price + description) feeds the same RAG knowledge base the WhatsApp AI
+// already searches — when a matched chunk traces back to a Product with an
+// imageUrl, the webhook sends the photo alongside the text answer.
+model Product {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  documentId     String       @unique
+  document       Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  name           String
+  price          String? // kept as text — retail price strings vary ("৳500", "500-700", etc.)
+  description    String?
+  imageUrl       String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
 }
