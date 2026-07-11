@@ -5,6 +5,7 @@ import { readSheetRange } from "@/lib/googleSheets";
 import { chunkText } from "@/lib/chunk";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import { revalidatePath } from "next/cache";
+import { put } from "@vercel/blob";
 
 // Vercel: importing many product rows (chunk + embed each) can take a while.
 export const maxDuration = 60;
@@ -102,6 +103,50 @@ async function importFromSheet(formData: FormData) {
   revalidatePath("/dashboard/products");
 }
 
+// Uploads a photo straight from the dashboard (no external image host needed).
+// Stored in Vercel Blob; only the resulting public URL is saved on the Product row.
+async function uploadProductPhoto(formData: FormData) {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const productId = formData.get("productId") as string;
+  const file = formData.get("photo") as File | null;
+  if (!productId || !file || file.size === 0) return;
+
+  // Make sure this product actually belongs to the logged-in user's org.
+  const product = await prisma.product.findFirst({
+    where: { id: productId, organizationId: user.organizationId },
+  });
+  if (!product) return;
+
+  let blobUrl: string;
+  try {
+    const blob = await put(`products/${user.organizationId}/${productId}-${file.name}`, file, {
+      access: "public",
+      addRandomSuffix: true,
+    });
+    blobUrl = blob.url;
+  } catch (err) {
+    console.error("Product photo upload failed:", err);
+    return;
+  }
+
+  await prisma.product.update({
+    where: { id: productId },
+    data: { imageUrl: blobUrl },
+  });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "PRODUCT_PHOTO_UPLOADED",
+    metadata: { productId },
+  });
+
+  revalidatePath("/dashboard/products");
+}
+
 export default async function ProductsPage() {
   const user = await getCurrentUser();
   if (!user) return null;
@@ -116,10 +161,10 @@ export default async function ProductsPage() {
       <h1>Products</h1>
       <p style={{ color: "#666", fontSize: 14 }}>
         Import your product list directly from a Google Sheet. Expected column order:{" "}
-        <strong>Name | Price | Description | Image URL</strong> (Image URL is optional). Sharing
-        the Sheet with the service account email is required first. Imported products are added
-        to the Knowledge Base so the AI can answer questions about them, and their photo is sent
-        automatically when relevant.
+        <strong>Name | Price | Description | Image URL</strong> (Image URL is optional — you can
+        also upload a photo directly below for each product). Sharing the Sheet with the service
+        account email is required first. Imported products are added to the Knowledge Base so the
+        AI can answer questions about them, and their photo is sent automatically when relevant.
       </p>
 
       <h3 style={{ marginTop: 24 }}>Import from Google Sheet</h3>
@@ -166,11 +211,30 @@ export default async function ProductsPage() {
           {products.map((p) => (
             <tr key={p.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
               <td style={tdStyle}>
-                {p.imageUrl ? (
-                  <img src={p.imageUrl} alt={p.name} style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }} />
-                ) : (
-                  "—"
-                )}
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+                  {p.imageUrl ? (
+                    <img
+                      src={p.imageUrl}
+                      alt={p.name}
+                      style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }}
+                    />
+                  ) : (
+                    <span>—</span>
+                  )}
+                  <form action={uploadProductPhoto} style={{ display: "flex", gap: 4 }}>
+                    <input type="hidden" name="productId" value={p.id} />
+                    <input
+                      type="file"
+                      name="photo"
+                      accept="image/*"
+                      required
+                      style={{ fontSize: 11, width: 120 }}
+                    />
+                    <button type="submit" style={{ ...buttonStyle, padding: "4px 8px", fontSize: 11 }}>
+                      {p.imageUrl ? "Change" : "Upload"}
+                    </button>
+                  </form>
+                </div>
               </td>
               <td style={tdStyle}>{p.name}</td>
               <td style={tdStyle}>{p.price || "—"}</td>

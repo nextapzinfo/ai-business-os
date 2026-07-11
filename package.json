@@ -22,7 +22,8 @@
     "next-auth": "^4.24.7",
     "bcryptjs": "^2.4.3",
     "zod": "^3.23.8",
-    "google-auth-library": "^9.14.1"
+    "google-auth-library": "^9.14.1",
+    "@vercel/blob": "latest"
   },
   "devDependencies": {
     "typescript": "^5.5.4",

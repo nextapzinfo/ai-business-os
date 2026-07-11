@@ -1,5 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Product photo uploads (Server Actions) default-cap at 1MB — raise it so
+  // normal phone-camera photos (a few MB) go through.
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "10mb",
+    },
+  },
   // Security headers — required by the V1 Security spec (HTTPS-only posture,
   // basic hardening). Vercel already forces HTTPS at the edge; these headers
   // reinforce that in the browser and block a few common attack classes.
