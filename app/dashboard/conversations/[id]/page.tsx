@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { formatDateTime } from "@/lib/formatDate";
 import AutoRefresh from "@/components/AutoRefresh";
+import MessageThread from "@/components/MessageThread";
 
 export const dynamic = "force-dynamic";
 
@@ -69,11 +70,6 @@ async function closeConversation(formData: FormData) {
   revalidatePath(`/dashboard/conversations/${conversationId}`);
 }
 
-function bubbleStyle(sender: string) {
-  const bg = sender === "CLIENT" ? "#fff" : sender === "STAFF" ? "#dbeafe" : "#dcfce7";
-  return { alignSelf: sender === "CLIENT" ? "flex-start" : "flex-end", maxWidth: "70%", background: bg, border: "1px solid #e5e5e5", borderRadius: 8, padding: "8px 12px" } as const;
-}
-
 export default async function ConversationDetailPage({ params }: { params: { id: string } }) {
   const user = await getCurrentUser();
   if (!user) return null;
@@ -84,6 +80,13 @@ export default async function ConversationDetailPage({ params }: { params: { id:
   });
 
   if (!conversation) redirect("/dashboard/conversations");
+
+  const threadMessages = conversation.messages.map((m) => ({
+    id: m.id,
+    sender: m.sender,
+    content: m.content,
+    createdAt: formatDateTime(m.createdAt),
+  }));
 
   return (
     <div>
@@ -101,15 +104,7 @@ export default async function ConversationDetailPage({ params }: { params: { id:
         </form>
       </div>
 
-      <div style={threadStyle}>
-        {conversation.messages.map((m) => (
-          <div key={m.id} style={bubbleStyle(m.sender)}>
-            <div style={metaStyle}>{m.sender} · {formatDateTime(m.createdAt)}</div>
-            <div style={contentStyle}>{m.content}</div>
-          </div>
-        ))}
-        {conversation.messages.length === 0 && <p style={subtitleStyle}>No messages yet.</p>}
-      </div>
+      <MessageThread messages={threadMessages} />
 
       <form key={conversation.messages.length} action={sendManualReply} style={replyFormStyle}>
         <input type="hidden" name="conversationId" value={conversation.id} />
@@ -128,9 +123,6 @@ const headerRowStyle = { display: "flex", justifyContent: "space-between", align
 const titleStyle = { marginBottom: 4 };
 const subtitleStyle = { color: "#666", fontSize: 13 };
 const closeButtonStyle = { padding: "8px 16px", background: "#666", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" };
-const threadStyle = { marginTop: 20, border: "1px solid #e5e5e5", borderRadius: 8, background: "#fafafa", padding: 16, display: "flex", flexDirection: "column", gap: 10, maxHeight: 500, overflowY: "auto" } as const;
-const metaStyle = { fontSize: 11, color: "#888", marginBottom: 2 };
-const contentStyle = { fontSize: 14, whiteSpace: "pre-wrap" } as const;
 const replyFormStyle = { display: "flex", gap: 8, marginTop: 16 };
 const textareaStyle = { padding: 8, border: "1px solid #ccc", borderRadius: 6, fontFamily: "inherit", fontSize: 14, flex: 1, resize: "vertical" } as const;
 const sendButtonStyle = { padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", alignSelf: "flex-end" } as const;
