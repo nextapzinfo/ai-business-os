@@ -24,37 +24,24 @@ export default function ClientCheckboxList({ clients }: { clients: ClientOption[
 
   return (
     <div>
-      <label style={{ display: "block", marginBottom: 8, fontSize: 14 }}>
-        <input
-          type="checkbox"
-          checked={allSelected}
-          onChange={(e) => toggleAll(e.target.checked)}
-        />{" "}
+      <label className="mb-2 flex items-center gap-2 text-sm text-gray-700">
+        <input type="checkbox" checked={allSelected} onChange={(e) => toggleAll(e.target.checked)} />
         Select all ({clients.length} customers)
       </label>
-      <div
-        style={{
-          maxHeight: 240,
-          overflowY: "auto",
-          border: "1px solid #e5e5e5",
-          borderRadius: 6,
-          padding: 8,
-          background: "#fff",
-        }}
-      >
+      <div className="max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
         {clients.map((c) => (
-          <label key={c.id} style={{ display: "block", fontSize: 14, padding: "4px 0" }}>
+          <label key={c.id} className="flex items-center gap-2 rounded px-1.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
             <input
               type="checkbox"
               name="clientIds"
               value={c.id}
               checked={selected.has(c.id)}
               onChange={(e) => toggleOne(c.id, e.target.checked)}
-            />{" "}
+            />
             {c.name} ({c.phone})
           </label>
         ))}
-        {clients.length === 0 && <p style={{ fontSize: 14, color: "#666" }}>No customers yet.</p>}
+        {clients.length === 0 && <p className="p-1.5 text-sm text-gray-500">No customers yet.</p>}
       </div>
     </div>
   );
