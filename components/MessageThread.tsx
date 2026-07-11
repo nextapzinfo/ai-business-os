@@ -48,7 +48,8 @@ function bubbleStyle(sender: string) {
 }
 
 const threadStyle = {
-  marginTop: 20,
+  flex: 1,
+  minHeight: 0,
   border: "1px solid #e5e5e5",
   borderRadius: 8,
   background: "#fafafa",
@@ -56,7 +57,6 @@ const threadStyle = {
   display: "flex",
   flexDirection: "column",
   gap: 10,
-  maxHeight: 500,
   overflowY: "auto",
 } as const;
 const metaStyle = { fontSize: 11, color: "#888", marginBottom: 2 };
