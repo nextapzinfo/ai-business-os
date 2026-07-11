@@ -4,6 +4,7 @@ import { logAudit } from "@/lib/audit";
 import { readSheetRange } from "@/lib/googleSheets";
 import { revalidatePath } from "next/cache";
 import { formatDate } from "@/lib/formatDate";
+import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
 
 // Vercel: importing many customer rows can take a moment.
 export const maxDuration = 60;
@@ -100,6 +101,83 @@ async function addClient(formData: FormData) {
     userId: user.id,
     action: "CLIENT_CREATED",
     metadata: { clientId: client.id, name, phone },
+  });
+
+  revalidatePath("/dashboard/clients");
+}
+
+async function updateClient(formData: FormData) {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const clientId = formData.get("clientId") as string;
+  const name = (formData.get("name") as string)?.trim();
+  const phone = (formData.get("phone") as string)?.trim();
+  const email = (formData.get("email") as string)?.trim();
+  const dobRaw = (formData.get("dateOfBirth") as string) || "";
+  const tagsRaw = (formData.get("tags") as string) || "";
+  if (!clientId || !name || !phone) return;
+
+  const existing = await prisma.client.findFirst({
+    where: { id: clientId, organizationId: user.organizationId },
+  });
+  if (!existing) return;
+
+  const dob = dobRaw ? new Date(dobRaw) : undefined;
+
+  await prisma.client.update({
+    where: { id: clientId },
+    data: {
+      name,
+      phone,
+      email: email || null,
+      dateOfBirth: dob && !isNaN(dob.getTime()) ? dob : null,
+      tags: parseTags(tagsRaw),
+    },
+  });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "CLIENT_UPDATED",
+    metadata: { clientId },
+  });
+
+  revalidatePath("/dashboard/clients");
+}
+
+async function deleteClient(formData: FormData) {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const clientId = formData.get("clientId") as string;
+  const client = await prisma.client.findFirst({
+    where: { id: clientId, organizationId: user.organizationId },
+  });
+  if (!client) return;
+
+  // Clients with existing conversations/reminders/broadcast history are kept
+  // (deleting would either fail on the foreign key or silently lose records)
+  // — only clean, unused client rows can be removed this way.
+  const [conversationCount, reminderCount, broadcastCount] = await Promise.all([
+    prisma.conversation.count({ where: { clientId } }),
+    prisma.reminder.count({ where: { clientId } }),
+    prisma.broadcastRecipient.count({ where: { clientId } }),
+  ]);
+  if (conversationCount > 0 || reminderCount > 0 || broadcastCount > 0) {
+    console.error(`Client ${clientId} not deleted — has existing conversation/reminder/broadcast history.`);
+    return;
+  }
+
+  await prisma.client.delete({ where: { id: clientId } });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "CLIENT_DELETED",
+    metadata: { clientId, name: client.name },
   });
 
   revalidatePath("/dashboard/clients");
@@ -206,11 +284,12 @@ export default async function ClientsPage({
               <th className="px-4 py-3 font-medium">Date of Birth</th>
               <th className="px-4 py-3 font-medium">Tags</th>
               <th className="px-4 py-3 font-medium">Added</th>
+              <th className="px-4 py-3 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
             {clients.map((c) => (
-              <tr key={c.id} className="border-b border-gray-50 last:border-0">
+              <tr key={c.id} className="border-b border-gray-50 align-top last:border-0">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2.5">
                     <div className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white ${avatarColor(c.name)}`}>
@@ -233,11 +312,47 @@ export default async function ClientsPage({
                   </div>
                 </td>
                 <td className="px-4 py-3 text-gray-500">{formatDate(c.createdAt)}</td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-1.5">
+                    <details className="relative">
+                      <summary className="cursor-pointer select-none rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">
+                        Edit
+                      </summary>
+                      <form
+                        action={updateClient}
+                        className="absolute right-0 z-10 mt-1 flex w-64 flex-col gap-1.5 rounded-lg border border-gray-200 bg-white p-3 shadow-lg"
+                      >
+                        <input type="hidden" name="clientId" value={c.id} />
+                        <input name="name" defaultValue={c.name} required placeholder="Name" className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                        <input name="phone" defaultValue={c.phone} required placeholder="Phone" className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                        <input name="email" defaultValue={c.email ?? ""} placeholder="Email" className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                        <input
+                          name="dateOfBirth"
+                          type="date"
+                          defaultValue={c.dateOfBirth ? c.dateOfBirth.toISOString().slice(0, 10) : ""}
+                          className="rounded border border-gray-300 px-2 py-1 text-xs"
+                        />
+                        <input name="tags" defaultValue={c.tags.join(", ")} placeholder="Tags, comma separated" className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                        <button type="submit" className="mt-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-light">
+                          Save Changes
+                        </button>
+                      </form>
+                    </details>
+                    <form action={deleteClient}>
+                      <input type="hidden" name="clientId" value={c.id} />
+                      <ConfirmSubmitButton
+                        label="Delete"
+                        confirmText={`Delete "${c.name}"? This can't be undone. (Clients with conversation/reminder history can't be deleted.)`}
+                        className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                      />
+                    </form>
+                  </div>
+                </td>
               </tr>
             ))}
             {clients.length === 0 && (
               <tr>
-                <td className="px-4 py-6 text-gray-500" colSpan={5}>
+                <td className="px-4 py-6 text-gray-500" colSpan={6}>
                   {q ? "No clients match your search." : "No clients yet — add your first one above."}
                 </td>
               </tr>
