@@ -10,6 +10,7 @@ import SidebarNav, { type NavItem } from "@/components/SidebarNav";
 // which vertical each Organization is, this just reads that one field.
 const navItems: (NavItem & { verticals?: string[] })[] = [
   { href: "/dashboard", label: "Overview" },
+  { href: "/dashboard/agent", label: "Agent Studio" },
   { href: "/dashboard/clients", label: "Clients" },
   { href: "/dashboard/conversations", label: "Conversations" },
   { href: "/dashboard/documents", label: "Knowledge Base" },
