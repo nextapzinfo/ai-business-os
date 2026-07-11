@@ -89,41 +89,53 @@ export default async function ConversationDetailPage({ params }: { params: { id:
   }));
 
   return (
-    <div>
+    <div style={pageStyle}>
       <AutoRefresh intervalMs={8000} />
-      <a href="/dashboard/conversations" style={backLinkStyle}>&larr; Back to Conversations</a>
 
-      <div style={headerRowStyle}>
-        <div>
-          <h1 style={titleStyle}>{conversation.client.name}</h1>
-          <p style={subtitleStyle}>{conversation.client.phone} · {conversation.channel} · Status: {conversation.status}</p>
+      <div style={topSectionStyle}>
+        <a href="/dashboard/conversations" style={backLinkStyle}>&larr; Back to Conversations</a>
+
+        <div style={headerRowStyle}>
+          <div>
+            <h1 style={titleStyle}>{conversation.client.name}</h1>
+            <p style={subtitleStyle}>{conversation.client.phone} · {conversation.channel} · Status: {conversation.status}</p>
+          </div>
+          <form action={closeConversation}>
+            <input type="hidden" name="conversationId" value={conversation.id} />
+            <button type="submit" style={closeButtonStyle}>{conversation.status === "CLOSED" ? "Reopen" : "Mark Closed"}</button>
+          </form>
         </div>
-        <form action={closeConversation}>
-          <input type="hidden" name="conversationId" value={conversation.id} />
-          <button type="submit" style={closeButtonStyle}>{conversation.status === "CLOSED" ? "Reopen" : "Mark Closed"}</button>
-        </form>
       </div>
 
       <MessageThread messages={threadMessages} />
 
-      <form key={conversation.messages.length} action={sendManualReply} style={replyFormStyle}>
-        <input type="hidden" name="conversationId" value={conversation.id} />
-        <textarea name="text" placeholder="Type a reply to send on WhatsApp..." required rows={2} style={textareaStyle} />
-        <button type="submit" style={sendButtonStyle}>Send</button>
-      </form>
-      <p style={hintStyle}>
-        Free-text replies only deliver within 24 hours of the customer's last message (WhatsApp's rule). Outside that window, use a Template broadcast instead.
-      </p>
+      <div style={bottomSectionStyle}>
+        <form key={conversation.messages.length} action={sendManualReply} style={replyFormStyle}>
+          <input type="hidden" name="conversationId" value={conversation.id} />
+          <textarea name="text" placeholder="Type a reply to send on WhatsApp..." required rows={2} style={textareaStyle} />
+          <button type="submit" style={sendButtonStyle}>Send</button>
+        </form>
+        <p style={hintStyle}>
+          Free-text replies only deliver within 24 hours of the customer's last message (WhatsApp's rule). Outside that window, use a Template broadcast instead.
+        </p>
+      </div>
     </div>
   );
 }
 
+// The whole page is pinned to the visible dashboard height (100vh minus the
+// dashboard layout's own top+bottom padding of 32px each) with overflow
+// hidden, so only MessageThread (flex: 1, its own overflow-y: auto) scrolls —
+// the header and reply box stay fixed in place instead of scrolling away.
+const pageStyle = { height: "calc(100vh - 64px)", display: "flex", flexDirection: "column", overflow: "hidden" } as const;
+const topSectionStyle = { flexShrink: 0 };
+const bottomSectionStyle = { flexShrink: 0, marginTop: 12 };
 const backLinkStyle = { fontSize: 13, color: "#2563eb" };
 const headerRowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 };
 const titleStyle = { marginBottom: 4 };
 const subtitleStyle = { color: "#666", fontSize: 13 };
 const closeButtonStyle = { padding: "8px 16px", background: "#666", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" };
-const replyFormStyle = { display: "flex", gap: 8, marginTop: 16 };
+const replyFormStyle = { display: "flex", gap: 8 };
 const textareaStyle = { padding: 8, border: "1px solid #ccc", borderRadius: 6, fontFamily: "inherit", fontSize: 14, flex: 1, resize: "vertical" } as const;
 const sendButtonStyle = { padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", alignSelf: "flex-end" } as const;
 const hintStyle = { color: "#999", fontSize: 12, marginTop: 6 };
