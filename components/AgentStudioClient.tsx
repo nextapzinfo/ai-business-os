@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, Volume2, Zap, BookOpen, Check } from "lucide-react";
+import { Building2, Volume2, Zap, BookOpen, Check, QrCode } from "lucide-react";
 import {
   saveAgentProfile,
   addKnowledgeDocument,
   deleteKnowledgeDocument,
+  uploadQrCode,
   type AgentProfileData,
 } from "@/app/dashboard/agent/actions";
 import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
@@ -35,9 +36,11 @@ const inputClass = "mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text
 export default function AgentStudioClient({
   initialProfile,
   initialDocuments,
+  qrCodeUrl,
 }: {
   initialProfile: AgentProfileData;
   initialDocuments: KnowledgeDocument[];
+  qrCodeUrl: string | null;
 }) {
   const [form, setForm] = useState<AgentProfileData>(initialProfile);
   const [activeTab, setActiveTab] = useState<TabKey>("profile");
@@ -115,7 +118,7 @@ export default function AgentStudioClient({
         </button>
       </div>
 
-      <div className="grid flex-1 grid-cols-1 gap-5 lg:grid-cols-[150px_1fr_360px]">
+      <div className="grid flex-1 grid-cols-1 items-start gap-5 lg:grid-cols-[150px_1fr_360px]">
         {/* Tab nav */}
         <div className="flex flex-row gap-1 overflow-x-auto lg:flex-col lg:overflow-visible">
           {TABS.map((tab) => {
@@ -210,29 +213,75 @@ export default function AgentStudioClient({
           )}
 
           {activeTab === "skills" && (
-            <div className="rounded-xl border border-gray-200 bg-white p-4">
-              <h3 className="text-sm font-semibold text-gray-900">Skills</h3>
-              <p className="mt-1 text-xs text-gray-500">
-                Toggle what the AI is allowed to do. <span className="font-medium text-amber-600">Note:</span>{" "}
-                automation for these isn't built yet — enabling them here just records the setting for now.
-              </p>
-              <div className="mt-3 flex flex-col gap-2">
-                <label className="flex items-center gap-2 text-sm text-gray-700">
+            <div className="flex flex-col gap-4">
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-gray-900">Skills</h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  Toggle what the AI is allowed to do. <span className="font-medium text-amber-600">Note:</span>{" "}
+                  order-confirm and reminder automation aren't built yet — enabling them here just records the
+                  setting for now.
+                </p>
+                <div className="mt-3 flex flex-col gap-2">
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={form.skillOrderConfirm}
+                      onChange={(e) => update("skillOrderConfirm", e.target.checked)}
+                    />
+                    Confirm orders automatically
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={form.skillReminders}
+                      onChange={(e) => update("skillReminders", e.target.checked)}
+                    />
+                    Send automatic follow-up reminders
+                  </label>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <div className="flex items-center gap-2">
+                  <QrCode size={16} className="text-gray-500" />
+                  <h3 className="text-sm font-semibold text-gray-900">Send Payment QR</h3>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  Upload your real payment QR once (UPI or bank QR) — the AI sends this exact image whenever a
+                  customer asks about payment. It never generates or changes the QR.
+                </p>
+
+                <label className="mt-3 flex items-center gap-2 text-sm text-gray-700">
                   <input
                     type="checkbox"
-                    checked={form.skillOrderConfirm}
-                    onChange={(e) => update("skillOrderConfirm", e.target.checked)}
+                    checked={form.skillSendQr}
+                    onChange={(e) => update("skillSendQr", e.target.checked)}
                   />
-                  Confirm orders automatically
+                  Send this QR automatically when a customer asks about payment
                 </label>
-                <label className="flex items-center gap-2 text-sm text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={form.skillReminders}
-                    onChange={(e) => update("skillReminders", e.target.checked)}
-                  />
-                  Send automatic follow-up reminders
-                </label>
+
+                <div className="mt-3 flex items-center gap-3">
+                  {qrCodeUrl ? (
+                    <img
+                      src={qrCodeUrl}
+                      alt="Payment QR"
+                      className="h-20 w-20 flex-shrink-0 rounded-lg border border-gray-200 object-contain"
+                    />
+                  ) : (
+                    <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center rounded-lg border border-dashed border-gray-300 text-[10px] text-gray-400">
+                      No QR yet
+                    </div>
+                  )}
+                  <form action={uploadQrCode} className="flex flex-1 items-center gap-2">
+                    <input type="file" name="qr" accept="image/*" required className="w-full text-xs" />
+                    <button
+                      type="submit"
+                      className="flex-shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-light"
+                    >
+                      {qrCodeUrl ? "Change" : "Upload"}
+                    </button>
+                  </form>
+                </div>
               </div>
             </div>
           )}
