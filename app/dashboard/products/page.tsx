@@ -159,115 +159,73 @@ export default async function ProductsPage() {
 
   return (
     <div>
-      <h1>Products</h1>
-      <p style={{ color: "#666", fontSize: 14 }}>
-        Import your product list directly from a Google Sheet. Expected column order:{" "}
-        <strong>Name | Price | Description | Image URL</strong> (Image URL is optional — you can
-        also upload a photo directly below for each product). Sharing the Sheet with the service
-        account email is required first. Imported products are added to the Knowledge Base so the
-        AI can answer questions about them, and their photo is sent automatically when relevant.
+      <h1 className="text-xl font-semibold text-gray-900">Products</h1>
+      <p className="mt-1 max-w-2xl text-sm text-gray-500">
+        Import your product list from a Google Sheet. Column order: <strong>Name | Price | Description | Image URL</strong>{" "}
+        (Image URL optional — you can upload a photo per product below). Imported products feed the AI knowledge base,
+        and their photo is sent automatically on WhatsApp when relevant.
       </p>
 
-      <h3 style={{ marginTop: 24 }}>Import from Google Sheet</h3>
-      <form
-        action={importFromSheet}
-        style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 600 }}
-      >
-        <input
-          name="spreadsheetId"
-          placeholder="Spreadsheet ID (from the Sheet's URL, between /d/ and /edit)"
-          required
-          style={inputStyle}
-        />
-        <input
-          name="range"
-          placeholder="Range, e.g. Sheet1!A2:D100 (skip header row)"
-          required
-          style={inputStyle}
-        />
-        <button type="submit" style={{ ...buttonStyle, alignSelf: "flex-start" }}>
-          Import Products
-        </button>
-      </form>
+      <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
+        <h3 className="text-sm font-semibold text-gray-900">Import from Google Sheet</h3>
+        <form action={importFromSheet} className="mt-3 flex flex-wrap gap-2">
+          <input
+            name="spreadsheetId"
+            placeholder="Spreadsheet ID (from the Sheet's URL, between /d/ and /edit)"
+            required
+            className="flex-1 basis-64 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+          <input
+            name="range"
+            placeholder="Range, e.g. Sheet1!A2:D100 (skip header row)"
+            required
+            className="flex-1 basis-56 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+          <button type="submit" className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
+            Import Products
+          </button>
+        </form>
+      </div>
 
-      <h3 style={{ marginTop: 32 }}>Imported products</h3>
-      <table
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          background: "#fff",
-          marginTop: 8,
-        }}
-      >
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e5e5" }}>
-            <th style={thStyle}>Photo</th>
-            <th style={thStyle}>Name</th>
-            <th style={thStyle}>Price</th>
-            <th style={thStyle}>Description</th>
-            <th style={thStyle}>Imported</th>
-          </tr>
-        </thead>
-        <tbody>
-          {products.map((p) => (
-            <tr key={p.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-              <td style={tdStyle}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
-                  {p.imageUrl ? (
-                    <img
-                      src={p.imageUrl}
-                      alt={p.name}
-                      style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }}
-                    />
-                  ) : (
-                    <span>—</span>
-                  )}
-                  <form action={uploadProductPhoto} style={{ display: "flex", gap: 4 }}>
-                    <input type="hidden" name="productId" value={p.id} />
-                    <input
-                      type="file"
-                      name="photo"
-                      accept="image/*"
-                      required
-                      style={{ fontSize: 11, width: 120 }}
-                    />
-                    <button type="submit" style={{ ...buttonStyle, padding: "4px 8px", fontSize: 11 }}>
-                      {p.imageUrl ? "Change" : "Upload"}
-                    </button>
-                  </form>
-                </div>
-              </td>
-              <td style={tdStyle}>{p.name}</td>
-              <td style={tdStyle}>{p.price || "—"}</td>
-              <td style={{ ...tdStyle, maxWidth: 300 }}>{p.description || "—"}</td>
-              <td style={tdStyle}>{formatDate(p.createdAt)}</td>
-            </tr>
-          ))}
-          {products.length === 0 && (
-            <tr>
-              <td style={tdStyle} colSpan={5}>
-                No products imported yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      <h3 className="mt-6 text-sm font-semibold text-gray-900">Imported products ({products.length})</h3>
+      <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {products.map((p) => (
+          <div key={p.id} className="flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white">
+            <div className="flex h-36 items-center justify-center bg-gray-50">
+              {p.imageUrl ? (
+                <img src={p.imageUrl} alt={p.name} className="h-full w-full object-cover" />
+              ) : (
+                <span className="text-xs text-gray-400">No photo yet</span>
+              )}
+            </div>
+            <div className="flex flex-1 flex-col gap-1 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-medium text-gray-900">{p.name}</span>
+                {p.price && (
+                  <span className="flex-shrink-0 rounded-full bg-accent-light px-2 py-0.5 text-xs font-semibold text-accent">
+                    {p.price}
+                  </span>
+                )}
+              </div>
+              <p className="line-clamp-2 text-xs text-gray-500">{p.description || "No description"}</p>
+              <p className="mt-auto pt-1 text-[11px] text-gray-400">Added {formatDate(p.createdAt)}</p>
+
+              <form action={uploadProductPhoto} className="mt-2 flex items-center gap-1.5">
+                <input type="hidden" name="productId" value={p.id} />
+                <input type="file" name="photo" accept="image/*" required className="w-full text-[11px]" />
+                <button type="submit" className="flex-shrink-0 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-light">
+                  {p.imageUrl ? "Change" : "Upload"}
+                </button>
+              </form>
+            </div>
+          </div>
+        ))}
+        {products.length === 0 && (
+          <p className="col-span-full rounded-xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
+            No products imported yet.
+          </p>
+        )}
+      </div>
     </div>
   );
 }
-
-const inputStyle = {
-  padding: 8,
-  border: "1px solid #ccc",
-  borderRadius: 6,
-};
-const buttonStyle = {
-  padding: "8px 16px",
-  background: "#2563eb",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
-  cursor: "pointer",
-};
-const thStyle = { padding: "10px 12px", fontSize: 13, color: "#666" };
-const tdStyle = { padding: "10px 12px", fontSize: 14 };
