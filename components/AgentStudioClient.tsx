@@ -5,6 +5,7 @@ import { Building2, Volume2, Zap, BookOpen, Check, QrCode } from "lucide-react";
 import {
   saveAgentProfile,
   addKnowledgeDocument,
+  uploadKnowledgeFile,
   deleteKnowledgeDocument,
   uploadQrCode,
   type AgentProfileData,
@@ -313,6 +314,34 @@ export default function AgentStudioClient({
                     className="self-start rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light"
                   >
                     Add to Knowledge Base
+                  </button>
+                </form>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-gray-900">Or upload a file</h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  PDF, DOCX, TXT, or CSV — the text inside is extracted and added to the knowledge base
+                  automatically.
+                </p>
+                <form action={uploadKnowledgeFile} key={`file-${initialDocuments.length}`} className="mt-3 flex flex-col gap-2">
+                  <input
+                    name="title"
+                    placeholder="Title (optional — defaults to the file name)"
+                    className={inputClass}
+                  />
+                  <input
+                    type="file"
+                    name="file"
+                    accept=".pdf,.docx,.txt,.csv"
+                    required
+                    className="mt-1 w-full text-sm"
+                  />
+                  <button
+                    type="submit"
+                    className="self-start rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light"
+                  >
+                    Upload File
                   </button>
                 </form>
               </div>
