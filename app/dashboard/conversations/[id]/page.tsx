@@ -41,6 +41,15 @@ async function sendManualReply(formData: FormData) {
     },
   });
 
+  // Sending a manual reply counts as "taking over" the conversation — pause the
+  // AI so it doesn't also reply to the customer's next message and talk over staff.
+  if (!conversation.aiPaused) {
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { aiPaused: true },
+    });
+  }
+
   await logAudit({
     organizationId: user.organizationId,
     userId: user.id,
@@ -65,6 +74,32 @@ async function closeConversation(formData: FormData) {
   await prisma.conversation.update({
     where: { id: conversation.id },
     data: { status: conversation.status === "CLOSED" ? "OPEN" : "CLOSED" },
+  });
+
+  revalidatePath(`/dashboard/conversations/${conversationId}`);
+}
+
+async function toggleAiPaused(formData: FormData) {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const conversationId = formData.get("conversationId") as string;
+  const conversation = await prisma.conversation.findFirst({
+    where: { id: conversationId, organizationId: user.organizationId },
+  });
+  if (!conversation) return;
+
+  await prisma.conversation.update({
+    where: { id: conversation.id },
+    data: { aiPaused: !conversation.aiPaused },
+  });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: conversation.aiPaused ? "AI_RESUMED" : "AI_INTERVENED",
+    metadata: { conversationId: conversation.id },
   });
 
   revalidatePath(`/dashboard/conversations/${conversationId}`);
@@ -98,12 +133,27 @@ export default async function ConversationDetailPage({ params }: { params: { id:
         <div style={headerRowStyle}>
           <div>
             <h1 style={titleStyle}>{conversation.client.name}</h1>
-            <p style={subtitleStyle}>{conversation.client.phone} · {conversation.channel} · Status: {conversation.status}</p>
+            <p style={subtitleStyle}>
+              {conversation.client.phone} · {conversation.channel} · Status: {conversation.status}
+            </p>
           </div>
-          <form action={closeConversation}>
-            <input type="hidden" name="conversationId" value={conversation.id} />
-            <button type="submit" style={closeButtonStyle}>{conversation.status === "CLOSED" ? "Reopen" : "Mark Closed"}</button>
-          </form>
+          <div style={actionsRowStyle}>
+            <span style={conversation.aiPaused ? badgePausedStyle : badgeActiveStyle}>
+              {conversation.aiPaused ? "Staff Handling" : "AI Active"}
+            </span>
+            <form action={toggleAiPaused}>
+              <input type="hidden" name="conversationId" value={conversation.id} />
+              <button type="submit" style={conversation.aiPaused ? resumeButtonStyle : intervenceButtonStyle}>
+                {conversation.aiPaused ? "Resume AI" : "Intervene"}
+              </button>
+            </form>
+            <form action={closeConversation}>
+              <input type="hidden" name="conversationId" value={conversation.id} />
+              <button type="submit" style={closeButtonStyle}>
+                {conversation.status === "CLOSED" ? "Reopen" : "Mark Closed"}
+              </button>
+            </form>
+          </div>
         </div>
       </div>
 
@@ -116,7 +166,10 @@ export default async function ConversationDetailPage({ params }: { params: { id:
           <button type="submit" style={sendButtonStyle}>Send</button>
         </form>
         <p style={hintStyle}>
-          Free-text replies only deliver within 24 hours of the customer's last message (WhatsApp's rule). Outside that window, use a Template broadcast instead.
+          Sending a reply here automatically pauses the AI for this conversation (so it doesn't also
+          reply) — click "Resume AI" above when you're done. Free-text replies only deliver within
+          24 hours of the customer's last message (WhatsApp's rule); outside that window use a
+          Template broadcast instead.
         </p>
       </div>
     </div>
@@ -131,10 +184,15 @@ const pageStyle = { height: "calc(100vh - 64px)", display: "flex", flexDirection
 const topSectionStyle = { flexShrink: 0 };
 const bottomSectionStyle = { flexShrink: 0, marginTop: 12 };
 const backLinkStyle = { fontSize: 13, color: "#2563eb" };
-const headerRowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 };
+const headerRowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, flexWrap: "wrap", gap: 8 } as const;
+const actionsRowStyle = { display: "flex", alignItems: "center", gap: 8 };
 const titleStyle = { marginBottom: 4 };
 const subtitleStyle = { color: "#666", fontSize: 13 };
 const closeButtonStyle = { padding: "8px 16px", background: "#666", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" };
+const intervenceButtonStyle = { padding: "8px 16px", background: "#d97706", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" };
+const resumeButtonStyle = { padding: "8px 16px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" };
+const badgeActiveStyle = { fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 999, background: "#dcfce7", color: "#16a34a" };
+const badgePausedStyle = { fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 999, background: "#fef3c7", color: "#d97706" };
 const replyFormStyle = { display: "flex", gap: 8 };
 const textareaStyle = { padding: 8, border: "1px solid #ccc", borderRadius: 6, fontFamily: "inherit", fontSize: 14, flex: 1, resize: "vertical" } as const;
 const sendButtonStyle = { padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", alignSelf: "flex-end" } as const;
