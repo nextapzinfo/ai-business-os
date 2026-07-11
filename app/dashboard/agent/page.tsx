@@ -4,6 +4,10 @@ import AgentStudioClient from "@/components/AgentStudioClient";
 import type { AgentProfileData } from "./actions";
 
 export const dynamic = "force-dynamic";
+// Knowledge file uploads (PDF/DOCX) get chunked + embedded one piece at a time,
+// which can take a while for longer documents — give it more room than the
+// serverless default before Vercel kills the function.
+export const maxDuration = 60;
 
 export default async function AgentStudioPage() {
   const user = await getCurrentUser();
