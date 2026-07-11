@@ -6,6 +6,7 @@ import { chunkText } from "@/lib/chunk";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import { revalidatePath } from "next/cache";
 import { put } from "@vercel/blob";
+import { formatDate } from "@/lib/formatDate";
 
 // Vercel: importing many product rows (chunk + embed each) can take a while.
 export const maxDuration = 60;
@@ -239,7 +240,7 @@ export default async function ProductsPage() {
               <td style={tdStyle}>{p.name}</td>
               <td style={tdStyle}>{p.price || "—"}</td>
               <td style={{ ...tdStyle, maxWidth: 300 }}>{p.description || "—"}</td>
-              <td style={tdStyle}>{p.createdAt.toLocaleDateString()}</td>
+              <td style={tdStyle}>{formatDate(p.createdAt)}</td>
             </tr>
           ))}
           {products.length === 0 && (
