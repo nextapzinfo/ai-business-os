@@ -5,8 +5,9 @@ import { readSheetRange } from "@/lib/googleSheets";
 import { chunkText } from "@/lib/chunk";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import { revalidatePath } from "next/cache";
-import { put } from "@vercel/blob";
+import { put, del } from "@vercel/blob";
 import { formatDate } from "@/lib/formatDate";
+import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
 
 // Vercel: importing many product rows (chunk + embed each) can take a while.
 export const maxDuration = 60;
@@ -16,6 +17,31 @@ function buildProductText(name: string, price: string, description: string): str
   if (price) parts.push(`Price: ${price}`);
   if (description) parts.push(description);
   return parts.join(". ");
+}
+
+// Rebuilds the DocumentChunk(s) + embeddings for a product's linked Document —
+// used both on first import and whenever the product is edited, so the AI's
+// WhatsApp answers never quote a stale price/description.
+async function reembedProduct(organizationId: string, documentId: string, name: string, price: string, description: string) {
+  await prisma.documentChunk.deleteMany({ where: { documentId } });
+  const productText = buildProductText(name, price, description);
+  try {
+    const pieces = chunkText(productText);
+    for (let i = 0; i < pieces.length; i++) {
+      const chunk = await prisma.documentChunk.create({
+        data: { organizationId, documentId, content: pieces[i], chunkIndex: i },
+      });
+      const embedding = await embedText(pieces[i], "document");
+      const vectorLiteral = toVectorLiteral(embedding);
+      await prisma.$executeRaw`
+        UPDATE "DocumentChunk" SET embedding = ${vectorLiteral}::vector WHERE id = ${chunk.id}
+      `;
+    }
+    await prisma.document.update({ where: { id: documentId }, data: { title: name, status: "PROCESSED" } });
+  } catch (err) {
+    await prisma.document.update({ where: { id: documentId }, data: { status: "FAILED" } });
+    console.error("Product re-embedding failed:", err);
+  }
 }
 
 async function importFromSheet(formData: FormData) {
@@ -46,8 +72,6 @@ async function importFromSheet(formData: FormData) {
     });
     if (existing) continue; // V1: skip products already imported by name
 
-    const productText = buildProductText(name.trim(), (price || "").trim(), (description || "").trim());
-
     const document = await prisma.document.create({
       data: {
         organizationId: user.organizationId,
@@ -57,28 +81,7 @@ async function importFromSheet(formData: FormData) {
       },
     });
 
-    try {
-      const pieces = chunkText(productText);
-      for (let i = 0; i < pieces.length; i++) {
-        const chunk = await prisma.documentChunk.create({
-          data: {
-            organizationId: user.organizationId,
-            documentId: document.id,
-            content: pieces[i],
-            chunkIndex: i,
-          },
-        });
-        const embedding = await embedText(pieces[i], "document");
-        const vectorLiteral = toVectorLiteral(embedding);
-        await prisma.$executeRaw`
-          UPDATE "DocumentChunk" SET embedding = ${vectorLiteral}::vector WHERE id = ${chunk.id}
-        `;
-      }
-      await prisma.document.update({ where: { id: document.id }, data: { status: "PROCESSED" } });
-    } catch (err) {
-      await prisma.document.update({ where: { id: document.id }, data: { status: "FAILED" } });
-      console.error("Product document embedding failed:", err);
-    }
+    await reembedProduct(user.organizationId, document.id, name.trim(), (price || "").trim(), (description || "").trim());
 
     await prisma.product.create({
       data: {
@@ -143,6 +146,72 @@ async function uploadProductPhoto(formData: FormData) {
     userId: user.id,
     action: "PRODUCT_PHOTO_UPLOADED",
     metadata: { productId },
+  });
+
+  revalidatePath("/dashboard/products");
+}
+
+async function updateProduct(formData: FormData) {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const productId = formData.get("productId") as string;
+  const name = (formData.get("name") as string)?.trim();
+  const price = (formData.get("price") as string)?.trim();
+  const description = (formData.get("description") as string)?.trim();
+  if (!productId || !name) return;
+
+  const product = await prisma.product.findFirst({
+    where: { id: productId, organizationId: user.organizationId },
+  });
+  if (!product) return;
+
+  await prisma.product.update({
+    where: { id: productId },
+    data: { name, price: price || null, description: description || null },
+  });
+
+  await reembedProduct(user.organizationId, product.documentId, name, price || "", description || "");
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "PRODUCT_UPDATED",
+    metadata: { productId, name },
+  });
+
+  revalidatePath("/dashboard/products");
+}
+
+async function deleteProduct(formData: FormData) {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const productId = formData.get("productId") as string;
+  const product = await prisma.product.findFirst({
+    where: { id: productId, organizationId: user.organizationId },
+  });
+  if (!product) return;
+
+  if (product.imageUrl) {
+    try {
+      await del(product.imageUrl);
+    } catch (err) {
+      console.error("Product photo blob delete failed:", err);
+    }
+  }
+
+  // Deleting the linked Document cascades to remove the Product row and its
+  // DocumentChunks too — this is the one call that fully cleans everything up.
+  await prisma.document.delete({ where: { id: product.documentId } });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "PRODUCT_DELETED",
+    metadata: { productId, name: product.name },
   });
 
   revalidatePath("/dashboard/products");
@@ -216,6 +285,30 @@ export default async function ProductsPage() {
                 <button type="submit" className="flex-shrink-0 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-light">
                   {p.imageUrl ? "Change" : "Upload"}
                 </button>
+              </form>
+
+              <details className="mt-2 rounded-lg border border-gray-200">
+                <summary className="cursor-pointer select-none px-2.5 py-1.5 text-xs font-medium text-gray-600">
+                  Edit details
+                </summary>
+                <form action={updateProduct} className="flex flex-col gap-1.5 p-2.5 pt-0">
+                  <input type="hidden" name="productId" value={p.id} />
+                  <input name="name" defaultValue={p.name} required placeholder="Name" className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                  <input name="price" defaultValue={p.price ?? ""} placeholder="Price" className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                  <textarea name="description" defaultValue={p.description ?? ""} placeholder="Description" rows={2} className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                  <button type="submit" className="mt-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-light">
+                    Save Changes
+                  </button>
+                </form>
+              </details>
+
+              <form action={deleteProduct} className="mt-1.5">
+                <input type="hidden" name="productId" value={p.id} />
+                <ConfirmSubmitButton
+                  label="Delete"
+                  confirmText={`Delete "${p.name}"? This also removes it from the AI knowledge base. This can't be undone.`}
+                  className="w-full rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                />
               </form>
             </div>
           </div>
