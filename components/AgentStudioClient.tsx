@@ -8,6 +8,7 @@ import {
   uploadKnowledgeFile,
   deleteKnowledgeDocument,
   uploadQrCode,
+  deleteQrCode,
   type AgentProfileData,
 } from "@/app/dashboard/agent/actions";
 import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
@@ -282,6 +283,15 @@ export default function AgentStudioClient({
                       {qrCodeUrl ? "Change" : "Upload"}
                     </button>
                   </form>
+                  {qrCodeUrl && (
+                    <form action={deleteQrCode}>
+                      <ConfirmSubmitButton
+                        label="Remove"
+                        confirmText="Remove the payment QR? The AI will stop sending it until you upload a new one."
+                        className="flex-shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                      />
+                    </form>
+                  )}
                 </div>
               </div>
             </div>
