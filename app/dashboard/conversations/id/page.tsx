@@ -14,7 +14,6 @@ async function sendManualReply(formData: FormData) {
   const text = (formData.get("text") as string)?.trim();
   if (!conversationId || !text) return;
 
-  // Always re-derive the client's phone from our own DB — never trust form input for it.
   const conversation = await prisma.conversation.findFirst({
     where: { id: conversationId, organizationId: user.organizationId },
     include: { client: true },
@@ -66,118 +65,68 @@ async function closeConversation(formData: FormData) {
   revalidatePath(`/dashboard/conversations/${conversationId}`);
 }
 
-export default async function ConversationDetailPage({
-  params,
-}: {
-  params: { id: string };
-}) {
+function bubbleStyle(sender: string) {
+  const bg = sender === "CLIENT" ? "#fff" : sender === "STAFF" ? "#dbeafe" : "#dcfce7";
+  return { alignSelf: sender === "CLIENT" ? "flex-start" : "flex-end", maxWidth: "70%", background: bg, border: "1px solid #e5e5e5", borderRadius: 8, padding: "8px 12px" } as const;
+}
+
+export default async function ConversationDetailPage({ params }: { params: { id: string } }) {
   const user = await getCurrentUser();
   if (!user) return null;
 
   const conversation = await prisma.conversation.findFirst({
     where: { id: params.id, organizationId: user.organizationId },
-    include: {
-      client: true,
-      messages: { orderBy: { createdAt: "asc" } },
-    },
+    include: { client: true, messages: { orderBy: { createdAt: "asc" } } },
   });
 
   if (!conversation) redirect("/dashboard/conversations");
 
   return (
     <div>
-      <a href="/dashboard/conversations" style={{ fontSize: 13, color: "#2563eb" }}>
-        &larr; Back to Conversations
-      </a>
+      <a href="/dashboard/conversations" style={backLinkStyle}>&larr; Back to Conversations</a>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+      <div style={headerRowStyle}>
         <div>
-          <h1 style={{ marginBottom: 4 }}>{conversation.client.name}</h1>
-          <p style={{ color: "#666", fontSize: 13 }}>
-            {conversation.client.phone} · {conversation.channel} · Status: {conversation.status}
-          </p>
+          <h1 style={titleStyle}>{conversation.client.name}</h1>
+          <p style={subtitleStyle}>{conversation.client.phone} · {conversation.channel} · Status: {conversation.status}</p>
         </div>
         <form action={closeConversation}>
           <input type="hidden" name="conversationId" value={conversation.id} />
-          <button type="submit" style={{ ...buttonStyle, background: "#666" }}>
-            {conversation.status === "CLOSED" ? "Reopen" : "Mark Closed"}
-          </button>
+          <button type="submit" style={closeButtonStyle}>{conversation.status === "CLOSED" ? "Reopen" : "Mark Closed"}</button>
         </form>
       </div>
 
-      <div
-        style={{
-          marginTop: 20,
-          border: "1px solid #e5e5e5",
-          borderRadius: 8,
-          background: "#fafafa",
-          padding: 16,
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-          maxHeight: 500,
-          overflowY: "auto",
-        }}
-      >
+      <div style={threadStyle}>
         {conversation.messages.map((m) => (
-          <div
-            key={m.id}
-            style={{
-              alignSelf: m.sender === "CLIENT" ? "flex-start" : "flex-end",
-              maxWidth: "70%",
-              background: m.sender === "CLIENT" ? "#fff" : m.sender === "STAFF" ? "#dbeafe" : "#dcfce7",
-              border: "1px solid #e5e5e5",
-              borderRadius: 8,
-              padding: "8px 12px",
-            }}
-          >
-            <div style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>
-              {m.sender} · {m.createdAt.toLocaleString()}
-            </div>
-            <div style={{ fontSize: 14, whiteSpace: "pre-wrap" }}>{m.content}</div>
+          <div key={m.id} style={bubbleStyle(m.sender)}>
+            <div style={metaStyle}>{m.sender} · {m.createdAt.toLocaleString()}</div>
+            <div style={contentStyle}>{m.content}</div>
           </div>
         ))}
-        {conversation.messages.length === 0 && (
-          <p style={{ color: "#666", fontSize: 14 }}>No messages yet.</p>
-        )}
+        {conversation.messages.length === 0 && <p style={subtitleStyle}>No messages yet.</p>}
       </div>
 
-      <form
-        action={sendManualReply}
-        style={{ display: "flex", gap: 8, marginTop: 16 }}
-      >
+      <form action={sendManualReply} style={replyFormStyle}>
         <input type="hidden" name="conversationId" value={conversation.id} />
-        <textarea
-          name="text"
-          placeholder="Type a reply to send on WhatsApp..."
-          required
-          rows={2}
-          style={{ ...inputStyle, flex: 1, resize: "vertical" }}
-        />
-        <button type="submit" style={{ ...buttonStyle, alignSelf: "flex-end" }}>
-          Send
-        </button>
+        <textarea name="text" placeholder="Type a reply to send on WhatsApp..." required rows={2} style={textareaStyle} />
+        <button type="submit" style={sendButtonStyle}>Send</button>
       </form>
-      <p style={{ color: "#999", fontSize: 12, marginTop: 6 }}>
-        Free-text replies only deliver within 24 hours of the customer's last message (WhatsApp's
-        rule). Outside that window, use a Template broadcast instead.
+      <p style={hintStyle}>
+        Free-text replies only deliver within 24 hours of the customer's last message (WhatsApp's rule). Outside that window, use a Template broadcast instead.
       </p>
     </div>
   );
 }
 
-const inputStyle = {
-  padding: 8,
-  border: "1px solid #ccc",
-  borderRadius: 6,
-  fontFamily: "inherit",
-  fontSize: 14,
-};
-const buttonStyle = {
-  padding: "8px 16px",
-  background: "#2563eb",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
-  cursor: "pointer",
-};
+const backLinkStyle = { fontSize: 13, color: "#2563eb" };
+const headerRowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 };
+const titleStyle = { marginBottom: 4 };
+const subtitleStyle = { color: "#666", fontSize: 13 };
+const closeButtonStyle = { padding: "8px 16px", background: "#666", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" };
+const threadStyle = { marginTop: 20, border: "1px solid #e5e5e5", borderRadius: 8, background: "#fafafa", padding: 16, display: "flex", flexDirection: "column", gap: 10, maxHeight: 500, overflowY: "auto" } as const;
+const metaStyle = { fontSize: 11, color: "#888", marginBottom: 2 };
+const contentStyle = { fontSize: 14, whiteSpace: "pre-wrap" } as const;
+const replyFormStyle = { display: "flex", gap: 8, marginTop: 16 };
+const textareaStyle = { padding: 8, border: "1px solid #ccc", borderRadius: 6, fontFamily: "inherit", fontSize: 14, flex: 1, resize: "vertical" } as const;
+const sendButtonStyle = { padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", alignSelf: "flex-end" } as const;
+const hintStyle = { color: "#999", fontSize: 12, marginTop: 6 };
