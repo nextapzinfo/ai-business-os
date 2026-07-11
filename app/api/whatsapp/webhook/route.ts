@@ -103,6 +103,18 @@ export async function POST(req: NextRequest) {
       data: { conversationId: conversation.id, sender: "CLIENT", content: text },
     });
 
+    // If staff has "intervened" on this conversation (sent a manual reply), the AI
+    // stays silent so it doesn't talk over a human agent — staff must resume it
+    // from the dashboard. The client's message is still logged above either way.
+    if (conversation.aiPaused) {
+      await logAudit({
+        organizationId: organization.id,
+        action: "WHATSAPP_MESSAGE_RECEIVED_AI_PAUSED",
+        metadata: { clientId: client.id, question: text },
+      });
+      return NextResponse.json({ status: "ai-paused" });
+    }
+
     const queryEmbedding = await embedText(text, "query");
     const vectorLiteral = toVectorLiteral(queryEmbedding);
 
