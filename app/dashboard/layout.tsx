@@ -13,7 +13,6 @@ const navItems: (NavItem & { verticals?: string[] })[] = [
   { href: "/dashboard/agent", label: "Agent Studio" },
   { href: "/dashboard/clients", label: "Clients" },
   { href: "/dashboard/conversations", label: "Conversations" },
-  { href: "/dashboard/documents", label: "Knowledge Base" },
   { href: "/dashboard/reminders", label: "Reminders" },
   { href: "/dashboard/templates", label: "Templates" },
   { href: "/dashboard/broadcasts", label: "Broadcasts" },
@@ -43,12 +42,12 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex min-h-screen bg-gray-50">
-      <aside className="flex w-60 flex-shrink-0 flex-col bg-primary-dark p-4">
-        <div className="flex items-center gap-2.5 px-2 py-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-sm font-bold text-white">
+      <aside className="flex w-52 flex-shrink-0 flex-col bg-primary-dark p-3">
+        <div className="flex items-center gap-2 px-1 py-2.5">
+          <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">
             AI
           </div>
-          <span className="text-base font-semibold text-white">AI Business OS</span>
+          <span className="text-sm font-semibold leading-tight text-white">AI Business OS</span>
         </div>
 
         <div className="mt-4">
