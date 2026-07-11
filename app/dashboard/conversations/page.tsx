@@ -17,7 +17,7 @@ export default async function ConversationsPage() {
   return (
     <div>
       <h1>Conversations</h1>
-      <p style={{ color: "#666", fontSize: 14 }}>
+      <p style={{ color: "rgb(102,102,102)", fontSize: 14 }}>
         Click any row to open the full message thread and reply manually.
       </p>
 
@@ -25,12 +25,12 @@ export default async function ConversationsPage() {
         style={{
           width: "100%",
           borderCollapse: "collapse",
-          background: "#fff",
+          background: "rgb(255,255,255)",
           marginTop: 16,
         }}
       >
         <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e5e5" }}>
+          <tr style={{ textAlign: "left", borderBottom: "1px solid rgb(229,229,229)" }}>
             <th style={thStyle}>Client</th>
             <th style={thStyle}>Channel</th>
             <th style={thStyle}>Status</th>
@@ -39,7 +39,7 @@ export default async function ConversationsPage() {
         </thead>
         <tbody>
           {conversations.map((c) => (
-            <tr key={c.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
+            <tr key={c.id} style={{ borderBottom: "1px solid rgb(240,240,240)" }}>
               <td style={tdStyle} colSpan={4}>
                 
                   href={`/dashboard/conversations/${c.id}`}
@@ -80,5 +80,5 @@ export default async function ConversationsPage() {
   );
 }
 
-const thStyle = { padding: "10px 12px", fontSize: 13, color: "#666" };
+const thStyle = { padding: "10px 12px", fontSize: 13, color: "rgb(102,102,102)" };
 const tdStyle = { padding: "10px 12px", fontSize: 14 };
