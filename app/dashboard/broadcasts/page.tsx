@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { sendWhatsAppTemplateMessage } from "@/lib/whatsapp";
 import { revalidatePath } from "next/cache";
+import { formatDate } from "@/lib/formatDate";
 import ClientCheckboxList from "./ClientCheckboxList";
 
 // Vercel: allow this action longer than the default 10s, since it sends
@@ -80,6 +81,12 @@ async function createBroadcast(formData: FormData) {
   revalidatePath("/dashboard/broadcasts");
 }
 
+function statusBadgeClass(status: string) {
+  if (status === "SENT") return "bg-emerald-100 text-emerald-700";
+  if (status === "FAILED") return "bg-red-100 text-red-700";
+  return "bg-amber-100 text-amber-700";
+}
+
 export default async function BroadcastsPage() {
   const user = await getCurrentUser();
   if (!user) return null;
@@ -105,102 +112,84 @@ export default async function BroadcastsPage() {
 
   return (
     <div>
-      <h1>Broadcasts</h1>
-      <p style={{ color: "#666", fontSize: 14 }}>
-        Send an approved template message to many customers at once. Only
-        templates approved by Meta show up below —{" "}
-        <a href="/dashboard/templates">create/check templates here</a>.
+      <h1 className="text-xl font-semibold text-gray-900">Broadcasts</h1>
+      <p className="mt-1 max-w-2xl text-sm text-gray-500">
+        Send an approved template message to many customers at once. Only templates approved by
+        Meta show up below — <a href="/dashboard/templates" className="text-primary underline">create/check templates here</a>.
       </p>
 
       {approvedTemplates.length === 0 ? (
-        <p style={{ marginTop: 16, color: "#991b1b" }}>
-          No approved templates yet. Create one on the Templates page and wait
-          for Meta approval before you can send a broadcast.
+        <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          No approved templates yet. Create one on the Templates page and wait for Meta approval
+          before you can send a broadcast.
         </p>
       ) : (
-        <form action={createBroadcast} style={{ marginTop: 24, maxWidth: 600 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <input name="name" placeholder="Broadcast name (e.g. Eid Offer - July)" required style={inputStyle} />
-            <select name="templateId" required style={inputStyle} defaultValue="">
-              <option value="" disabled>
-                Select an approved template
-              </option>
-              {approvedTemplates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.language})
+        <div className="mt-5 max-w-xl rounded-xl border border-gray-200 bg-white p-4">
+          <form action={createBroadcast}>
+            <div className="flex flex-col gap-2">
+              <input name="name" placeholder="Broadcast name (e.g. Eid Offer - July)" required className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+              <select name="templateId" required defaultValue="" className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                <option value="" disabled>
+                  Select an approved template
                 </option>
-              ))}
-            </select>
-          </div>
+                {approvedTemplates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.language})
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <h4 style={{ marginTop: 20, marginBottom: 8 }}>Recipients</h4>
-          <ClientCheckboxList clients={clients} />
+            <h4 className="mb-2 mt-4 text-sm font-semibold text-gray-900">Recipients</h4>
+            <ClientCheckboxList clients={clients} />
 
-          <button type="submit" style={{ ...buttonStyle, marginTop: 12 }}>
-            Send Broadcast
-          </button>
-        </form>
+            <button type="submit" className="mt-3 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
+              Send Broadcast
+            </button>
+          </form>
+        </div>
       )}
 
-      <h3 style={{ marginTop: 32 }}>Past broadcasts</h3>
-      <table
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          background: "#fff",
-          marginTop: 8,
-        }}
-      >
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e5e5" }}>
-            <th style={thStyle}>Name</th>
-            <th style={thStyle}>Template</th>
-            <th style={thStyle}>Status</th>
-            <th style={thStyle}>Sent / Failed / Total</th>
-            <th style={thStyle}>Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          {broadcasts.map((b) => {
-            const sent = b.recipients.filter((r) => r.status === "SENT").length;
-            const failed = b.recipients.filter((r) => r.status === "FAILED").length;
-            return (
-              <tr key={b.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                <td style={tdStyle}>{b.name}</td>
-                <td style={tdStyle}>{b.template.name}</td>
-                <td style={tdStyle}>{b.status}</td>
-                <td style={tdStyle}>
-                  {sent} / {failed} / {b.recipients.length}
-                </td>
-                <td style={tdStyle}>{b.createdAt.toLocaleDateString()}</td>
-              </tr>
-            );
-          })}
-          {broadcasts.length === 0 && (
-            <tr>
-              <td style={tdStyle} colSpan={5}>
-                No broadcasts yet.
-              </td>
+      <h3 className="mt-6 text-sm font-semibold text-gray-900">Past broadcasts</h3>
+      <div className="mt-3 overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 text-xs text-gray-500">
+              <th className="px-4 py-3 font-medium">Name</th>
+              <th className="px-4 py-3 font-medium">Template</th>
+              <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Sent / Failed / Total</th>
+              <th className="px-4 py-3 font-medium">Created</th>
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {broadcasts.map((b) => {
+              const sent = b.recipients.filter((r) => r.status === "SENT").length;
+              const failed = b.recipients.filter((r) => r.status === "FAILED").length;
+              return (
+                <tr key={b.id} className="border-b border-gray-50 last:border-0">
+                  <td className="px-4 py-3 font-medium text-gray-900">{b.name}</td>
+                  <td className="px-4 py-3 text-gray-600">{b.template.name}</td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusBadgeClass(b.status)}`}>{b.status}</span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-600">
+                    {sent} / {failed} / {b.recipients.length}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500">{formatDate(b.createdAt)}</td>
+                </tr>
+              );
+            })}
+            {broadcasts.length === 0 && (
+              <tr>
+                <td className="px-4 py-6 text-gray-500" colSpan={5}>
+                  No broadcasts yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
-
-const inputStyle = {
-  padding: 8,
-  border: "1px solid #ccc",
-  borderRadius: 6,
-};
-const buttonStyle = {
-  padding: "8px 16px",
-  background: "#2563eb",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
-  cursor: "pointer",
-};
-const thStyle = { padding: "10px 12px", fontSize: 13, color: "#666" };
-const tdStyle = { padding: "10px 12px", fontSize: 14 };
