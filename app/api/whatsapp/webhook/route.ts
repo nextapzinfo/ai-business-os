@@ -107,13 +107,14 @@ export async function POST(req: NextRequest) {
     const vectorLiteral = toVectorLiteral(queryEmbedding);
 
     const results = (await prisma.$queryRaw`
-      SELECT dc.content as content, d.title as "documentTitle", d.id as "documentId"
+      SELECT dc.content as content, d.title as "documentTitle", d.id as "documentId",
+             (dc.embedding <=> ${vectorLiteral}::vector) as distance
       FROM "DocumentChunk" dc
       JOIN "Document" d ON d.id = dc."documentId"
       WHERE dc."organizationId" = ${organization.id}
       ORDER BY dc.embedding <=> ${vectorLiteral}::vector ASC
       LIMIT 5
-    `) as { content: string; documentTitle: string; documentId: string }[];
+    `) as { content: string; documentTitle: string; documentId: string; distance: number }[];
 
     let answer: string;
     if (results.length === 0) {
@@ -132,8 +133,14 @@ export async function POST(req: NextRequest) {
 
     await sendWhatsAppMessage(from, answer);
 
-    // If the top-matching source is a Retail Product with a photo, send it too.
-    if (results.length > 0) {
+    // If the top-matching source is a Retail Product with a photo, send it too —
+    // but only when that top match is actually close enough to be relevant.
+    // Vector search always returns *something* from the top 5, even for questions
+    // with no real match (e.g. "Balun" when no such product exists); without this
+    // check, the closest-but-irrelevant product's photo would get attached to an
+    // answer where the AI correctly said "I don't know".
+    const PRODUCT_PHOTO_DISTANCE_THRESHOLD = 0.35; // lower = stricter match required; tune from real usage
+    if (results.length > 0 && results[0].distance <= PRODUCT_PHOTO_DISTANCE_THRESHOLD) {
       try {
         const product = await prisma.product.findUnique({
           where: { documentId: results[0].documentId },
