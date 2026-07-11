@@ -51,6 +51,8 @@ model AgentProfile {
   languageStyle        String   @default("mixed") // bn, en, mixed (Bengali/English/Banglish mix)
   skillOrderConfirm    Boolean  @default(false) // placeholder toggle — order-confirmation automation not yet built
   skillReminders       Boolean  @default(false) // placeholder toggle — auto-reminder automation not yet built
+  skillSendQr          Boolean  @default(false) // when true + qrCodeUrl is set, webhook sends the QR on payment-related messages
+  qrCodeUrl            String?  // pre-made payment QR image (uploaded once in Agent Studio), sent as-is — never generated
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
