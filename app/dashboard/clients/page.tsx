@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { readSheetRange } from "@/lib/googleSheets";
 import { revalidatePath } from "next/cache";
+import { formatDate } from "@/lib/formatDate";
 
 // Vercel: importing many customer rows can take a moment.
 export const maxDuration = 60;
@@ -157,7 +158,7 @@ export default async function ClientsPage() {
               <td style={tdStyle}>{c.name}</td>
               <td style={tdStyle}>{c.phone}</td>
               <td style={tdStyle}>{c.email || "-"}</td>
-              <td style={tdStyle}>{c.createdAt.toLocaleDateString()}</td>
+              <td style={tdStyle}>{formatDate(c.createdAt)}</td>
             </tr>
           ))}
           {clients.length === 0 && (
