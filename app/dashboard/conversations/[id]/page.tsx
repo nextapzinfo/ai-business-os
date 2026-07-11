@@ -4,6 +4,10 @@ import { logAudit } from "@/lib/audit";
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { formatDateTime } from "@/lib/formatDate";
+import AutoRefresh from "@/components/AutoRefresh";
+
+export const dynamic = "force-dynamic";
 
 async function sendManualReply(formData: FormData) {
   "use server";
@@ -83,6 +87,7 @@ export default async function ConversationDetailPage({ params }: { params: { id:
 
   return (
     <div>
+      <AutoRefresh intervalMs={8000} />
       <a href="/dashboard/conversations" style={backLinkStyle}>&larr; Back to Conversations</a>
 
       <div style={headerRowStyle}>
@@ -99,7 +104,7 @@ export default async function ConversationDetailPage({ params }: { params: { id:
       <div style={threadStyle}>
         {conversation.messages.map((m) => (
           <div key={m.id} style={bubbleStyle(m.sender)}>
-            <div style={metaStyle}>{m.sender} · {m.createdAt.toLocaleString()}</div>
+            <div style={metaStyle}>{m.sender} · {formatDateTime(m.createdAt)}</div>
             <div style={contentStyle}>{m.content}</div>
           </div>
         ))}
