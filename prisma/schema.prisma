@@ -109,6 +109,7 @@ model Conversation {
   client         Client       @relation(fields: [clientId], references: [id])
   channel        String       @default("WHATSAPP")
   status         String       @default("OPEN") // OPEN, ESCALATED, CLOSED
+  aiPaused       Boolean      @default(false) // true once staff "intervenes" — AI stops auto-replying until resumed
   createdAt      DateTime     @default(now())
 
   messages Message[]
