@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { createMetaMessageTemplate, getMetaTemplateStatus } from "@/lib/whatsapp";
 import { revalidatePath } from "next/cache";
+import { formatDate } from "@/lib/formatDate";
 
 function toMetaTemplateName(label: string): string {
   return label
@@ -92,6 +93,12 @@ async function refreshStatus(formData: FormData) {
   revalidatePath("/dashboard/templates");
 }
 
+function statusBadgeClass(status: string) {
+  if (status === "APPROVED") return "bg-emerald-100 text-emerald-700";
+  if (status === "REJECTED") return "bg-red-100 text-red-700";
+  return "bg-amber-100 text-amber-700";
+}
+
 export default async function TemplatesPage() {
   const user = await getCurrentUser();
   if (!user) return null;
@@ -103,142 +110,100 @@ export default async function TemplatesPage() {
 
   return (
     <div>
-      <h1>Message Templates</h1>
-      <p style={{ color: "#666", fontSize: 14 }}>
-        Templates must be approved by Meta before they can be used in a bulk
-        broadcast (required for messaging customers outside the 24-hour
-        window). Approval usually takes a few minutes to a couple of days.
-        Use <code>{"{{1}}"}</code>, <code>{"{{2}}"}</code> etc. in the body
-        text for variables (e.g. customer name).
+      <h1 className="text-xl font-semibold text-gray-900">Message Templates</h1>
+      <p className="mt-1 max-w-2xl text-sm text-gray-500">
+        Templates must be approved by Meta before use in a bulk broadcast (required outside the
+        24-hour customer window). Approval usually takes a few minutes to a couple of days. Use{" "}
+        <code className="rounded bg-gray-100 px-1">{"{{1}}"}</code>,{" "}
+        <code className="rounded bg-gray-100 px-1">{"{{2}}"}</code> etc. in the body text for
+        variables (e.g. customer name).
       </p>
 
-      <h3 style={{ marginTop: 24 }}>Create new template</h3>
-      <form
-        action={createTemplate}
-        style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 600 }}
-      >
-        <input name="name" placeholder="Internal name (e.g. Eid Offer)" required style={inputStyle} />
-        <select name="category" required style={inputStyle} defaultValue="MARKETING">
-          <option value="MARKETING">Marketing</option>
-          <option value="UTILITY">Utility</option>
-          <option value="AUTHENTICATION">Authentication</option>
-        </select>
-        <select name="language" required style={inputStyle} defaultValue="bn">
-          <option value="bn">Bengali</option>
-          <option value="en">English</option>
-          <option value="en_US">English (US)</option>
-        </select>
-        <textarea
-          name="bodyText"
-          placeholder={"e.g. Hi {{1}}, Eid Mubarak! Enjoy 20% off this week at Banglar Doi."}
-          required
-          rows={4}
-          style={{ ...inputStyle, fontFamily: "inherit" }}
-        />
-        <button type="submit" style={{ ...buttonStyle, alignSelf: "flex-start" }}>
-          Submit for Approval
-        </button>
-      </form>
+      <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
+        <h3 className="text-sm font-semibold text-gray-900">Create new template</h3>
+        <form action={createTemplate} className="mt-3 flex max-w-xl flex-col gap-2">
+          <input name="name" placeholder="Internal name (e.g. Eid Offer)" required className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+          <select name="category" required defaultValue="MARKETING" className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
+            <option value="MARKETING">Marketing</option>
+            <option value="UTILITY">Utility</option>
+            <option value="AUTHENTICATION">Authentication</option>
+          </select>
+          <select name="language" required defaultValue="bn" className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
+            <option value="bn">Bengali</option>
+            <option value="en">English</option>
+            <option value="en_US">English (US)</option>
+          </select>
+          <textarea
+            name="bodyText"
+            placeholder={"e.g. Hi {{1}}, Eid Mubarak! Enjoy 20% off this week at Banglar Doi."}
+            required
+            rows={4}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+          <button type="submit" className="self-start rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
+            Submit for Approval
+          </button>
+        </form>
+      </div>
 
-      <h3 style={{ marginTop: 32 }}>Templates</h3>
-      <table
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          background: "#fff",
-          marginTop: 8,
-        }}
-      >
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e5e5" }}>
-            <th style={thStyle}>Name</th>
-            <th style={thStyle}>Category</th>
-            <th style={thStyle}>Language</th>
-            <th style={thStyle}>Status</th>
-            <th style={thStyle}>Created</th>
-            <th style={thStyle}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {templates.map((t) => (
-            <tr key={t.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-              <td style={tdStyle}>{t.name}</td>
-              <td style={tdStyle}>{t.category}</td>
-              <td style={tdStyle}>{t.language}</td>
-              <td style={tdStyle}>
-                <span
-                  style={{
-                    padding: "2px 8px",
-                    borderRadius: 4,
-                    fontSize: 12,
-                    background:
-                      t.status === "APPROVED"
-                        ? "#dcfce7"
-                        : t.status === "REJECTED"
-                        ? "#fee2e2"
-                        : "#fef9c3",
-                    color:
-                      t.status === "APPROVED"
-                        ? "#166534"
-                        : t.status === "REJECTED"
-                        ? "#991b1b"
-                        : "#854d0e",
-                  }}
-                >
-                  {t.status}
-                </span>
-              </td>
-              <td style={tdStyle}>{t.createdAt.toLocaleDateString()}</td>
-              <td style={tdStyle}>
-                {t.status === "PENDING" && t.metaTemplateId && (
-                  <form action={refreshStatus}>
-                    <input type="hidden" name="templateId" value={t.id} />
-                    <button type="submit" style={{ ...buttonStyle, padding: "4px 10px", fontSize: 12 }}>
-                      Refresh
-                    </button>
-                  </form>
-                )}
-              </td>
+      <h3 className="mt-6 text-sm font-semibold text-gray-900">Templates</h3>
+      <div className="mt-3 overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 text-xs text-gray-500">
+              <th className="px-4 py-3 font-medium">Name</th>
+              <th className="px-4 py-3 font-medium">Category</th>
+              <th className="px-4 py-3 font-medium">Language</th>
+              <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Created</th>
+              <th className="px-4 py-3 font-medium"></th>
             </tr>
-          ))}
-          {templates.some((t) => t.status === "REJECTED" && t.rejectionReason) && (
-            <tr>
-              <td style={{ ...tdStyle, fontSize: 12, color: "#991b1b" }} colSpan={6}>
-                {templates
-                  .filter((t) => t.status === "REJECTED" && t.rejectionReason)
-                  .map((t) => (
-                    <div key={t.id} style={{ marginBottom: 4 }}>
-                      <strong>{t.name}:</strong> {t.rejectionReason}
-                    </div>
-                  ))}
-              </td>
-            </tr>
-          )}
-          {templates.length === 0 && (
-            <tr>
-              <td style={tdStyle} colSpan={6}>
-                No templates yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {templates.map((t) => (
+              <tr key={t.id} className="border-b border-gray-50 last:border-0">
+                <td className="px-4 py-3 font-medium text-gray-900">{t.name}</td>
+                <td className="px-4 py-3 text-gray-600">{t.category}</td>
+                <td className="px-4 py-3 text-gray-600">{t.language}</td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusBadgeClass(t.status)}`}>{t.status}</span>
+                </td>
+                <td className="px-4 py-3 text-gray-500">{formatDate(t.createdAt)}</td>
+                <td className="px-4 py-3">
+                  {t.status === "PENDING" && t.metaTemplateId && (
+                    <form action={refreshStatus}>
+                      <input type="hidden" name="templateId" value={t.id} />
+                      <button type="submit" className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">
+                        Refresh
+                      </button>
+                    </form>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {templates.some((t) => t.status === "REJECTED" && t.rejectionReason) && (
+              <tr>
+                <td className="px-4 py-3 text-xs text-red-700" colSpan={6}>
+                  {templates
+                    .filter((t) => t.status === "REJECTED" && t.rejectionReason)
+                    .map((t) => (
+                      <div key={t.id} className="mb-1">
+                        <strong>{t.name}:</strong> {t.rejectionReason}
+                      </div>
+                    ))}
+                </td>
+              </tr>
+            )}
+            {templates.length === 0 && (
+              <tr>
+                <td className="px-4 py-6 text-gray-500" colSpan={6}>
+                  No templates yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
-
-const inputStyle = {
-  padding: 8,
-  border: "1px solid #ccc",
-  borderRadius: 6,
-};
-const buttonStyle = {
-  padding: "8px 16px",
-  background: "#2563eb",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
-  cursor: "pointer",
-};
-const thStyle = { padding: "10px 12px", fontSize: 13, color: "#666" };
-const tdStyle = { padding: "10px 12px", fontSize: 14 };
