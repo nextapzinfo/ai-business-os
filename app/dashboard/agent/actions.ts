@@ -6,7 +6,7 @@ import { logAudit } from "@/lib/audit";
 import { chunkText } from "@/lib/chunk";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import { revalidatePath } from "next/cache";
-import { put } from "@vercel/blob";
+import { put, del } from "@vercel/blob";
 
 export type AgentProfileData = {
   businessName: string;
@@ -237,6 +237,36 @@ export async function uploadQrCode(formData: FormData) {
     organizationId: user.organizationId,
     userId: user.id,
     action: "QR_CODE_UPLOADED",
+  });
+
+  revalidatePath("/dashboard/agent");
+}
+
+export async function deleteQrCode() {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const profile = await prisma.agentProfile.findUnique({
+    where: { organizationId: user.organizationId },
+  });
+  if (!profile?.qrCodeUrl) return;
+
+  try {
+    await del(profile.qrCodeUrl);
+  } catch (err) {
+    console.error("QR code blob delete failed:", err);
+  }
+
+  // Also turn the skill off — no point leaving it enabled with nothing to send.
+  await prisma.agentProfile.update({
+    where: { organizationId: user.organizationId },
+    data: { qrCodeUrl: null, skillSendQr: false },
+  });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "QR_CODE_DELETED",
   });
 
   revalidatePath("/dashboard/agent");
