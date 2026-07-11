@@ -10,11 +10,13 @@ import {
   FileText,
   Megaphone,
   Package,
+  Bot,
   type LucideIcon,
 } from "lucide-react";
 
 const ICONS: Record<string, LucideIcon> = {
   "/dashboard": LayoutDashboard,
+  "/dashboard/agent": Bot,
   "/dashboard/clients": Users,
   "/dashboard/conversations": MessageSquare,
   "/dashboard/documents": BookOpen,
