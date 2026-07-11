@@ -42,7 +42,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex min-h-screen bg-gray-50">
-      <aside className="flex w-52 flex-shrink-0 flex-col bg-primary-dark p-3">
+      <aside className="sticky top-0 flex h-screen w-52 flex-shrink-0 flex-col overflow-y-auto bg-primary-dark p-3">
         <div className="flex items-center gap-2 px-1 py-2.5">
           <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">
             AI
