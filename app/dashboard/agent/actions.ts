@@ -8,6 +8,11 @@ import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import { revalidatePath } from "next/cache";
 import { put } from "@vercel/blob";
 
+// Knowledge file uploads (PDF/DOCX) get chunked + embedded one piece at a time,
+// which can take a while for longer documents — give it more room than the
+// serverless default before Vercel kills the function.
+export const maxDuration = 60;
+
 export type AgentProfileData = {
   businessName: string;
   greetingMessage: string;
@@ -38,6 +43,74 @@ export async function saveAgentProfile(data: AgentProfileData) {
   revalidatePath("/dashboard/agent");
 }
 
+// Shared by both the "paste text" and "upload file" Knowledge tab forms — chunks
+// the raw text, embeds each chunk, and marks the Document PROCESSED/FAILED.
+async function processKnowledgeContent(organizationId: string, documentId: string, content: string) {
+  try {
+    const trimmed = content.trim();
+    if (!trimmed) throw new Error("No readable text found.");
+
+    const pieces = chunkText(trimmed);
+
+    for (let i = 0; i < pieces.length; i++) {
+      const chunk = await prisma.documentChunk.create({
+        data: {
+          organizationId,
+          documentId,
+          content: pieces[i],
+          chunkIndex: i,
+        },
+      });
+
+      const embedding = await embedText(pieces[i], "document");
+      const vectorLiteral = toVectorLiteral(embedding);
+
+      await prisma.$executeRaw`
+        UPDATE "DocumentChunk" SET embedding = ${vectorLiteral}::vector WHERE id = ${chunk.id}
+      `;
+    }
+
+    await prisma.document.update({
+      where: { id: documentId },
+      data: { status: "PROCESSED" },
+    });
+  } catch (err) {
+    await prisma.document.update({
+      where: { id: documentId },
+      data: { status: "FAILED" },
+    });
+    console.error("Knowledge content processing failed:", err);
+  }
+}
+
+// Extracts plain text from an uploaded Knowledge file. PDF/DOCX use small
+// dedicated parser libraries; everything else (txt, csv, md) is read as-is.
+async function extractTextFromFile(file: File): Promise<string> {
+  const name = file.name.toLowerCase();
+  const buffer = Buffer.from(await file.arrayBuffer());
+
+  if (name.endsWith(".pdf")) {
+    const pdfParse = (await import("pdf-parse/lib/pdf-parse.js")).default as (
+      data: Buffer
+    ) => Promise<{ text: string }>;
+    const data = await pdfParse(buffer);
+    return data.text;
+  }
+
+  if (name.endsWith(".docx")) {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value;
+  }
+
+  if (name.endsWith(".doc")) {
+    throw new Error("Old .doc format isn't supported — save as .docx or .pdf and try again.");
+  }
+
+  // txt, csv, md, and anything else plain-text
+  return buffer.toString("utf-8");
+}
+
 // Knowledge tab (Agent Studio) — this is the same underlying Document/DocumentChunk
 // pipeline that used to live on its own "/dashboard/documents" page; it now lives
 // inside Agent Studio since the knowledge base is really just part of configuring
@@ -59,44 +132,52 @@ export async function addKnowledgeDocument(formData: FormData) {
     },
   });
 
-  try {
-    const pieces = chunkText(content);
-
-    for (let i = 0; i < pieces.length; i++) {
-      const chunk = await prisma.documentChunk.create({
-        data: {
-          organizationId: user.organizationId,
-          documentId: document.id,
-          content: pieces[i],
-          chunkIndex: i,
-        },
-      });
-
-      const embedding = await embedText(pieces[i], "document");
-      const vectorLiteral = toVectorLiteral(embedding);
-
-      await prisma.$executeRaw`
-        UPDATE "DocumentChunk" SET embedding = ${vectorLiteral}::vector WHERE id = ${chunk.id}
-      `;
-    }
-
-    await prisma.document.update({
-      where: { id: document.id },
-      data: { status: "PROCESSED" },
-    });
-  } catch (err) {
-    await prisma.document.update({
-      where: { id: document.id },
-      data: { status: "FAILED" },
-    });
-    console.error("Knowledge document processing failed:", err);
-  }
+  await processKnowledgeContent(user.organizationId, document.id, content);
 
   await logAudit({
     organizationId: user.organizationId,
     userId: user.id,
     action: "DOCUMENT_UPLOADED",
     metadata: { documentId: document.id, title },
+  });
+
+  revalidatePath("/dashboard/agent");
+}
+
+// File version of the above — accepts PDF/DOCX/TXT/CSV, extracts the text, then
+// runs it through the same chunk+embed pipeline.
+export async function uploadKnowledgeFile(formData: FormData) {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const file = formData.get("file") as File | null;
+  const titleInput = (formData.get("title") as string)?.trim();
+  if (!file || file.size === 0) return;
+
+  const title = titleInput || file.name.replace(/\.[^/.]+$/, "");
+
+  const document = await prisma.document.create({
+    data: {
+      organizationId: user.organizationId,
+      title,
+      fileUrl: `uploaded-file:${file.name}`,
+      status: "PENDING",
+    },
+  });
+
+  try {
+    const content = await extractTextFromFile(file);
+    await processKnowledgeContent(user.organizationId, document.id, content);
+  } catch (err) {
+    await prisma.document.update({ where: { id: document.id }, data: { status: "FAILED" } });
+    console.error("Knowledge file text extraction failed:", err);
+  }
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "DOCUMENT_FILE_UPLOADED",
+    metadata: { documentId: document.id, title, fileName: file.name },
   });
 
   revalidatePath("/dashboard/agent");
