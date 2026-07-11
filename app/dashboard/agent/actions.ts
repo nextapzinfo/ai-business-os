@@ -8,11 +8,6 @@ import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import { revalidatePath } from "next/cache";
 import { put } from "@vercel/blob";
 
-// Knowledge file uploads (PDF/DOCX) get chunked + embedded one piece at a time,
-// which can take a while for longer documents — give it more room than the
-// serverless default before Vercel kills the function.
-export const maxDuration = 60;
-
 export type AgentProfileData = {
   businessName: string;
   greetingMessage: string;
