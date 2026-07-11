@@ -18,8 +18,7 @@ export default async function ConversationsPage() {
     <div>
       <h1>Conversations</h1>
       <p style={{ color: "#666", fontSize: 14 }}>
-        WhatsApp conversations will populate here automatically once Phase 3
-        (direct Meta Cloud API integration) is connected.
+        Click any row to open the full message thread and reply manually.
       </p>
 
       <table
@@ -41,10 +40,31 @@ export default async function ConversationsPage() {
         <tbody>
           {conversations.map((c) => (
             <tr key={c.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-              <td style={tdStyle}>{c.client.name}</td>
-              <td style={tdStyle}>{c.channel}</td>
-              <td style={tdStyle}>{c.status}</td>
-              <td style={tdStyle}>{c.messages[0]?.content ?? "-"}</td>
+              <td style={tdStyle} colSpan={4}>
+                
+                  href={`/dashboard/conversations/${c.id}`}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr 1fr 3fr",
+                    gap: 12,
+                    color: "inherit",
+                    textDecoration: "none",
+                  }}
+                >
+                  <span>{c.client.name}</span>
+                  <span>{c.channel}</span>
+                  <span>{c.status}</span>
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {c.messages[0]?.content ?? "-"}
+                  </span>
+                </a>
+              </td>
             </tr>
           ))}
           {conversations.length === 0 && (
