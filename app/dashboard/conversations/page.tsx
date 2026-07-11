@@ -1,5 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/getCurrentUser";
+import AutoRefresh from "@/components/AutoRefresh";
+
+export const dynamic = "force-dynamic";
 
 export default async function ConversationsPage() {
   const user = await getCurrentUser();
@@ -16,6 +19,7 @@ export default async function ConversationsPage() {
 
   return (
     <div>
+      <AutoRefresh intervalMs={8000} />
       <h1>Conversations</h1>
       <p style={{ color: "#666", fontSize: 14 }}>
         Click any row to open the full message thread and reply manually.
