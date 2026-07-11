@@ -23,6 +23,14 @@ function getAuth(): GoogleAuth {
   return cachedAuth;
 }
 
+// Accepts either a bare Spreadsheet ID or a full Google Sheets URL and always
+// returns just the ID — protects against users pasting the whole URL.
+function extractSpreadsheetId(input: string): string {
+  const trimmed = input.trim();
+  const match = trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : trimmed;
+}
+
 async function getAccessToken(): Promise<string> {
   const auth = getAuth();
   const client = await auth.getClient();
@@ -40,7 +48,8 @@ export async function readSheetRange(
   range: string
 ): Promise<string[][]> {
   const token = await getAccessToken();
-  const url = `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`;
+  const id = extractSpreadsheetId(spreadsheetId);
+  const url = `${SHEETS_API_BASE}/${id}/values/${encodeURIComponent(range)}`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -67,7 +76,8 @@ export async function appendSheetRow(
   row: (string | number)[]
 ): Promise<void> {
   const token = await getAccessToken();
-  const url = `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(
+  const id = extractSpreadsheetId(spreadsheetId);
+  const url = `${SHEETS_API_BASE}/${id}/values/${encodeURIComponent(
     range
   )}:append?valueInputOption=USER_ENTERED`;
 
