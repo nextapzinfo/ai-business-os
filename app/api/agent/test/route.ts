@@ -8,6 +8,7 @@ import {
   SAVE_ADDRESS_TOOL,
   SET_REMINDER_TOOL,
   RECORD_INTEREST_TOOL,
+  PLACE_ORDER_TOOL,
   type ToolDefinition,
 } from "@/lib/llm";
 
@@ -26,6 +27,11 @@ async function simulateTool(name: string, args: Record<string, any>): Promise<st
     return `[Sandbox only — not actually recorded] Would note interest in "${args.productName}"${
       args.note ? ` (${args.note})` : ""
     }`;
+  }
+  if (name === "record_order") {
+    return `[Sandbox only — not actually recorded] Would record order: ${args.items}${
+      args.deliveryAddress ? ` — deliver to: ${args.deliveryAddress}` : ""
+    }${args.note ? ` (${args.note})` : ""}`;
   }
   return "Unknown tool.";
 }
@@ -65,6 +71,7 @@ export async function POST(req: NextRequest) {
     if (body.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);
     if (body.skillReminders) tools.push(SET_REMINDER_TOOL);
     if (body.skillTrackInterest) tools.push(RECORD_INTEREST_TOOL);
+    if (body.skillTakeOrders) tools.push(PLACE_ORDER_TOOL);
 
     let answer: string;
     if (results.length === 0 && tools.length === 0) {
