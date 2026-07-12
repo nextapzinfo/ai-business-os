@@ -34,14 +34,14 @@ export default async function ConversationsLayout({ children }: { children: Reac
     <div className="flex overflow-hidden" style={{ height: "calc(100vh - 64px)" }}>
       <AutoRefresh intervalMs={8000} />
 
-      <div className="flex w-72 flex-shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white">
-        <div className="flex-shrink-0 border-b border-gray-100 px-4 py-3">
+      <div className="flex w-[260px] flex-shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white">
+        <div className="flex-shrink-0 border-b border-gray-100 px-3 py-2.5">
           <h2 className="text-sm font-semibold text-gray-900">Conversations</h2>
         </div>
         <ConversationList conversations={items} />
       </div>
 
-      <div className="min-w-0 flex-1 overflow-hidden pl-6">{children}</div>
+      <div className="min-w-0 flex-1 overflow-hidden pl-4">{children}</div>
     </div>
   );
 }
