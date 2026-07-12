@@ -35,6 +35,7 @@ model Organization {
   broadcasts       Broadcast[]
   products         Product[]
   agentProfile     AgentProfile?
+  clientProductInterests ClientProductInterest[]
 }
 
 // Configures how the WhatsApp AI presents itself and behaves — replaces the
@@ -54,6 +55,7 @@ model AgentProfile {
   skillSendQr          Boolean  @default(false) // when true + qrCodeUrl is set, webhook sends the QR on payment-related messages
   qrCodeUrl            String?  // pre-made payment QR image (uploaded once in Agent Studio), sent as-is — never generated
   skillSaveAddress     Boolean  @default(false) // when true, AI can save/update a customer's address via function-calling
+  skillTrackInterest   Boolean  @default(false) // when true, AI can note which product a customer is interested in
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -89,6 +91,7 @@ model Client {
   conversations        Conversation[]
   reminders            Reminder[]
   broadcastRecipients  BroadcastRecipient[]
+  productInterests     ClientProductInterest[]
 
   @@index([organizationId])
 }
@@ -250,5 +253,28 @@ model Product {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
+  clientInterests ClientProductInterest[]
+
   @@index([organizationId])
+}
+
+// Tracks which customers have shown interest in which products, noted by the AI
+// mid-conversation (or by staff) — one row per client+product pair so repeated
+// interest just refreshes the note/timestamp instead of piling up duplicates.
+// Surfaced as chips on the Clients page for staff follow-up.
+model ClientProductInterest {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  clientId       String
+  client         Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  note           String? // optional short context from the conversation
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([clientId, productId])
+  @@index([organizationId])
+  @@index([clientId])
 }
