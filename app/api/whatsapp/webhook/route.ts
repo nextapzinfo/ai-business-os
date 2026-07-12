@@ -279,6 +279,26 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Same idea for Events (festival specials, sale announcements) — opt-in via
+    // the Skills toggle since owners may not always want promo photos auto-sent.
+    const EVENT_PHOTO_DISTANCE_THRESHOLD = 0.35;
+    if (
+      agentProfile?.skillSendEventPhotos &&
+      results.length > 0 &&
+      results[0].distance <= EVENT_PHOTO_DISTANCE_THRESHOLD
+    ) {
+      try {
+        const event = await prisma.event.findUnique({
+          where: { documentId: results[0].documentId },
+        });
+        if (event?.imageUrl) {
+          await sendWhatsAppImageMessage(from, event.imageUrl, event.title);
+        }
+      } catch (err) {
+        console.error("Event image send failed:", err);
+      }
+    }
+
     await logAudit({
       organizationId: organization.id,
       action: "WHATSAPP_MESSAGE_ANSWERED",
