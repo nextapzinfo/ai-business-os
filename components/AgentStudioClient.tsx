@@ -6,6 +6,7 @@ import {
   saveAgentProfile,
   addKnowledgeDocument,
   uploadKnowledgeFile,
+  crawlWebsite,
   deleteKnowledgeDocument,
   uploadQrCode,
   deleteQrCode,
@@ -417,6 +418,35 @@ export default function AgentStudioClient({
                     className="self-start rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light"
                   >
                     Upload File
+                  </button>
+                </form>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-gray-900">Or crawl a website</h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  Give a public page URL (your website, an about/FAQ page) and its text gets added
+                  automatically. Doesn't work for Facebook pages or anything behind a login — copy-paste
+                  that content into "paste text" above instead.
+                </p>
+                <form action={crawlWebsite} key={`crawl-${initialDocuments.length}`} className="mt-3 flex flex-col gap-2">
+                  <input
+                    name="url"
+                    type="url"
+                    placeholder="https://yourbusiness.com/about"
+                    required
+                    className={inputClass}
+                  />
+                  <input
+                    name="title"
+                    placeholder="Title (optional — defaults to the page title)"
+                    className={inputClass}
+                  />
+                  <button
+                    type="submit"
+                    className="self-start rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light"
+                  >
+                    Crawl Page
                   </button>
                 </form>
               </div>
