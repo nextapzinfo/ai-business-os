@@ -49,6 +49,7 @@ model AgentProfile {
   businessName         String?
   greetingMessage      String?
   businessDescription  String?
+  customInstructions   String?  // free-text rules the owner writes, always injected into the system prompt (not RAG-dependent)
   tone                 String   @default("friendly") // friendly, formal, casual
   languageStyle        String   @default("mixed") // bn, en, mixed (Bengali/English/Banglish mix)
   skillOrderConfirm    Boolean  @default(false) // placeholder toggle — order-confirmation automation not yet built
