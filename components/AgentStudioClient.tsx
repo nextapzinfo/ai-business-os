@@ -84,6 +84,8 @@ export default function AgentStudioClient({
           businessDescription: form.businessDescription,
           tone: form.tone,
           languageStyle: form.languageStyle,
+          skillSaveAddress: form.skillSaveAddress,
+          skillReminders: form.skillReminders,
         }),
       });
       const data = await res.json();
@@ -219,9 +221,48 @@ export default function AgentStudioClient({
               <div className="rounded-xl border border-gray-200 bg-white p-4">
                 <h3 className="text-sm font-semibold text-gray-900">Skills</h3>
                 <p className="mt-1 text-xs text-gray-500">
-                  Toggle what the AI is allowed to do. <span className="font-medium text-amber-600">Note:</span>{" "}
-                  order-confirm and reminder automation aren't built yet — enabling them here just records the
-                  setting for now.
+                  These are live — the AI actually decides mid-conversation whether to use them, based on what
+                  the customer says.
+                </p>
+                <div className="mt-3 flex flex-col gap-3">
+                  <label className="flex items-start gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={form.skillSaveAddress}
+                      onChange={(e) => update("skillSaveAddress", e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Save customer address
+                      <span className="block text-xs text-gray-400">
+                        When a customer shares their address, the AI saves it to their client record.
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={form.skillReminders}
+                      onChange={(e) => update("skillReminders", e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Set reminders when asked
+                      <span className="block text-xs text-gray-400">
+                        When a customer asks to be followed up or reminded about something on a date, the AI
+                        creates a reminder (visible on the Reminders page). Doesn't send the reminder message
+                        automatically yet — that's tracked here for staff to action.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-gray-900">Coming soon</h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  <span className="font-medium text-amber-600">Note:</span> automation for this isn't built
+                  yet — enabling it here just records the setting for now.
                 </p>
                 <div className="mt-3 flex flex-col gap-2">
                   <label className="flex items-center gap-2 text-sm text-gray-700">
@@ -231,14 +272,6 @@ export default function AgentStudioClient({
                       onChange={(e) => update("skillOrderConfirm", e.target.checked)}
                     />
                     Confirm orders automatically
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={form.skillReminders}
-                      onChange={(e) => update("skillReminders", e.target.checked)}
-                    />
-                    Send automatic follow-up reminders
                   </label>
                 </div>
               </div>
