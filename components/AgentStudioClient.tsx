@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, Volume2, Zap, BookOpen, Check, QrCode, Plus, X } from "lucide-react";
+import { Building2, Volume2, Zap, BookOpen, Check, QrCode, Plus, X, Pencil } from "lucide-react";
 import {
   saveAgentProfile,
   addKnowledgeDocument,
@@ -91,6 +91,55 @@ export default function AgentStudioClient({
   function updateBrandLang(next: BrandLanguageState) {
     setBrandLang(next);
     update("brandLanguage", serializeBrandLanguage(next));
+  }
+
+  // Custom instructions are stored as one big newline-separated string in the
+  // DB (AgentProfileData.customInstructions), same trick as Brand Language —
+  // but staff manage them here as a proper list: add one at a time, edit or
+  // delete any single line, without touching the others.
+  const [instructions, setInstructions] = useState<string[]>(() =>
+    initialProfile.customInstructions
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+  const [newInstruction, setNewInstruction] = useState("");
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+
+  function commitInstructions(next: string[]) {
+    setInstructions(next);
+    update("customInstructions", next.join("\n"));
+  }
+
+  function addInstruction() {
+    const val = newInstruction.trim();
+    if (!val) return;
+    commitInstructions([...instructions, val]);
+    setNewInstruction("");
+  }
+
+  function removeInstruction(i: number) {
+    commitInstructions(instructions.filter((_, idx) => idx !== i));
+    if (editingIndex === i) setEditingIndex(null);
+  }
+
+  function startEditInstruction(i: number) {
+    setEditingIndex(i);
+    setEditingValue(instructions[i]);
+  }
+
+  function commitEditInstruction() {
+    if (editingIndex === null) return;
+    const val = editingValue.trim();
+    if (!val) {
+      removeInstruction(editingIndex);
+    } else {
+      const next = [...instructions];
+      next[editingIndex] = val;
+      commitInstructions(next);
+    }
+    setEditingIndex(null);
   }
 
   const [sandboxMessages, setSandboxMessages] = useState<SandboxMessage[]>([]);
@@ -227,22 +276,86 @@ export default function AgentStudioClient({
                     className={inputClass}
                   />
                 </label>
-                <label className="text-xs font-medium text-gray-600">
-                  Custom instructions
-                  <span className="block text-[11px] font-normal text-gray-400">
+                <div>
+                  <p className="text-xs font-medium text-gray-600">Custom instructions</p>
+                  <p className="text-[11px] font-normal text-gray-400">
                     Always-on rules for the AI — not just used when relevant like Knowledge, these apply to
                     every single reply. e.g. "Never mention competitor brands", "Always offer home delivery
                     for orders above ৳500", "If someone orders more than 5kg, tell them to call the shop
                     directly".
-                  </span>
-                  <textarea
-                    value={form.customInstructions}
-                    onChange={(e) => update("customInstructions", e.target.value)}
-                    placeholder="One instruction per line..."
-                    rows={4}
-                    className={inputClass}
-                  />
-                </label>
+                  </p>
+
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {instructions.map((instr, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center gap-2 rounded-lg border border-gray-200 px-2.5 py-1.5"
+                      >
+                        {editingIndex === i ? (
+                          <>
+                            <input
+                              value={editingValue}
+                              onChange={(e) => setEditingValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") commitEditInstruction();
+                                if (e.key === "Escape") setEditingIndex(null);
+                              }}
+                              autoFocus
+                              className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={commitEditInstruction}
+                              className="flex-shrink-0 rounded-lg p-1.5 text-accent hover:bg-emerald-50"
+                            >
+                              <Check size={14} />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="flex-1 text-xs text-gray-700">{instr}</span>
+                            <button
+                              type="button"
+                              onClick={() => startEditInstruction(i)}
+                              className="flex-shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-primary"
+                            >
+                              <Pencil size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeInstruction(i)}
+                              className="flex-shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                            >
+                              <X size={14} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                    {instructions.length === 0 && (
+                      <p className="text-xs text-gray-400">No instructions yet — add one below.</p>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={newInstruction}
+                        onChange={(e) => setNewInstruction(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") addInstruction();
+                        }}
+                        placeholder="e.g. Never mention competitor brands"
+                        className="flex-1 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={addInstruction}
+                        className="flex-shrink-0 rounded-lg border border-dashed border-gray-300 p-1.5 text-gray-500 hover:border-primary hover:text-primary"
+                      >
+                        <Plus size={15} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
