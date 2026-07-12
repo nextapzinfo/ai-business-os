@@ -158,7 +158,12 @@ export async function POST(req: NextRequest) {
         const qrCaption = "এই QR কোড স্ক্যান করে পেমেন্ট করতে পারেন।";
         await sendWhatsAppMessage(from, qrCaption);
         await prisma.message.create({
-          data: { conversationId: conversation.id, sender: "AI", content: `[Sent payment QR code] ${qrCaption}` },
+          data: {
+            conversationId: conversation.id,
+            sender: "AI",
+            content: `[Sent payment QR code] ${qrCaption}`,
+            imageUrl: agentProfile.qrCodeUrl,
+          },
         });
         await logAudit({
           organizationId: organization.id,
@@ -306,6 +311,14 @@ export async function POST(req: NextRequest) {
         });
         if (product?.imageUrl) {
           await sendWhatsAppImageMessage(from, product.imageUrl, product.name);
+          await prisma.message.create({
+            data: {
+              conversationId: conversation.id,
+              sender: "AI",
+              content: `[Sent photo] ${product.name}`,
+              imageUrl: product.imageUrl,
+            },
+          });
         }
       } catch (err) {
         console.error("Product image send failed:", err);
@@ -326,6 +339,14 @@ export async function POST(req: NextRequest) {
         });
         if (event?.imageUrl) {
           await sendWhatsAppImageMessage(from, event.imageUrl, event.title);
+          await prisma.message.create({
+            data: {
+              conversationId: conversation.id,
+              sender: "AI",
+              content: `[Sent photo] ${event.title}`,
+              imageUrl: event.imageUrl,
+            },
+          });
         }
       } catch (err) {
         console.error("Event image send failed:", err);
