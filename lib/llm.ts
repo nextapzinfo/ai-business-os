@@ -5,14 +5,26 @@ type SourceChunk = { title: string; content: string };
 export type AgentProfileInput = {
   businessName?: string | null;
   businessDescription?: string | null;
-  tone?: string | null; // friendly, formal, casual
+  tone?: string | null; // friendly, formal, casual, traditional, premium, luxury, professional, humorous
   languageStyle?: string | null; // bn, en, mixed
 };
 
+// "Brand personality" presets — lets the same underlying AI represent very
+// different businesses (a traditional sweet shop vs. a luxury salon vs. a CA
+// firm) just by picking a tone here, instead of hand-writing a new prompt
+// for each one.
 const TONE_TEXT: Record<string, string> = {
   friendly: "warm, friendly, and approachable",
-  formal: "polite, professional, and formal",
+  formal: "polite, respectful, and formal",
   casual: "casual and conversational, like chatting with a friend",
+  traditional:
+    "rooted in tradition and cultural warmth — respectful of local customs, heritage, and courteous forms of address",
+  premium: "polished and premium — confident, refined, and a little exclusive, like a high-end brand",
+  luxury:
+    "luxurious and indulgent — elegant, exclusive, and aspirational, emphasizing quality, craftsmanship, and prestige",
+  professional: "polished, businesslike, and efficient — professional and competent without being cold",
+  humorous:
+    "light-hearted and witty — friendly humor and playful language, while staying respectful and genuinely helpful",
 };
 
 const LANGUAGE_TEXT: Record<string, string> = {
