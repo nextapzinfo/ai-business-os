@@ -146,6 +146,29 @@ export const SET_REMINDER_TOOL: ToolDefinition = {
   },
 };
 
+export const RECORD_INTEREST_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "record_product_interest",
+    description:
+      "Note that this customer is interested in a specific product from the catalog, so staff can follow up later. Use this when the customer asks about, praises, or seems interested in buying a particular product.",
+    parameters: {
+      type: "object",
+      properties: {
+        productName: {
+          type: "string",
+          description: "The product name, as close as possible to how it's listed in the catalog.",
+        },
+        note: {
+          type: "string",
+          description: "Optional short context, e.g. 'asked about bulk pricing' or 'wants it for a wedding'.",
+        },
+      },
+      required: ["productName"],
+    },
+  },
+};
+
 export type ToolExecutor = (name: string, args: Record<string, any>) => Promise<string>;
 
 type ChatMessage = Record<string, any>;
