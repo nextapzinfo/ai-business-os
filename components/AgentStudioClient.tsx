@@ -173,6 +173,7 @@ export default function AgentStudioClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question,
+          history: sandboxMessages.map((m) => ({ role: m.role, content: m.text })),
           businessName: form.businessName,
           businessDescription: form.businessDescription,
           customInstructions: form.customInstructions,
