@@ -133,6 +133,7 @@ export default function AgentStudioClient({
           skillSaveAddress: form.skillSaveAddress,
           skillReminders: form.skillReminders,
           skillTrackInterest: form.skillTrackInterest,
+          skillTakeOrders: form.skillTakeOrders,
         }),
       });
       const data = await res.json();
@@ -451,6 +452,22 @@ export default function AgentStudioClient({
                       <span className="block text-xs text-gray-400">
                         When a customer asks about a festival special, sale, or announcement you've added
                         under Events, the AI sends that event's photo along with its answer.
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={form.skillTakeOrders}
+                      onChange={(e) => update("skillTakeOrders", e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Take orders (Order Assistant)
+                      <span className="block text-xs text-gray-400">
+                        Once the AI has confirmed the items/quantities (and delivery address, if needed) back
+                        with the customer, it records the order for staff to action — visible on the Orders
+                        page. It won't record anything before reading it back and getting a yes.
                       </span>
                     </span>
                   </label>
