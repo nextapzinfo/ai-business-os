@@ -179,6 +179,76 @@ export async function uploadKnowledgeFile(formData: FormData) {
   revalidatePath("/dashboard/agent");
 }
 
+// Fetches a public webpage and strips it down to readable text — scripts,
+// styles, nav/header/footer chrome all removed, so only the actual page
+// content reaches the knowledge base. Doesn't work for pages that require
+// login or heavy client-side rendering (e.g. Facebook) — those need to be
+// copy-pasted into the "paste text" form instead.
+async function fetchPageText(pageUrl: string): Promise<{ text: string; pageTitle: string }> {
+  const res = await fetch(pageUrl, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; AIBusinessOSBot/1.0; +https://vercel.app)" },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`Failed to fetch page: ${res.status}`);
+
+  const html = await res.text();
+  const cheerio = await import("cheerio");
+  const $ = cheerio.load(html);
+
+  const pageTitle = $("title").first().text().trim();
+  $("script, style, nav, footer, header, noscript, svg, iframe, form").remove();
+  const text = $("body").text().replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
+
+  // Cap length so one giant page doesn't blow up chunking/embedding time/cost.
+  return { text: text.slice(0, 20000), pageTitle };
+}
+
+export async function crawlWebsite(formData: FormData) {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const urlInput = (formData.get("url") as string)?.trim();
+  const titleInput = (formData.get("title") as string)?.trim();
+  if (!urlInput) return;
+
+  let pageUrl: URL;
+  try {
+    pageUrl = new URL(urlInput);
+  } catch {
+    return; // not a valid URL — nothing to crawl
+  }
+  if (pageUrl.protocol !== "http:" && pageUrl.protocol !== "https:") return;
+
+  const document = await prisma.document.create({
+    data: {
+      organizationId: user.organizationId,
+      title: titleInput || pageUrl.hostname,
+      fileUrl: `crawled:${pageUrl.toString()}`,
+      status: "PENDING",
+    },
+  });
+
+  try {
+    const { text, pageTitle } = await fetchPageText(pageUrl.toString());
+    if (!titleInput && pageTitle) {
+      await prisma.document.update({ where: { id: document.id }, data: { title: pageTitle } });
+    }
+    await processKnowledgeContent(user.organizationId, document.id, text);
+  } catch (err) {
+    await prisma.document.update({ where: { id: document.id }, data: { status: "FAILED" } });
+    console.error("Website crawl failed:", err);
+  }
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "DOCUMENT_CRAWLED",
+    metadata: { documentId: document.id, url: pageUrl.toString() },
+  });
+
+  revalidatePath("/dashboard/agent");
+}
+
 export async function deleteKnowledgeDocument(formData: FormData) {
   const user = await getCurrentUser();
   if (!user) return;
