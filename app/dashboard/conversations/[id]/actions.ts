@@ -53,6 +53,7 @@ export async function sendTemplateToClient(formData: FormData) {
       content: sendError
         ? `[Template: ${template.name}] ${sentBodyText}\n\n[NOT DELIVERED: ${sendError}]`
         : `[Template: ${template.name}] ${sentBodyText}`,
+      imageUrl: template.headerType === "IMAGE" ? template.headerImageUrl : null,
     },
   });
 

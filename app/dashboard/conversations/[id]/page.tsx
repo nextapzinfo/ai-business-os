@@ -126,6 +126,7 @@ export default async function ConversationDetailPage({ params }: { params: { id:
     id: m.id,
     sender: m.sender,
     content: m.content,
+    imageUrl: m.imageUrl,
     createdAt: formatDateTime(m.createdAt),
   }));
 
