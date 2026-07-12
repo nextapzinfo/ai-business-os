@@ -3,7 +3,13 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
-import { askAIWithTools, SAVE_ADDRESS_TOOL, SET_REMINDER_TOOL, type ToolDefinition } from "@/lib/llm";
+import {
+  askAIWithTools,
+  SAVE_ADDRESS_TOOL,
+  SET_REMINDER_TOOL,
+  RECORD_INTEREST_TOOL,
+  type ToolDefinition,
+} from "@/lib/llm";
 
 // Sandbox tool execution never touches the real database — it just describes
 // what would happen, so staff can preview the skill without creating fake
@@ -15,6 +21,11 @@ async function simulateTool(name: string, args: Record<string, any>): Promise<st
   }
   if (name === "set_reminder") {
     return `[Sandbox only — not actually created] Would set reminder "${args.title}" on ${args.dueDate}`;
+  }
+  if (name === "record_product_interest") {
+    return `[Sandbox only — not actually recorded] Would note interest in "${args.productName}"${
+      args.note ? ` (${args.note})` : ""
+    }`;
   }
   return "Unknown tool.";
 }
@@ -53,6 +64,7 @@ export async function POST(req: NextRequest) {
     const tools: ToolDefinition[] = [];
     if (body.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);
     if (body.skillReminders) tools.push(SET_REMINDER_TOOL);
+    if (body.skillTrackInterest) tools.push(RECORD_INTEREST_TOOL);
 
     let answer: string;
     if (results.length === 0 && tools.length === 0) {
