@@ -17,6 +17,7 @@ export type AgentProfileData = {
   skillOrderConfirm: boolean;
   skillReminders: boolean;
   skillSendQr: boolean;
+  skillSaveAddress: boolean;
 };
 
 export async function saveAgentProfile(data: AgentProfileData) {
