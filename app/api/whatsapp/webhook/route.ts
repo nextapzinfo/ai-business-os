@@ -6,6 +6,7 @@ import {
   SAVE_ADDRESS_TOOL,
   SET_REMINDER_TOOL,
   RECORD_INTEREST_TOOL,
+  PLACE_ORDER_TOOL,
   type ToolDefinition,
 } from "@/lib/llm";
 import { sendWhatsAppMessage, sendWhatsAppImageMessage } from "@/lib/whatsapp";
@@ -184,6 +185,7 @@ export async function POST(req: NextRequest) {
     if (agentProfile?.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);
     if (agentProfile?.skillReminders) tools.push(SET_REMINDER_TOOL);
     if (agentProfile?.skillTrackInterest) tools.push(RECORD_INTEREST_TOOL);
+    if (agentProfile?.skillTakeOrders) tools.push(PLACE_ORDER_TOOL);
 
     async function executeTool(name: string, args: Record<string, any>): Promise<string> {
       if (name === "save_customer_address") {
@@ -235,6 +237,30 @@ export async function POST(req: NextRequest) {
           metadata: { clientId: client!.id, productId: product.id, productName: product.name, note },
         });
         return `Recorded interest in "${product.name}".`;
+      }
+      if (name === "record_order") {
+        const items = (args.items as string)?.trim();
+        if (!items) return "No items given — nothing recorded.";
+
+        const deliveryAddress = (args.deliveryAddress as string)?.trim() || undefined;
+        const note = (args.note as string)?.trim() || undefined;
+
+        const order = await prisma.order.create({
+          data: {
+            organizationId: organization!.id,
+            clientId: client!.id,
+            items,
+            deliveryAddress,
+            note,
+            status: "PENDING",
+          },
+        });
+        await logAudit({
+          organizationId: organization!.id,
+          action: "ORDER_RECORDED_BY_AI",
+          metadata: { clientId: client!.id, orderId: order.id, items, deliveryAddress },
+        });
+        return `Order recorded: ${items}. Our team will confirm shortly.`;
       }
       return "Unknown tool.";
     }
