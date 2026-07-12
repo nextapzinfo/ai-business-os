@@ -13,6 +13,24 @@ import { sendWhatsAppMessage, sendWhatsAppImageMessage } from "@/lib/whatsapp";
 import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
 
+// Turns Meta's structured location payload ({latitude, longitude, name?, address?})
+// into a readable text line — this is what gets logged as the Message and fed to
+// the AI, and it includes a plain Google Maps link so staff can tap/click straight
+// through to it (MessageThread auto-linkifies URLs in message content).
+function formatLocationMessage(location: {
+  latitude?: number;
+  longitude?: number;
+  name?: string;
+  address?: string;
+}): string {
+  if (!location || typeof location.latitude !== "number" || typeof location.longitude !== "number") {
+    return "";
+  }
+  const label = [location.name, location.address].filter(Boolean).join(", ");
+  const mapsUrl = `https://maps.google.com/?q=${location.latitude},${location.longitude}`;
+  return `📍 Shared location${label ? `: ${label}` : ""}\n${mapsUrl}`;
+}
+
 // Meta calls this once when the webhook URL is configured, to verify ownership.
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -42,13 +60,25 @@ export async function POST(req: NextRequest) {
     // "text" = a normal typed message. "button" = a customer tapped a Quick
     // Reply button on a template we broadcast (e.g. "Order Now") — Meta sends
     // this as its own message type, not "text", so it needs handling here too
-    // or it silently vanishes: no conversation log, no AI reply.
-    if (!message || !phoneNumberId || (message.type !== "text" && message.type !== "button")) {
+    // or it silently vanishes: no conversation log, no AI reply. "location" =
+    // customer shared a location pin (e.g. for home delivery) — same deal,
+    // Meta sends lat/lng as structured data, not text, so without this it was
+    // being silently dropped too (never logged, never seen by the AI).
+    if (
+      !message ||
+      !phoneNumberId ||
+      (message.type !== "text" && message.type !== "button" && message.type !== "location")
+    ) {
       return NextResponse.json({ status: "ignored" });
     }
 
     const from = message.from as string; // sender's WhatsApp number
-    const text = message.type === "button" ? (message.button?.text as string) : (message.text.body as string);
+    const text =
+      message.type === "button"
+        ? (message.button?.text as string)
+        : message.type === "location"
+        ? formatLocationMessage(message.location)
+        : (message.text.body as string);
     if (!text) {
       return NextResponse.json({ status: "ignored" });
     }
