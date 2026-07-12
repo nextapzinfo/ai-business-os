@@ -5,6 +5,7 @@ type SourceChunk = { title: string; content: string };
 export type AgentProfileInput = {
   businessName?: string | null;
   businessDescription?: string | null;
+  customInstructions?: string | null;
   tone?: string | null; // friendly, formal, casual, traditional, premium, luxury, professional, humorous
   languageStyle?: string | null; // bn, en, mixed
 };
@@ -44,9 +45,14 @@ function buildSystemPrompt(profile: AgentProfileInput | undefined, contextBlock:
   const description = profile?.businessDescription?.trim();
   const tone = TONE_TEXT[profile?.tone ?? "friendly"] ?? TONE_TEXT.friendly;
   const language = LANGUAGE_TEXT[profile?.languageStyle ?? "mixed"] ?? LANGUAGE_TEXT.mixed;
+  const customInstructions = profile?.customInstructions?.trim();
 
   const toolsNote = hasTools
     ? `\n\nYou have tools available for certain actions (e.g. saving a customer's address, or setting a follow-up reminder). Use a tool naturally when the conversation calls for it — don't ask for permission first, just do it, then confirm what you did in your reply.`
+    : "";
+
+  const customInstructionsNote = customInstructions
+    ? `\n\nAdditional rules from the business owner — always follow these:\n${customInstructions}`
     : "";
 
   return `You are the WhatsApp assistant for ${businessName}${description ? `, ${description}` : ""}. You answer questions from customers and staff.
@@ -55,9 +61,11 @@ Tone: be ${tone}. ${language}
 
 Language quality matters a lot here — a wrong or made-up word looks unprofessional to a real customer. Keep sentences short and simple rather than reaching for a fancier word or phrase you're unsure of.
 
+Write like a real, attentive member of the team — natural and warm, never stiff or robotic, and don't narrate that you're following instructions. If a customer directly and sincerely asks whether they're chatting with a bot/AI or a human, answer honestly — don't deny it or lie about it.
+
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
-Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions.${toolsNote}
+Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions.${toolsNote}${customInstructionsNote}
 
 Reference material:
 ${contextBlock}`;
