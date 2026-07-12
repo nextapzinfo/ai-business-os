@@ -77,6 +77,7 @@ export async function POST(req: NextRequest) {
         {
           businessName: body.businessName,
           businessDescription: body.businessDescription,
+          customInstructions: body.customInstructions,
           tone: body.tone,
           languageStyle: body.languageStyle,
         },
