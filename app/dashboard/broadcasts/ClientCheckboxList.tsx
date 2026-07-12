@@ -24,13 +24,13 @@ export default function ClientCheckboxList({ clients }: { clients: ClientOption[
 
   return (
     <div>
-      <label className="mb-2 flex items-center gap-2 text-sm text-gray-700">
+      <label className="mb-1.5 flex items-center gap-2 text-xs text-gray-700">
         <input type="checkbox" checked={allSelected} onChange={(e) => toggleAll(e.target.checked)} />
         Select all ({clients.length} customers)
       </label>
-      <div className="max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
+      <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1.5">
         {clients.map((c) => (
-          <label key={c.id} className="flex items-center gap-2 rounded px-1.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
+          <label key={c.id} className="flex items-center gap-2 rounded px-1.5 py-1 text-xs text-gray-700 hover:bg-gray-50">
             <input
               type="checkbox"
               name="clientIds"
@@ -41,7 +41,7 @@ export default function ClientCheckboxList({ clients }: { clients: ClientOption[
             {c.name} ({c.phone})
           </label>
         ))}
-        {clients.length === 0 && <p className="p-1.5 text-sm text-gray-500">No customers yet.</p>}
+        {clients.length === 0 && <p className="p-1.5 text-xs text-gray-500">No customers yet.</p>}
       </div>
     </div>
   );

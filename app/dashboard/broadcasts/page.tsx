@@ -134,23 +134,23 @@ export default async function BroadcastsPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold text-gray-900">Broadcasts</h1>
-      <p className="mt-1 max-w-2xl text-sm text-gray-500">
+      <h1 className="text-lg font-semibold text-gray-900">Broadcasts</h1>
+      <p className="mt-1 max-w-2xl text-xs text-gray-500">
         Send an approved template message to many customers at once. Only templates approved by
         Meta show up below — <a href="/dashboard/templates" className="text-primary underline">create/check templates here</a>.
       </p>
 
       {approvedTemplates.length === 0 ? (
-        <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
           No approved templates yet. Create one on the Templates page and wait for Meta approval
           before you can send a broadcast.
         </p>
       ) : (
-        <div className="mt-5 max-w-xl rounded-xl border border-gray-200 bg-white p-4">
+        <div className="mt-4 max-w-xl rounded-xl border border-gray-200 bg-white p-3">
           <form action={createBroadcast}>
-            <div className="flex flex-col gap-2">
-              <input name="name" placeholder="Broadcast name (e.g. Eid Offer - July)" required className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-              <select name="templateId" required defaultValue="" className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
+            <div className="flex flex-col gap-1.5">
+              <input name="name" placeholder="Broadcast name (e.g. Eid Offer - July)" required className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs" />
+              <select name="templateId" required defaultValue="" className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs">
                 <option value="" disabled>
                   Select an approved template
                 </option>
@@ -162,26 +162,26 @@ export default async function BroadcastsPage() {
               </select>
             </div>
 
-            <h4 className="mb-2 mt-4 text-sm font-semibold text-gray-900">Recipients</h4>
+            <h4 className="mb-1.5 mt-3 text-xs font-semibold text-gray-900">Recipients</h4>
             <ClientCheckboxList clients={clients} />
 
-            <button type="submit" className="mt-3 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
+            <button type="submit" className="mt-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-light">
               Send Broadcast
             </button>
           </form>
         </div>
       )}
 
-      <h3 className="mt-6 text-sm font-semibold text-gray-900">Past broadcasts</h3>
-      <div className="mt-3 overflow-hidden rounded-xl border border-gray-200 bg-white">
-        <table className="w-full text-left text-sm">
+      <h3 className="mt-4 text-xs font-semibold text-gray-900">Past broadcasts</h3>
+      <div className="mt-2 overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <table className="w-full text-left text-xs">
           <thead>
-            <tr className="border-b border-gray-100 text-xs text-gray-500">
-              <th className="px-4 py-3 font-medium">Name</th>
-              <th className="px-4 py-3 font-medium">Template</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Sent / Failed / Total</th>
-              <th className="px-4 py-3 font-medium">Created</th>
+            <tr className="border-b border-gray-100 text-[11px] text-gray-500">
+              <th className="px-3 py-2 font-medium">Name</th>
+              <th className="px-3 py-2 font-medium">Template</th>
+              <th className="px-3 py-2 font-medium">Status</th>
+              <th className="px-3 py-2 font-medium">Sent / Failed / Total</th>
+              <th className="px-3 py-2 font-medium">Created</th>
             </tr>
           </thead>
           <tbody>
@@ -190,21 +190,21 @@ export default async function BroadcastsPage() {
               const failed = b.recipients.filter((r) => r.status === "FAILED").length;
               return (
                 <tr key={b.id} className="border-b border-gray-50 last:border-0">
-                  <td className="px-4 py-3 font-medium text-gray-900">{b.name}</td>
-                  <td className="px-4 py-3 text-gray-600">{b.template.name}</td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusBadgeClass(b.status)}`}>{b.status}</span>
+                  <td className="px-3 py-2 font-medium text-gray-900">{b.name}</td>
+                  <td className="px-3 py-2 text-gray-600">{b.template.name}</td>
+                  <td className="px-3 py-2">
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusBadgeClass(b.status)}`}>{b.status}</span>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">
+                  <td className="px-3 py-2 text-gray-600">
                     {sent} / {failed} / {b.recipients.length}
                   </td>
-                  <td className="px-4 py-3 text-gray-500">{formatDate(b.createdAt)}</td>
+                  <td className="px-3 py-2 text-gray-500">{formatDate(b.createdAt)}</td>
                 </tr>
               );
             })}
             {broadcasts.length === 0 && (
               <tr>
-                <td className="px-4 py-6 text-gray-500" colSpan={5}>
+                <td className="px-3 py-4 text-gray-500" colSpan={5}>
                   No broadcasts yet.
                 </td>
               </tr>
