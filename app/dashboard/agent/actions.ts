@@ -13,6 +13,7 @@ export type AgentProfileData = {
   greetingMessage: string;
   businessDescription: string;
   customInstructions: string;
+  brandLanguage: string;
   tone: string;
   languageStyle: string;
   skillOrderConfirm: boolean;

@@ -29,6 +29,7 @@ export default async function AgentStudioPage() {
     greetingMessage: profile?.greetingMessage ?? "",
     businessDescription: profile?.businessDescription ?? "",
     customInstructions: profile?.customInstructions ?? "",
+    brandLanguage: profile?.brandLanguage ?? "",
     tone: profile?.tone ?? "friendly",
     languageStyle: profile?.languageStyle ?? "mixed",
     skillOrderConfirm: profile?.skillOrderConfirm ?? false,
