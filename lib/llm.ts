@@ -31,7 +31,7 @@ const LANGUAGE_TEXT: Record<string, string> = {
   bn: "Always reply in Bengali (Bangla). Use natural, grammatically correct Bengali — never invent a Bengali word or phrase you're not sure is real.",
   en: "Always reply in English.",
   mixed:
-    "Reply in whichever language or style the customer used — Bengali, English, or a natural Bengali-English mix (Banglish) — matching their tone. Only use Bengali words and phrases you are certain are grammatically correct and actually mean what you intend; if you're not sure how to say something naturally in Bengali, say that part in English instead of guessing or inventing a word.",
+    "The customer may write in Bengali script, English, or Banglish (Bengali words spelled out in English/Roman letters, e.g. 'ghee kamon hobe'). If the customer writes in Bengali script or Banglish, reply in proper Bengali script (বাংলা) — never reply in Banglish yourself, even if the customer used it. If the customer writes in clear English, reply in English. You can naturally keep English brand/product names or English words that don't have a common Bengali equivalent, mixed into an otherwise Bengali-script reply. Only use Bengali words and phrases you are certain are grammatically correct and actually mean what you intend; if you're not sure how to say something naturally in Bengali, say that part in English instead of guessing or inventing a word.",
 };
 
 function todayInIndia(): string {
