@@ -85,6 +85,7 @@ export default function AgentStudioClient({
           question,
           businessName: form.businessName,
           businessDescription: form.businessDescription,
+          customInstructions: form.customInstructions,
           tone: form.tone,
           languageStyle: form.languageStyle,
           skillSaveAddress: form.skillSaveAddress,
@@ -180,6 +181,22 @@ export default function AgentStudioClient({
                     onChange={(e) => update("greetingMessage", e.target.value)}
                     placeholder="e.g. Thank you for contacting Banglar Doi! How can we help you today?"
                     rows={3}
+                    className={inputClass}
+                  />
+                </label>
+                <label className="text-xs font-medium text-gray-600">
+                  Custom instructions
+                  <span className="block text-[11px] font-normal text-gray-400">
+                    Always-on rules for the AI — not just used when relevant like Knowledge, these apply to
+                    every single reply. e.g. "Never mention competitor brands", "Always offer home delivery
+                    for orders above ৳500", "If someone orders more than 5kg, tell them to call the shop
+                    directly".
+                  </span>
+                  <textarea
+                    value={form.customInstructions}
+                    onChange={(e) => update("customInstructions", e.target.value)}
+                    placeholder="One instruction per line..."
+                    rows={4}
                     className={inputClass}
                   />
                 </label>
