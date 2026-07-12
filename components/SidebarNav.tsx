@@ -10,6 +10,7 @@ import {
   Megaphone,
   Package,
   Bot,
+  PartyPopper,
   type LucideIcon,
 } from "lucide-react";
 
@@ -22,6 +23,7 @@ const ICONS: Record<string, LucideIcon> = {
   "/dashboard/templates": FileText,
   "/dashboard/broadcasts": Megaphone,
   "/dashboard/products": Package,
+  "/dashboard/events": PartyPopper,
 };
 
 export type NavItem = { href: string; label: string };
