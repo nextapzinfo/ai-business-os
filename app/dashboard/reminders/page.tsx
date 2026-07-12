@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
+import { formatDate } from "@/lib/formatDate";
 
 async function addReminder(formData: FormData) {
   "use server";
@@ -40,6 +41,12 @@ async function addReminder(formData: FormData) {
   revalidatePath("/dashboard/reminders");
 }
 
+function statusBadgeClass(status: string) {
+  if (status === "DONE") return "bg-accent-light text-accent";
+  if (status === "SENT") return "bg-sky-100 text-sky-700";
+  return "bg-amber-100 text-amber-700"; // PENDING
+}
+
 export default async function RemindersPage() {
   const user = await getCurrentUser();
   if (!user) return null;
@@ -58,75 +65,78 @@ export default async function RemindersPage() {
 
   return (
     <div>
-      <h1>Reminders</h1>
-      <p style={{ color: "#666", fontSize: 14 }}>
-        GST/ITR deadlines and other client reminders. Automatic WhatsApp sending
-        comes in Phase 4 — for now these are tracked here.
+      <h1 className="text-xl font-semibold text-gray-900">Reminders</h1>
+      <p className="mt-1 max-w-2xl text-sm text-gray-500">
+        Follow-ups to action for your clients — add one manually below, or the AI creates one automatically
+        (from a WhatsApp chat) when a customer asks to be reminded or followed up about something.
       </p>
 
-      <form
-        action={addReminder}
-        style={{ display: "flex", gap: 8, margin: "16px 0", flexWrap: "wrap" }}
-      >
-        <select name="clientId" required style={inputStyle}>
-          <option value="">Select client</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <input name="title" placeholder="e.g. GST Return Due" required style={inputStyle} />
-        <input name="dueDate" type="date" required style={inputStyle} />
-        <button type="submit" style={buttonStyle}>
-          Add Reminder
-        </button>
-      </form>
+      <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
+        <h3 className="text-sm font-semibold text-gray-900">Add a reminder</h3>
+        <form action={addReminder} className="mt-3 flex flex-wrap gap-2">
+          <select
+            name="clientId"
+            required
+            className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700"
+          >
+            <option value="">Select client</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <input
+            name="title"
+            placeholder="e.g. Follow up about delivery"
+            required
+            className="flex-1 basis-48 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+          <input
+            name="dueDate"
+            type="date"
+            required
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600"
+          />
+          <button type="submit" className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
+            Add Reminder
+          </button>
+        </form>
+      </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", background: "#fff" }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e5e5" }}>
-            <th style={thStyle}>Client</th>
-            <th style={thStyle}>Title</th>
-            <th style={thStyle}>Due Date</th>
-            <th style={thStyle}>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {reminders.map((r) => (
-            <tr key={r.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-              <td style={tdStyle}>{r.client.name}</td>
-              <td style={tdStyle}>{r.title}</td>
-              <td style={tdStyle}>{r.dueDate.toLocaleDateString()}</td>
-              <td style={tdStyle}>{r.status}</td>
+      <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 text-xs text-gray-500">
+              <th className="px-4 py-3 font-medium">Client</th>
+              <th className="px-4 py-3 font-medium">Reminder</th>
+              <th className="px-4 py-3 font-medium">Due Date</th>
+              <th className="px-4 py-3 font-medium">Status</th>
             </tr>
-          ))}
-          {reminders.length === 0 && (
-            <tr>
-              <td style={tdStyle} colSpan={4}>
-                No reminders yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {reminders.map((r) => (
+              <tr key={r.id} className="border-b border-gray-50 last:border-0">
+                <td className="px-4 py-3 font-medium text-gray-900">{r.client.name}</td>
+                <td className="px-4 py-3 text-gray-600">{r.title}</td>
+                <td className="px-4 py-3 text-gray-600">{formatDate(r.dueDate)}</td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(r.status)}`}>
+                    {r.status}
+                  </span>
+                </td>
+              </tr>
+            ))}
+            {reminders.length === 0 && (
+              <tr>
+                <td className="px-4 py-6 text-gray-500" colSpan={4}>
+                  No reminders yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
-
-const inputStyle = {
-  padding: 8,
-  border: "1px solid #ccc",
-  borderRadius: 6,
-  flex: "1 1 160px",
-};
-const buttonStyle = {
-  padding: "8px 16px",
-  background: "#2563eb",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
-  cursor: "pointer",
-};
-const thStyle = { padding: "10px 12px", fontSize: 13, color: "#666" };
-const tdStyle = { padding: "10px 12px", fontSize: 14 };
