@@ -19,6 +19,7 @@ export type AgentProfileData = {
   skillSendQr: boolean;
   skillSaveAddress: boolean;
   skillTrackInterest: boolean;
+  skillSendEventPhotos: boolean;
 };
 
 export async function saveAgentProfile(data: AgentProfileData) {
