@@ -53,6 +53,27 @@ async function createBroadcast(formData: FormData) {
         hasVariable ? [client.name] : [],
         template.headerType === "IMAGE" ? template.headerImageUrl ?? undefined : undefined
       );
+
+      // Log it into the client's conversation thread too — otherwise a
+      // broadcast is invisible on the Conversations page even though it's
+      // the first thing the customer actually saw.
+      let conversation = await prisma.conversation.findFirst({
+        where: { organizationId: user.organizationId, clientId: client.id, channel: "WHATSAPP", status: "OPEN" },
+      });
+      if (!conversation) {
+        conversation = await prisma.conversation.create({
+          data: { organizationId: user.organizationId, clientId: client.id, channel: "WHATSAPP", status: "OPEN" },
+        });
+      }
+      const sentBodyText = hasVariable ? template.bodyText.replace("{{1}}", client.name) : template.bodyText;
+      await prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          sender: "AI",
+          content: `[Broadcast: ${template.name}] ${sentBodyText}`,
+        },
+      });
+
       await prisma.broadcastRecipient.update({
         where: { id: recipient.id },
         data: { status: "SENT", sentAt: new Date() },
