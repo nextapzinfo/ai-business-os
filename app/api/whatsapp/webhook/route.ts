@@ -8,6 +8,7 @@ import {
   RECORD_INTEREST_TOOL,
   PLACE_ORDER_TOOL,
   type ToolDefinition,
+  type ChatHistoryMessage,
 } from "@/lib/llm";
 import { sendWhatsAppMessage, sendWhatsAppImageMessage } from "@/lib/whatsapp";
 import { logAudit } from "@/lib/audit";
@@ -148,6 +149,24 @@ export async function POST(req: NextRequest) {
       });
       isNewConversation = true;
     }
+
+    // Fetch recent history BEFORE logging this new message (so it isn't
+    // duplicated in both the history list and the final question below). This
+    // is what lets the AI actually follow the conversation — e.g. resolve a
+    // bare "Yes" or "50" against what was asked two messages ago — instead of
+    // answering every message as if it were the first one ever sent.
+    const HISTORY_LIMIT = 20;
+    const priorMessages = conversation.aiPaused
+      ? []
+      : await prisma.message.findMany({
+          where: { conversationId: conversation.id },
+          orderBy: { createdAt: "desc" },
+          take: HISTORY_LIMIT,
+        });
+    const history: ChatHistoryMessage[] = priorMessages
+      .slice()
+      .reverse()
+      .map((m) => ({ role: m.sender === "CLIENT" ? "user" : "assistant", content: m.content }));
 
     await prisma.message.create({
       data: { conversationId: conversation.id, sender: "CLIENT", content: text },
@@ -317,7 +336,8 @@ export async function POST(req: NextRequest) {
         results.map((r) => ({ title: r.documentTitle, content: r.content })),
         agentProfile ?? undefined,
         tools,
-        executeTool
+        executeTool,
+        history
       );
     }
 
