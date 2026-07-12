@@ -70,7 +70,7 @@ async function processKnowledgeContent(organizationId: string, documentId: strin
 
     await prisma.document.update({
       where: { id: documentId },
-      data: { status: "PROCESSED" },
+      data: { status: "PROCESSED", content: trimmed },
     });
   } catch (err) {
     await prisma.document.update({
@@ -244,6 +244,42 @@ export async function crawlWebsite(formData: FormData) {
     userId: user.id,
     action: "DOCUMENT_CRAWLED",
     metadata: { documentId: document.id, url: pageUrl.toString() },
+  });
+
+  revalidatePath("/dashboard/agent");
+}
+
+// Lets staff fix a knowledge source's text directly instead of delete+recreate —
+// re-chunks and re-embeds from scratch so the AI's answers reflect the edit.
+export async function updateKnowledgeDocument(formData: FormData) {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const documentId = formData.get("documentId") as string;
+  const title = (formData.get("title") as string)?.trim();
+  const content = (formData.get("content") as string)?.trim();
+  if (!documentId || !title || !content) return;
+
+  const document = await prisma.document.findFirst({
+    where: { id: documentId, organizationId: user.organizationId },
+    include: { product: true },
+  });
+  if (!document) return;
+
+  // Product-linked documents are managed from the Products page (their text is
+  // built from name/price/description) — editing raw text here would drift out
+  // of sync with that, so refuse it here.
+  if (document.product) return;
+
+  await prisma.document.update({ where: { id: documentId }, data: { title } });
+  await prisma.documentChunk.deleteMany({ where: { documentId } });
+  await processKnowledgeContent(user.organizationId, documentId, content);
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "DOCUMENT_UPDATED",
+    metadata: { documentId, title },
   });
 
   revalidatePath("/dashboard/agent");

@@ -44,6 +44,7 @@ export default async function AgentStudioPage() {
     status: d.status,
     createdAt: d.createdAt.toISOString(),
     linkedToProduct: !!d.product,
+    content: d.content ?? "",
   }));
 
   return (
