@@ -3,7 +3,12 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
-import { createMetaMessageTemplate, getMetaTemplateStatus, type TemplateButtonInput } from "@/lib/whatsapp";
+import {
+  createMetaMessageTemplate,
+  getMetaTemplateStatus,
+  deleteMetaMessageTemplate,
+  type TemplateButtonInput,
+} from "@/lib/whatsapp";
 import { revalidatePath } from "next/cache";
 import { put } from "@vercel/blob";
 
@@ -124,6 +129,46 @@ export async function refreshStatus(formData: FormData) {
   } catch (err) {
     console.error("Template status refresh failed:", err);
   }
+
+  revalidatePath("/dashboard/templates");
+}
+
+// A template that's already been used in a Broadcast can't be deleted — the
+// Broadcast row references it (Prisma's default onDelete: Restrict), and
+// keeping that history intact matters more than tidying the list. The UI
+// hides the Delete button in that case; this is the server-side backstop.
+export async function deleteTemplate(formData: FormData) {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const templateId = formData.get("templateId") as string;
+  if (!templateId) return;
+
+  const template = await prisma.messageTemplate.findFirst({
+    where: { id: templateId, organizationId: user.organizationId },
+    include: { _count: { select: { broadcasts: true } } },
+  });
+  if (!template || template._count.broadcasts > 0) return;
+
+  if (template.metaTemplateId) {
+    try {
+      await deleteMetaMessageTemplate(template.metaTemplateName);
+    } catch (err) {
+      // Still remove it from our list even if Meta's side fails (e.g. it was
+      // already deleted there, or never made it past PENDING) — don't let a
+      // stale Meta template block cleaning up the dashboard.
+      console.error("Meta template deletion failed:", err);
+    }
+  }
+
+  await prisma.messageTemplate.delete({ where: { id: templateId } });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "TEMPLATE_DELETED",
+    metadata: { templateId, name: template.name },
+  });
 
   revalidatePath("/dashboard/templates");
 }

@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { formatDate } from "@/lib/formatDate";
-import { refreshStatus } from "./actions";
+import { refreshStatus, deleteTemplate } from "./actions";
 import TemplateForm from "@/components/TemplateForm";
+import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
 
 function statusBadgeClass(status: string) {
   if (status === "APPROVED") return "bg-emerald-100 text-emerald-700";
@@ -32,6 +33,7 @@ export default async function TemplatesPage() {
 
   const templates = await prisma.messageTemplate.findMany({
     where: { organizationId: user.organizationId },
+    include: { _count: { select: { broadcasts: true } } },
     orderBy: { createdAt: "desc" },
   });
 
@@ -78,14 +80,28 @@ export default async function TemplatesPage() {
                 </td>
                 <td className="px-4 py-3 text-gray-500">{formatDate(t.createdAt)}</td>
                 <td className="px-4 py-3">
-                  {t.status === "PENDING" && t.metaTemplateId && (
-                    <form action={refreshStatus}>
-                      <input type="hidden" name="templateId" value={t.id} />
-                      <button type="submit" className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">
-                        Refresh
-                      </button>
-                    </form>
-                  )}
+                  <div className="flex flex-wrap gap-1.5">
+                    {t.status === "PENDING" && t.metaTemplateId && (
+                      <form action={refreshStatus}>
+                        <input type="hidden" name="templateId" value={t.id} />
+                        <button type="submit" className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">
+                          Refresh
+                        </button>
+                      </form>
+                    )}
+                    {t._count.broadcasts === 0 ? (
+                      <form action={deleteTemplate}>
+                        <input type="hidden" name="templateId" value={t.id} />
+                        <ConfirmSubmitButton
+                          label="Delete"
+                          confirmText={`Delete "${t.name}"? This also removes it from Meta. This can't be undone.`}
+                          className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                        />
+                      </form>
+                    ) : (
+                      <span className="text-xs text-gray-400">Used in a broadcast</span>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
