@@ -86,6 +86,7 @@ export default function AgentStudioClient({
           languageStyle: form.languageStyle,
           skillSaveAddress: form.skillSaveAddress,
           skillReminders: form.skillReminders,
+          skillTrackInterest: form.skillTrackInterest,
         }),
       });
       const data = await res.json();
@@ -252,6 +253,22 @@ export default function AgentStudioClient({
                         When a customer asks to be followed up or reminded about something on a date, the AI
                         creates a reminder (visible on the Reminders page). Doesn't send the reminder message
                         automatically yet — that's tracked here for staff to action.
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={form.skillTrackInterest}
+                      onChange={(e) => update("skillTrackInterest", e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Remember product interest
+                      <span className="block text-xs text-gray-400">
+                        When a customer asks about, praises, or seems interested in a product from your
+                        catalog, the AI notes it against their client record (visible on the Clients page) for
+                        sales follow-up.
                       </span>
                     </span>
                   </label>
