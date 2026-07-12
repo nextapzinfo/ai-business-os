@@ -11,6 +11,30 @@ type ThreadMessage = {
   createdAt: string; // pre-formatted on the server (IST) — Server Components can't pass Date objects to Client Components
 };
 
+// Shared location messages (and anything else with a raw URL in it) come through
+// as plain text with a link inside — turn those into real clickable <a> tags
+// instead of dead text so staff can tap straight through to Google Maps etc.
+const URL_SPLIT_REGEX = /(https?:\/\/[^\s]+)/g;
+const URL_TEST_REGEX = /^https?:\/\//;
+function renderWithLinks(text: string) {
+  return text.split(URL_SPLIT_REGEX).map((part, i) =>
+    URL_TEST_REGEX.test(part) ? (
+      <a
+        key={i}
+        href={part}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="break-all text-blue-600 underline"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {part}
+      </a>
+    ) : (
+      <span key={i}>{part}</span>
+    )
+  );
+}
+
 // Styled like a real WhatsApp chat (wallpaper + bubble shapes) so it's fast to
 // scan what's AI vs staff vs customer. No header bar here — the page above
 // already shows the client's name/phone/status, so a second one would just
@@ -63,7 +87,7 @@ export default function MessageThread({ messages }: { messages: ThreadMessage[] 
                   {m.sender === "STAFF" && (
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-600">Staff</p>
                   )}
-                  <p className="whitespace-pre-wrap text-[14px] text-gray-900">{m.content}</p>
+                  <p className="whitespace-pre-wrap text-[14px] text-gray-900">{renderWithLinks(m.content)}</p>
                   <div className="mt-0.5 flex items-center justify-end gap-0.5">
                     <span className="text-[11px] text-gray-500">{m.createdAt}</span>
                     {sent && <Check size={12} className="flex-shrink-0 text-gray-500" />}
