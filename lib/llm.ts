@@ -234,6 +234,33 @@ export const RECORD_INTEREST_TOOL: ToolDefinition = {
   },
 };
 
+export const PLACE_ORDER_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "record_order",
+    description:
+      "Record a new order for the customer. Only use this AFTER you've read the items/quantities back to the customer and they've confirmed it's correct — don't call this on the first mention of wanting to buy something, and don't call it more than once for the same order.",
+    parameters: {
+      type: "object",
+      properties: {
+        items: {
+          type: "string",
+          description: "The confirmed items and quantities, as a short readable list, e.g. '2kg Mishti Doi, 1kg Ghee'.",
+        },
+        deliveryAddress: {
+          type: "string",
+          description: "Delivery address, only if the customer wants delivery. Leave out if they're picking up in-store.",
+        },
+        note: {
+          type: "string",
+          description: "Any other instruction from the customer, e.g. preferred delivery time.",
+        },
+      },
+      required: ["items"],
+    },
+  },
+};
+
 export type ToolExecutor = (name: string, args: Record<string, any>) => Promise<string>;
 
 type ChatMessage = Record<string, any>;
