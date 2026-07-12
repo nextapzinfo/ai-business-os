@@ -3,7 +3,21 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
-import { askAI } from "@/lib/llm";
+import { askAIWithTools, SAVE_ADDRESS_TOOL, SET_REMINDER_TOOL, type ToolDefinition } from "@/lib/llm";
+
+// Sandbox tool execution never touches the real database — it just describes
+// what would happen, so staff can preview the skill without creating fake
+// clients/reminders. Matches the "nothing here reaches real customers or gets
+// logged" promise shown in the Test Sandbox UI.
+async function simulateTool(name: string, args: Record<string, any>): Promise<string> {
+  if (name === "save_customer_address") {
+    return `[Sandbox only — not actually saved] Would save address: ${args.address}`;
+  }
+  if (name === "set_reminder") {
+    return `[Sandbox only — not actually created] Would set reminder "${args.title}" on ${args.dueDate}`;
+  }
+  return "Unknown tool.";
+}
 
 // Staff-only sandbox: lets Agent Studio test a question against the real
 // knowledge base using whatever profile settings are CURRENTLY TYPED in the
@@ -36,12 +50,16 @@ export async function POST(req: NextRequest) {
       LIMIT 5
     `) as { content: string; documentTitle: string }[];
 
+    const tools: ToolDefinition[] = [];
+    if (body.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);
+    if (body.skillReminders) tools.push(SET_REMINDER_TOOL);
+
     let answer: string;
-    if (results.length === 0) {
+    if (results.length === 0 && tools.length === 0) {
       answer =
         "Thanks for your message — we don't have an answer ready for that yet, our team will get back to you shortly.";
     } else {
-      answer = await askAI(
+      answer = await askAIWithTools(
         question,
         results.map((r) => ({ title: r.documentTitle, content: r.content })),
         {
@@ -49,7 +67,9 @@ export async function POST(req: NextRequest) {
           businessDescription: body.businessDescription,
           tone: body.tone,
           languageStyle: body.languageStyle,
-        }
+        },
+        tools,
+        simulateTool
       );
     }
 
