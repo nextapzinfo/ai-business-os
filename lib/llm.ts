@@ -28,10 +28,10 @@ const TONE_TEXT: Record<string, string> = {
 };
 
 const LANGUAGE_TEXT: Record<string, string> = {
-  bn: "Always reply in Bengali (Bangla).",
+  bn: "Always reply in Bengali (Bangla). Use natural, grammatically correct Bengali — never invent a Bengali word or phrase you're not sure is real.",
   en: "Always reply in English.",
   mixed:
-    "Reply in whichever language or style the customer used — Bengali, English, or a natural Bengali-English mix (Banglish) — matching their tone.",
+    "Reply in whichever language or style the customer used — Bengali, English, or a natural Bengali-English mix (Banglish) — matching their tone. Only use Bengali words and phrases you are certain are grammatically correct and actually mean what you intend; if you're not sure how to say something naturally in Bengali, say that part in English instead of guessing or inventing a word.",
 };
 
 function todayInIndia(): string {
@@ -52,6 +52,8 @@ function buildSystemPrompt(profile: AgentProfileInput | undefined, contextBlock:
   return `You are the WhatsApp assistant for ${businessName}${description ? `, ${description}` : ""}. You answer questions from customers and staff.
 
 Tone: be ${tone}. ${language}
+
+Language quality matters a lot here — a wrong or made-up word looks unprofessional to a real customer. Keep sentences short and simple rather than reaching for a fancier word or phrase you're unsure of.
 
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
