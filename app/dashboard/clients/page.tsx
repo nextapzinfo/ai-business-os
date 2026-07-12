@@ -219,6 +219,12 @@ export default async function ClientsPage({
           }
         : {}),
     },
+    include: {
+      productInterests: {
+        include: { product: { select: { name: true } } },
+        orderBy: { updatedAt: "desc" },
+      },
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -289,6 +295,7 @@ export default async function ClientsPage({
               <th className="px-4 py-3 font-medium">Address</th>
               <th className="px-4 py-3 font-medium">Date of Birth</th>
               <th className="px-4 py-3 font-medium">Tags</th>
+              <th className="px-4 py-3 font-medium">Interested In</th>
               <th className="px-4 py-3 font-medium">Added</th>
               <th className="px-4 py-3 font-medium">Actions</th>
             </tr>
@@ -315,6 +322,21 @@ export default async function ClientsPage({
                       ? c.tags.map((t) => (
                           <span key={t} className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
                             {t}
+                          </span>
+                        ))
+                      : <span className="text-gray-400">—</span>}
+                  </div>
+                </td>
+                <td className="max-w-[200px] px-4 py-3">
+                  <div className="flex flex-wrap gap-1">
+                    {c.productInterests.length > 0
+                      ? c.productInterests.map((pi) => (
+                          <span
+                            key={pi.id}
+                            title={pi.note ?? ""}
+                            className="rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-700"
+                          >
+                            {pi.product.name}
                           </span>
                         ))
                       : <span className="text-gray-400">—</span>}
@@ -362,7 +384,7 @@ export default async function ClientsPage({
             ))}
             {clients.length === 0 && (
               <tr>
-                <td className="px-4 py-6 text-gray-500" colSpan={7}>
+                <td className="px-4 py-6 text-gray-500" colSpan={8}>
                   {q ? "No clients match your search." : "No clients yet — add your first one above."}
                 </td>
               </tr>
