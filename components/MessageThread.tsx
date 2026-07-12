@@ -7,6 +7,7 @@ type ThreadMessage = {
   id: string;
   sender: string;
   content: string;
+  imageUrl?: string | null;
   createdAt: string; // pre-formatted on the server (IST) — Server Components can't pass Date objects to Client Components
 };
 
@@ -30,17 +31,22 @@ export default function MessageThread({ messages }: { messages: ThreadMessage[] 
         return (
           <div key={m.id} className={`flex ${sent ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[75%] rounded-2xl px-2.5 py-1.5 shadow-sm ${
+              className={`max-w-[75%] overflow-hidden rounded-2xl shadow-sm ${
                 sent ? `rounded-tr-none ${sentBg}` : "rounded-tl-none bg-white"
               }`}
             >
-              {m.sender === "STAFF" && (
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-600">Staff</p>
+              {m.imageUrl && (
+                <img src={m.imageUrl} alt="" className="max-h-64 w-full object-cover" />
               )}
-              <p className="whitespace-pre-wrap text-[13px] text-gray-900">{m.content}</p>
-              <div className="mt-0.5 flex items-center justify-end gap-0.5">
-                <span className="text-[10px] text-gray-500">{m.createdAt}</span>
-                {sent && <Check size={12} className="flex-shrink-0 text-gray-500" />}
+              <div className="px-2.5 py-1.5">
+                {m.sender === "STAFF" && (
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-600">Staff</p>
+                )}
+                <p className="whitespace-pre-wrap text-[13px] text-gray-900">{m.content}</p>
+                <div className="mt-0.5 flex items-center justify-end gap-0.5">
+                  <span className="text-[10px] text-gray-500">{m.createdAt}</span>
+                  {sent && <Check size={12} className="flex-shrink-0 text-gray-500" />}
+                </div>
               </div>
             </div>
           </div>
