@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, Volume2, Zap, BookOpen, Check, QrCode } from "lucide-react";
+import { Building2, Volume2, Zap, BookOpen, Check, QrCode, Plus, X } from "lucide-react";
 import {
   saveAgentProfile,
   addKnowledgeDocument,
@@ -29,6 +29,38 @@ type KnowledgeDocument = {
 
 type TabKey = "profile" | "voice" | "skills" | "knowledge";
 
+type TerminologyPair = { from: string; to: string };
+type BrandLanguageState = { wordsToUse: string; wordsToAvoid: string; terminology: TerminologyPair[] };
+
+// AgentProfileData.brandLanguage is stored as a single JSON string in the DB
+// (so no extra columns are needed), but staff edit it through a friendly
+// structured table — these two functions convert between the two shapes.
+function parseBrandLanguage(raw: string): BrandLanguageState {
+  if (!raw) return { wordsToUse: "", wordsToAvoid: "", terminology: [] };
+  try {
+    const parsed = JSON.parse(raw) as {
+      wordsToUse?: string[];
+      wordsToAvoid?: string[];
+      terminology?: TerminologyPair[];
+    };
+    return {
+      wordsToUse: (parsed.wordsToUse ?? []).join(", "),
+      wordsToAvoid: (parsed.wordsToAvoid ?? []).join(", "),
+      terminology: parsed.terminology ?? [],
+    };
+  } catch {
+    return { wordsToUse: "", wordsToAvoid: "", terminology: [] };
+  }
+}
+
+function serializeBrandLanguage(data: BrandLanguageState): string {
+  return JSON.stringify({
+    wordsToUse: data.wordsToUse.split(",").map((w) => w.trim()).filter(Boolean),
+    wordsToAvoid: data.wordsToAvoid.split(",").map((w) => w.trim()).filter(Boolean),
+    terminology: data.terminology.filter((t) => t.from.trim() && t.to.trim()),
+  });
+}
+
 const TABS: { key: TabKey; label: string; icon: typeof Building2 }[] = [
   { key: "profile", label: "Business Profile", icon: Building2 },
   { key: "voice", label: "Voice", icon: Volume2 },
@@ -51,6 +83,15 @@ export default function AgentStudioClient({
   const [activeTab, setActiveTab] = useState<TabKey>("profile");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(true);
+
+  const [brandLang, setBrandLang] = useState<BrandLanguageState>(() =>
+    parseBrandLanguage(initialProfile.brandLanguage)
+  );
+
+  function updateBrandLang(next: BrandLanguageState) {
+    setBrandLang(next);
+    update("brandLanguage", serializeBrandLanguage(next));
+  }
 
   const [sandboxMessages, setSandboxMessages] = useState<SandboxMessage[]>([]);
   const [sandboxInput, setSandboxInput] = useState("");
@@ -86,6 +127,7 @@ export default function AgentStudioClient({
           businessName: form.businessName,
           businessDescription: form.businessDescription,
           customInstructions: form.customInstructions,
+          brandLanguage: form.brandLanguage,
           tone: form.tone,
           languageStyle: form.languageStyle,
           skillSaveAddress: form.skillSaveAddress,
@@ -205,6 +247,7 @@ export default function AgentStudioClient({
           )}
 
           {activeTab === "voice" && (
+            <div className="flex flex-col gap-4">
             <div className="rounded-xl border border-gray-200 bg-white p-4">
               <h3 className="text-sm font-semibold text-gray-900">Voice</h3>
               <p className="mt-1 text-xs text-gray-500">How the AI sounds when it replies.</p>
@@ -243,6 +286,101 @@ export default function AgentStudioClient({
                   </select>
                 </label>
               </div>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 bg-white p-4">
+              <h3 className="text-sm font-semibold text-gray-900">Brand Language</h3>
+              <p className="mt-1 text-xs text-gray-500">
+                Your own vocabulary — e.g. "Mishti" instead of "Product", "Sweets" instead of "Goods". This
+                is what keeps the AI sounding like your business instead of a generic assistant.
+              </p>
+
+              <div className="mt-3 flex flex-col gap-3">
+                <label className="text-xs font-medium text-gray-600">
+                  Words to use
+                  <span className="block text-[11px] font-normal text-gray-400">
+                    Comma-separated, e.g. Mishti, Doi, Laal Kheer Doi, Customer, Order, Fresh, Authentic
+                  </span>
+                  <textarea
+                    value={brandLang.wordsToUse}
+                    onChange={(e) => updateBrandLang({ ...brandLang, wordsToUse: e.target.value })}
+                    placeholder="Mishti, Doi, Sweets, Customer, Order..."
+                    rows={2}
+                    className={inputClass}
+                  />
+                </label>
+
+                <label className="text-xs font-medium text-gray-600">
+                  Words to avoid
+                  <span className="block text-[11px] font-normal text-gray-400">
+                    Comma-separated generic words the AI should never use, e.g. Product, Goods, Consumers
+                  </span>
+                  <textarea
+                    value={brandLang.wordsToAvoid}
+                    onChange={(e) => updateBrandLang({ ...brandLang, wordsToAvoid: e.target.value })}
+                    placeholder="Product, Goods, Item, Consumers..."
+                    rows={2}
+                    className={inputClass}
+                  />
+                </label>
+
+                <div>
+                  <p className="text-xs font-medium text-gray-600">Word swaps</p>
+                  <p className="text-[11px] font-normal text-gray-400">
+                    Exact replacements — e.g. never say "Laal Ghee Doi", always say "Laal Kheer Doi".
+                  </p>
+                  <div className="mt-2 flex flex-col gap-2">
+                    {brandLang.terminology.map((pair, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <input
+                          value={pair.from}
+                          onChange={(e) => {
+                            const next = [...brandLang.terminology];
+                            next[i] = { ...next[i], from: e.target.value };
+                            updateBrandLang({ ...brandLang, terminology: next });
+                          }}
+                          placeholder="Never say..."
+                          className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs"
+                        />
+                        <span className="flex-shrink-0 text-xs text-gray-400">→</span>
+                        <input
+                          value={pair.to}
+                          onChange={(e) => {
+                            const next = [...brandLang.terminology];
+                            next[i] = { ...next[i], to: e.target.value };
+                            updateBrandLang({ ...brandLang, terminology: next });
+                          }}
+                          placeholder="Always say..."
+                          className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = brandLang.terminology.filter((_, idx) => idx !== i);
+                            updateBrandLang({ ...brandLang, terminology: next });
+                          }}
+                          className="flex-shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateBrandLang({
+                          ...brandLang,
+                          terminology: [...brandLang.terminology, { from: "", to: "" }],
+                        })
+                      }
+                      className="flex w-fit items-center gap-1 rounded-lg border border-dashed border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-500 hover:border-primary hover:text-primary"
+                    >
+                      <Plus size={13} /> Add word swap
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
             </div>
           )}
 
