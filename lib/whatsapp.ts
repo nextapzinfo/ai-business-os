@@ -65,11 +65,19 @@ export async function sendWhatsAppImageMessage(
 
 // Sends an already-Meta-approved template message. Required for messaging a
 // customer outside the 24-hour service window (e.g. bulk broadcasts).
+//
+// A static (no-variable) TEXT header is baked into the approved template, so
+// it needs nothing at send time — but an IMAGE header is NOT baked in; Meta
+// only stored the *format*, and expects the actual image supplied on every
+// single send via a header component, or it rejects the send with error
+// 132012 ("expected IMAGE, received UNKNOWN"). headerImageUrl only needs to
+// be passed when the template's header format is IMAGE.
 export async function sendWhatsAppTemplateMessage(
   to: string,
   metaTemplateName: string,
   languageCode: string,
-  bodyVariables: string[] = []
+  bodyVariables: string[] = [],
+  headerImageUrl?: string
 ): Promise<void> {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -77,15 +85,21 @@ export async function sendWhatsAppTemplateMessage(
     throw new Error("WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID is not set");
   }
 
-  const components =
-    bodyVariables.length > 0
-      ? [
-          {
-            type: "body",
-            parameters: bodyVariables.map((v) => ({ type: "text", text: v })),
-          },
-        ]
-      : undefined;
+  const components: Record<string, unknown>[] = [];
+
+  if (headerImageUrl) {
+    components.push({
+      type: "header",
+      parameters: [{ type: "image", image: { link: headerImageUrl } }],
+    });
+  }
+
+  if (bodyVariables.length > 0) {
+    components.push({
+      type: "body",
+      parameters: bodyVariables.map((v) => ({ type: "text", text: v })),
+    });
+  }
 
   const res = await fetch(`${WHATSAPP_API_BASE}/${phoneNumberId}/messages`, {
     method: "POST",
@@ -100,7 +114,7 @@ export async function sendWhatsAppTemplateMessage(
       template: {
         name: metaTemplateName,
         language: { code: languageCode },
-        ...(components ? { components } : {}),
+        ...(components.length > 0 ? { components } : {}),
       },
     }),
   });
