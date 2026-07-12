@@ -7,6 +7,7 @@ import {
   addKnowledgeDocument,
   uploadKnowledgeFile,
   crawlWebsite,
+  updateKnowledgeDocument,
   deleteKnowledgeDocument,
   uploadQrCode,
   deleteQrCode,
@@ -23,6 +24,7 @@ type KnowledgeDocument = {
   status: string;
   createdAt: string;
   linkedToProduct: boolean;
+  content: string;
 };
 
 type TabKey = "profile" | "voice" | "skills" | "knowledge";
@@ -467,35 +469,69 @@ export default function AgentStudioClient({
                     <p className="py-3 text-xs text-gray-400">No knowledge sources yet — add one above.</p>
                   )}
                   {initialDocuments.map((doc) => (
-                    <div key={doc.id} className="flex items-center justify-between gap-3 py-2.5">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-gray-800">{doc.title}</p>
-                        <p className="mt-0.5 text-xs text-gray-400">
-                          {formatDate(new Date(doc.createdAt))} ·{" "}
-                          <span
-                            className={
-                              doc.status === "PROCESSED"
-                                ? "text-accent"
-                                : doc.status === "FAILED"
-                                ? "text-red-500"
-                                : "text-amber-500"
-                            }
-                          >
-                            {doc.status}
-                          </span>
-                        </p>
+                    <div key={doc.id} className="py-2.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-gray-800">{doc.title}</p>
+                          <p className="mt-0.5 text-xs text-gray-400">
+                            {formatDate(new Date(doc.createdAt))} ·{" "}
+                            <span
+                              className={
+                                doc.status === "PROCESSED"
+                                  ? "text-accent"
+                                  : doc.status === "FAILED"
+                                  ? "text-red-500"
+                                  : "text-amber-500"
+                              }
+                            >
+                              {doc.status}
+                            </span>
+                          </p>
+                        </div>
+                        {doc.linkedToProduct ? (
+                          <span className="flex-shrink-0 text-xs text-gray-400">Managed on Products page</span>
+                        ) : (
+                          <form action={deleteKnowledgeDocument} className="flex-shrink-0">
+                            <input type="hidden" name="documentId" value={doc.id} />
+                            <ConfirmSubmitButton
+                              label="Delete"
+                              confirmText={`Delete "${doc.title}" from the knowledge base? This can't be undone.`}
+                              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                            />
+                          </form>
+                        )}
                       </div>
-                      {doc.linkedToProduct ? (
-                        <span className="flex-shrink-0 text-xs text-gray-400">Managed on Products page</span>
-                      ) : (
-                        <form action={deleteKnowledgeDocument} className="flex-shrink-0">
-                          <input type="hidden" name="documentId" value={doc.id} />
-                          <ConfirmSubmitButton
-                            label="Delete"
-                            confirmText={`Delete "${doc.title}" from the knowledge base? This can't be undone.`}
-                            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-                          />
-                        </form>
+
+                      {!doc.linkedToProduct && (
+                        <details className="mt-2 rounded-lg border border-gray-200">
+                          <summary className="cursor-pointer select-none px-2.5 py-1.5 text-xs font-medium text-gray-600">
+                            Edit content
+                          </summary>
+                          <form action={updateKnowledgeDocument} className="flex flex-col gap-1.5 p-2.5 pt-0">
+                            <input type="hidden" name="documentId" value={doc.id} />
+                            <input
+                              name="title"
+                              defaultValue={doc.title}
+                              required
+                              placeholder="Title"
+                              className="rounded border border-gray-300 px-2 py-1 text-xs"
+                            />
+                            <textarea
+                              name="content"
+                              defaultValue={doc.content}
+                              required
+                              rows={6}
+                              placeholder="Source text"
+                              className="rounded border border-gray-300 px-2 py-1 text-xs"
+                            />
+                            <button
+                              type="submit"
+                              className="mt-1 self-start rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-light"
+                            >
+                              Save Changes
+                            </button>
+                          </form>
+                        </details>
                       )}
                     </div>
                   ))}
