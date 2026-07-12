@@ -38,13 +38,20 @@ export async function POST(req: NextRequest) {
     const phoneNumberId = value?.metadata?.phone_number_id;
     const message = value?.messages?.[0];
 
-    // Ignore anything that isn't an inbound text message (delivery/read status updates, etc.)
-    if (!message || message.type !== "text" || !phoneNumberId) {
+    // Ignore delivery/read status updates and anything else we don't handle.
+    // "text" = a normal typed message. "button" = a customer tapped a Quick
+    // Reply button on a template we broadcast (e.g. "Order Now") — Meta sends
+    // this as its own message type, not "text", so it needs handling here too
+    // or it silently vanishes: no conversation log, no AI reply.
+    if (!message || !phoneNumberId || (message.type !== "text" && message.type !== "button")) {
       return NextResponse.json({ status: "ignored" });
     }
 
     const from = message.from as string; // sender's WhatsApp number
-    const text = message.text.body as string;
+    const text = message.type === "button" ? (message.button?.text as string) : (message.text.body as string);
+    if (!text) {
+      return NextResponse.json({ status: "ignored" });
+    }
     const contactName = value.contacts?.[0]?.profile?.name ?? from;
 
     const organization = await prisma.organization.findUnique({
