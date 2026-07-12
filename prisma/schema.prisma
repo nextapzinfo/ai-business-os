@@ -105,6 +105,7 @@ model Document {
   organization   Organization @relation(fields: [organizationId], references: [id])
   title          String
   fileUrl        String
+  content        String? // raw source text (pre-chunking) — kept so the Knowledge tab can show/edit it
   status         String       @default("PENDING") // PENDING, PROCESSED, FAILED
   createdAt      DateTime     @default(now())
 
