@@ -272,6 +272,21 @@ export default function AgentStudioClient({
                       </span>
                     </span>
                   </label>
+                  <label className="flex items-start gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={form.skillSendEventPhotos}
+                      onChange={(e) => update("skillSendEventPhotos", e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Send event photos
+                      <span className="block text-xs text-gray-400">
+                        When a customer asks about a festival special, sale, or announcement you've added
+                        under Events, the AI sends that event's photo along with its answer.
+                      </span>
+                    </span>
+                  </label>
                 </div>
               </div>
 
