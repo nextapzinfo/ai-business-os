@@ -38,6 +38,7 @@ export default async function AgentStudioPage() {
     skillSaveAddress: profile?.skillSaveAddress ?? false,
     skillTrackInterest: profile?.skillTrackInterest ?? false,
     skillSendEventPhotos: profile?.skillSendEventPhotos ?? false,
+    skillTakeOrders: profile?.skillTakeOrders ?? false,
   };
 
   const initialDocuments = documents.map((d) => ({
