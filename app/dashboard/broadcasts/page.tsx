@@ -71,6 +71,7 @@ async function createBroadcast(formData: FormData) {
           conversationId: conversation.id,
           sender: "AI",
           content: `[Broadcast: ${template.name}] ${sentBodyText}`,
+          imageUrl: template.headerType === "IMAGE" ? template.headerImageUrl : null,
         },
       });
 
