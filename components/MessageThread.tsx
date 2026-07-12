@@ -15,9 +15,10 @@ type ThreadMessage = {
 // scan what's AI vs staff vs customer. No header bar here — the page above
 // already shows the client's name/phone/status, so a second one would just
 // eat vertical space without adding anything. Auto-scrolls to the newest
-// message on first load and whenever a new one arrives. Images are capped at
-// 220px tall (a full-size photo inline would push the whole thread out of
-// view) — tap one to open it full-size in a lightbox.
+// message on first load and whenever a new one arrives. Images render as a
+// fixed 190x190 thumbnail (inline style, not a Tailwind class, so it can't be
+// silently dropped by a build step) instead of stretching to the bubble's
+// full width — tap one to open it full-size in a lightbox.
 export default function MessageThread({ messages }: { messages: ThreadMessage[] }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
@@ -43,12 +44,15 @@ export default function MessageThread({ messages }: { messages: ThreadMessage[] 
                   <button
                     type="button"
                     onClick={() => setLightbox(m.imageUrl!)}
-                    className="group relative block w-full"
+                    className="group relative block overflow-hidden"
+                    style={{ width: 190, height: 190 }}
                   >
+                    {/* Inline style (not a Tailwind class) on purpose — guarantees the
+                        fixed thumbnail box can never be dropped by a CSS build step. */}
                     <img
                       src={m.imageUrl}
                       alt=""
-                      className="max-h-[220px] w-full object-cover"
+                      style={{ width: 190, height: 190, objectFit: "cover", display: "block" }}
                     />
                     <span className="absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-full bg-black/50 px-1.5 py-0.5 text-[10px] text-white opacity-90 group-hover:opacity-100">
                       <Search size={10} /> Enlarge
