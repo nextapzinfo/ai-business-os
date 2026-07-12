@@ -197,9 +197,18 @@ export default function AgentStudioClient({
                     onChange={(e) => update("tone", e.target.value)}
                     className={inputClass}
                   >
-                    <option value="friendly">Friendly</option>
-                    <option value="formal">Formal</option>
-                    <option value="casual">Casual</option>
+                    <optgroup label="Simple">
+                      <option value="friendly">Friendly</option>
+                      <option value="formal">Formal</option>
+                      <option value="casual">Casual</option>
+                    </optgroup>
+                    <optgroup label="Brand personality">
+                      <option value="traditional">Traditional</option>
+                      <option value="premium">Premium</option>
+                      <option value="luxury">Luxury</option>
+                      <option value="professional">Professional</option>
+                      <option value="humorous">Humorous</option>
+                    </optgroup>
                   </select>
                 </label>
                 <label className="text-xs font-medium text-gray-600">
