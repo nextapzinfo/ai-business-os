@@ -290,3 +290,27 @@ export async function getMetaTemplateStatus(metaTemplateId: string): Promise<str
 
   return (data.status as string) || "PENDING";
 }
+
+// Deletes a template from Meta by name (removes all language variants of that
+// name). Safe to call on a PENDING or REJECTED template too, not just APPROVED.
+export async function deleteMetaMessageTemplate(metaTemplateName: string): Promise<void> {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const wabaId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+  if (!accessToken || !wabaId) {
+    throw new Error("WHATSAPP_ACCESS_TOKEN or WHATSAPP_BUSINESS_ACCOUNT_ID is not set");
+  }
+
+  const res = await fetch(
+    `${WHATSAPP_API_BASE}/${wabaId}/message_templates?name=${encodeURIComponent(metaTemplateName)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
+
+  const data = await res.json();
+  if (!res.ok) {
+    const errMessage = data?.error?.message || JSON.stringify(data);
+    throw new Error(`Meta template deletion failed: ${res.status} ${errMessage}`);
+  }
+}
