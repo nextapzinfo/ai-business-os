@@ -160,6 +160,7 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   sender         String // CLIENT, AI, STAFF
   content        String
+  imageUrl       String? // set when this message included a photo (template header image, product/event photo)
   createdAt      DateTime     @default(now())
 
   @@index([conversationId])
