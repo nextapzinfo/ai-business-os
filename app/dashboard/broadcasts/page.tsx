@@ -50,7 +50,8 @@ async function createBroadcast(formData: FormData) {
         client.phone,
         template.metaTemplateName,
         template.language,
-        hasVariable ? [client.name] : []
+        hasVariable ? [client.name] : [],
+        template.headerType === "IMAGE" ? template.headerImageUrl ?? undefined : undefined
       );
       await prisma.broadcastRecipient.update({
         where: { id: recipient.id },
