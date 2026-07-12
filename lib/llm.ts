@@ -2,6 +2,13 @@ const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 
 type SourceChunk = { title: string; content: string };
 
+// Prior turns of the SAME conversation, oldest first — without this, every
+// incoming message is answered in total isolation (the model never sees what
+// was said before). That's what broke replies like a bare "Yes" confirming an
+// order, or "50" answering "how many pieces": with no history, the model has
+// nothing to resolve those against and falls back to a generic greeting.
+export type ChatHistoryMessage = { role: "user" | "assistant"; content: string };
+
 export type AgentProfileInput = {
   businessName?: string | null;
   businessDescription?: string | null;
@@ -119,7 +126,8 @@ ${contextBlock}`;
 export async function askAI(
   question: string,
   sources: SourceChunk[],
-  profile?: AgentProfileInput
+  profile?: AgentProfileInput,
+  history: ChatHistoryMessage[] = []
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
@@ -141,6 +149,7 @@ export async function askAI(
       max_tokens: 1024,
       messages: [
         { role: "system", content: systemPrompt },
+        ...history,
         { role: "user", content: question },
       ],
     }),
@@ -298,13 +307,14 @@ export async function askAIWithTools(
   sources: SourceChunk[],
   profile: AgentProfileInput | undefined,
   tools: ToolDefinition[],
-  executeTool: ToolExecutor
+  executeTool: ToolExecutor,
+  history: ChatHistoryMessage[] = []
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
   if (tools.length === 0) {
-    return askAI(question, sources, profile);
+    return askAI(question, sources, profile, history);
   }
 
   const contextBlock = sources
@@ -315,6 +325,7 @@ export async function askAIWithTools(
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
+    ...history,
     { role: "user", content: question },
   ];
 
