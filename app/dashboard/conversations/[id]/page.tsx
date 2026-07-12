@@ -132,17 +132,17 @@ export default async function ConversationDetailPage({ params }: { params: { id:
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex-shrink-0">
+      <div className="flex-shrink-0 pb-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h1 className="text-lg font-semibold text-gray-900">{conversation.client.name}</h1>
-            <p className="text-sm text-gray-500">
+            <h1 className="text-[22px] font-semibold leading-tight text-gray-900">{conversation.client.name}</h1>
+            <p className="text-[13px] text-gray-500">
               {conversation.client.phone} · {conversation.channel} · Status: {conversation.status}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <span
-              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+              className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
                 conversation.aiPaused ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
               }`}
             >
@@ -152,17 +152,17 @@ export default async function ConversationDetailPage({ params }: { params: { id:
               <input type="hidden" name="conversationId" value={conversation.id} />
               <button
                 type="submit"
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium text-white ${
+                className={`flex h-9 items-center rounded-lg px-2.5 text-xs font-medium text-white ${
                   conversation.aiPaused ? "bg-accent hover:bg-emerald-600" : "bg-amber-600 hover:bg-amber-700"
                 }`}
               >
-                {conversation.aiPaused ? "Resume AI" : "Intervene"}
+                {conversation.aiPaused ? "▶ Resume" : "⏸ Pause"}
               </button>
             </form>
             <form action={closeConversation}>
               <input type="hidden" name="conversationId" value={conversation.id} />
-              <button type="submit" className="rounded-lg bg-gray-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700">
-                {conversation.status === "CLOSED" ? "Reopen" : "Mark Closed"}
+              <button type="submit" className="flex h-9 items-center rounded-lg bg-gray-600 px-2.5 text-xs font-medium text-white hover:bg-gray-700">
+                {conversation.status === "CLOSED" ? "↺ Reopen" : "✓ Closed"}
               </button>
             </form>
           </div>
@@ -171,18 +171,18 @@ export default async function ConversationDetailPage({ params }: { params: { id:
 
       <MessageThread messages={threadMessages} />
 
-      <div className="mt-3 flex-shrink-0">
-        <div className="flex items-end gap-2">
+      <div className="mt-2 flex-shrink-0">
+        <div className="flex items-center gap-2">
           <form key={conversation.messages.length} action={sendManualReply} className="flex flex-1 gap-2">
             <input type="hidden" name="conversationId" value={conversation.id} />
             <textarea
               name="text"
               placeholder="Type a reply to send on WhatsApp..."
               required
-              rows={2}
-              className="flex-1 resize-y rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              rows={1}
+              className="h-[44px] flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2.5 text-sm leading-tight"
             />
-            <button type="submit" className="self-end rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
+            <button type="submit" className="h-[44px] flex-shrink-0 rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-primary-light">
               Send
             </button>
           </form>
@@ -191,10 +191,9 @@ export default async function ConversationDetailPage({ params }: { params: { id:
             templates={approvedTemplates.map((t) => ({ id: t.id, name: t.name, language: t.language }))}
           />
         </div>
-        <p className="mt-1.5 text-xs text-gray-400">
-          Sending a reply here pauses the AI for this conversation — click "Resume AI" above when
-          you're done. Free-text only delivers within 24 hours of the customer's last message; use
-          Send Template outside that window.
+        <p className="mt-1 text-[11px] text-gray-400">
+          Free-text only delivers within 24 hours of the customer's last message; use Send Template
+          outside that window.
         </p>
       </div>
     </div>
