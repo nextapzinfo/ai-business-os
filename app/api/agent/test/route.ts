@@ -10,6 +10,7 @@ import {
   RECORD_INTEREST_TOOL,
   PLACE_ORDER_TOOL,
   type ToolDefinition,
+  type ChatHistoryMessage,
 } from "@/lib/llm";
 
 // Sandbox tool execution never touches the real database — it just describes
@@ -54,6 +55,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing question" }, { status: 400 });
   }
 
+  // Prior sandbox turns (sent by AgentStudioClient as {role, text} pairs) —
+  // same fix as the live webhook: without this, each test message was
+  // answered with zero memory of what was asked/said just before it.
+  const historyIn = Array.isArray(body.history) ? body.history : [];
+  const history: ChatHistoryMessage[] = historyIn
+    .filter((m: any) => m && typeof m.content === "string" && (m.role === "user" || m.role === "assistant"))
+    .map((m: any) => ({ role: m.role, content: m.content }));
+
   try {
     const queryEmbedding = await embedText(question, "query");
     const vectorLiteral = toVectorLiteral(queryEmbedding);
@@ -90,7 +99,8 @@ export async function POST(req: NextRequest) {
           languageStyle: body.languageStyle,
         },
         tools,
-        simulateTool
+        simulateTool,
+        history
       );
     }
 
