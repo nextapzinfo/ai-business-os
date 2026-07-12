@@ -201,6 +201,11 @@ model MessageTemplate {
   category         String // MARKETING, UTILITY, AUTHENTICATION
   language         String       @default("bn")
   bodyText         String // template text, e.g. "Hi {{1}}, ..." — {{1}} etc are variables
+  headerType       String       @default("NONE") // NONE, TEXT, IMAGE
+  headerText       String? // static text only (no variables) — max 60 chars, enforced in UI
+  headerImageUrl   String? // Vercel Blob URL of the source image — re-uploaded to Meta at template-creation time to get a media handle
+  footerText       String? // static text only — max 60 chars
+  buttons          String? // JSON array: [{type:"QUICK_REPLY"|"URL"|"PHONE_NUMBER"|"COPY_CODE", text?, url?, phoneNumber?, example?}]
   status           String       @default("PENDING") // PENDING, APPROVED, REJECTED
   rejectionReason  String?
   createdAt        DateTime     @default(now())
