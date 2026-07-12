@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, X, Image as ImageIcon, ExternalLink, Phone, Copy, CornerUpLeft } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { createTemplate } from "@/app/dashboard/templates/actions";
+import WhatsAppTemplatePreview from "@/components/WhatsAppTemplatePreview";
 
 type ButtonType = "QUICK_REPLY" | "URL" | "PHONE_NUMBER" | "COPY_CODE";
 type ButtonRow = { type: ButtonType; text: string; url: string; phoneNumber: string; example: string };
@@ -14,13 +15,6 @@ const BUTTON_LABEL: Record<ButtonType, string> = {
   URL: "URL",
   PHONE_NUMBER: "Phone",
   COPY_CODE: "Copy Code",
-};
-
-const BUTTON_ICON: Record<ButtonType, typeof ExternalLink> = {
-  QUICK_REPLY: CornerUpLeft,
-  URL: ExternalLink,
-  PHONE_NUMBER: Phone,
-  COPY_CODE: Copy,
 };
 
 // Handles the whole "Create new template" form, including the parts that need
@@ -64,14 +58,6 @@ export default function TemplateForm() {
     if (b.type === "PHONE_NUMBER") return { type: b.type, text: b.text, phoneNumber: b.phoneNumber };
     return { type: b.type, example: b.example };
   });
-
-  // Renders each button's label the same way it'll show in the preview and
-  // (roughly) how WhatsApp renders it — falls back to a placeholder so an
-  // empty row still shows something rather than a blank pill.
-  function buttonPreviewLabel(b: ButtonRow): string {
-    if (b.type === "COPY_CODE") return b.example ? `Copy code: ${b.example}` : "Copy code";
-    return b.text || BUTTON_LABEL[b.type];
-  }
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_300px]">
@@ -262,43 +248,15 @@ export default function TemplateForm() {
           header/body/footer/buttons updating together as you type. */}
       <div className="lg:sticky lg:top-4 lg:self-start">
         <p className="text-xs font-medium text-gray-500">Preview</p>
-        <div className="mt-2 rounded-xl bg-[#e5ddd5] p-3">
-          <div className="overflow-hidden rounded-lg bg-white shadow-sm">
-            {headerType === "IMAGE" && (
-              <div className="flex h-32 w-full items-center justify-center bg-gray-100 text-gray-300">
-                {headerImagePreview ? (
-                  <img src={headerImagePreview} alt="Header preview" className="h-full w-full object-cover" />
-                ) : (
-                  <ImageIcon size={28} />
-                )}
-              </div>
-            )}
-            <div className="p-3">
-              {headerType === "TEXT" && headerText && (
-                <p className="text-sm font-semibold text-gray-900">{headerText}</p>
-              )}
-              <p className="mt-1 whitespace-pre-wrap text-sm text-gray-800">
-                {bodyText || <span className="text-gray-300">Body text will appear here...</span>}
-              </p>
-              {footerText && <p className="mt-1.5 text-xs text-gray-400">{footerText}</p>}
-            </div>
-            {buttons.length > 0 && (
-              <div className="flex flex-col divide-y divide-gray-100 border-t border-gray-100">
-                {buttons.map((b, i) => {
-                  const Icon = BUTTON_ICON[b.type];
-                  return (
-                    <div
-                      key={i}
-                      className="flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-primary"
-                    >
-                      <Icon size={12} />
-                      {buttonPreviewLabel(b)}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+        <div className="mt-2">
+          <WhatsAppTemplatePreview
+            headerType={headerType}
+            headerText={headerText}
+            headerImageUrl={headerImagePreview}
+            bodyText={bodyText}
+            footerText={footerText}
+            buttons={buttonsPayload}
+          />
         </div>
         <p className="mt-2 text-[11px] text-gray-400">
           Approximate preview only — actual WhatsApp rendering may differ slightly.
