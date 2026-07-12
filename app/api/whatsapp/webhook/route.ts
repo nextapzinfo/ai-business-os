@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
-import { askAI } from "@/lib/llm";
+import { askAIWithTools, SAVE_ADDRESS_TOOL, SET_REMINDER_TOOL, type ToolDefinition } from "@/lib/llm";
 import { sendWhatsAppMessage, sendWhatsAppImageMessage } from "@/lib/whatsapp";
 import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
@@ -171,15 +171,56 @@ export async function POST(req: NextRequest) {
       LIMIT 5
     `) as { content: string; documentTitle: string; documentId: string; distance: number }[];
 
+    // Function-calling skills — only wired up when the matching Skills toggle is on
+    // in Agent Studio. executeTool actually writes to the real database here (this
+    // is the live WhatsApp path, unlike the Test Sandbox which only simulates).
+    const tools: ToolDefinition[] = [];
+    if (agentProfile?.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);
+    if (agentProfile?.skillReminders) tools.push(SET_REMINDER_TOOL);
+
+    async function executeTool(name: string, args: Record<string, any>): Promise<string> {
+      if (name === "save_customer_address") {
+        const address = (args.address as string)?.trim();
+        if (!address) return "No address was given — nothing saved.";
+        await prisma.client.update({ where: { id: client!.id }, data: { address } });
+        await logAudit({
+          organizationId: organization.id,
+          action: "CLIENT_ADDRESS_SAVED_BY_AI",
+          metadata: { clientId: client!.id, address },
+        });
+        return `Saved address: ${address}`;
+      }
+      if (name === "set_reminder") {
+        const title = (args.title as string)?.trim();
+        const dueDateRaw = args.dueDate as string;
+        const dueDate = dueDateRaw ? new Date(dueDateRaw) : null;
+        if (!title || !dueDate || isNaN(dueDate.getTime())) {
+          return "Missing or invalid title/date — nothing was scheduled.";
+        }
+        await prisma.reminder.create({
+          data: { organizationId: organization.id, clientId: client!.id, title, dueDate },
+        });
+        await logAudit({
+          organizationId: organization.id,
+          action: "REMINDER_CREATED_BY_AI",
+          metadata: { clientId: client!.id, title, dueDate: dueDateRaw },
+        });
+        return `Reminder set: "${title}" on ${dueDateRaw}`;
+      }
+      return "Unknown tool.";
+    }
+
     let answer: string;
-    if (results.length === 0) {
+    if (results.length === 0 && tools.length === 0) {
       answer =
         "Thanks for your message — we don't have an answer ready for that yet, our team will get back to you shortly.";
     } else {
-      answer = await askAI(
+      answer = await askAIWithTools(
         text,
         results.map((r) => ({ title: r.documentTitle, content: r.content })),
-        agentProfile ?? undefined
+        agentProfile ?? undefined,
+        tools,
+        executeTool
       );
     }
 
