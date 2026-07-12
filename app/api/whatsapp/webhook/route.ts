@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
         if (!address) return "No address was given — nothing saved.";
         await prisma.client.update({ where: { id: client!.id }, data: { address } });
         await logAudit({
-          organizationId: organization.id,
+          organizationId: organization!.id,
           action: "CLIENT_ADDRESS_SAVED_BY_AI",
           metadata: { clientId: client!.id, address },
         });
@@ -198,10 +198,10 @@ export async function POST(req: NextRequest) {
           return "Missing or invalid title/date — nothing was scheduled.";
         }
         await prisma.reminder.create({
-          data: { organizationId: organization.id, clientId: client!.id, title, dueDate },
+          data: { organizationId: organization!.id, clientId: client!.id, title, dueDate },
         });
         await logAudit({
-          organizationId: organization.id,
+          organizationId: organization!.id,
           action: "REMINDER_CREATED_BY_AI",
           metadata: { clientId: client!.id, title, dueDate: dueDateRaw },
         });
