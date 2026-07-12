@@ -37,6 +37,7 @@ model Organization {
   agentProfile     AgentProfile?
   clientProductInterests ClientProductInterest[]
   events           Event[]
+  orders           Order[]
 }
 
 // Configures how the WhatsApp AI presents itself and behaves — replaces the
@@ -60,6 +61,7 @@ model AgentProfile {
   skillSaveAddress     Boolean  @default(false) // when true, AI can save/update a customer's address via function-calling
   skillTrackInterest   Boolean  @default(false) // when true, AI can note which product a customer is interested in
   skillSendEventPhotos Boolean  @default(false) // when true, webhook sends an Event's photo when a RAG match is close enough
+  skillTakeOrders      Boolean  @default(false) // when true, AI can record a customer's order via function-calling (record_order)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -96,6 +98,7 @@ model Client {
   reminders            Reminder[]
   broadcastRecipients  BroadcastRecipient[]
   productInterests     ClientProductInterest[]
+  orders               Order[]
 
   @@index([organizationId])
 }
@@ -309,4 +312,26 @@ model Event {
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId])
+}
+
+// Orders the AI records mid-conversation via the record_order tool (Order
+// Assistant skill), or that staff add manually. Prices aren't stored here —
+// Product.price is a free-text string ("৳500", "500-700"), so there's no
+// reliable way to auto-compute a total; staff confirm the real total when
+// they action the order.
+model Order {
+  id               String       @id @default(cuid())
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id])
+  clientId         String
+  client           Client       @relation(fields: [clientId], references: [id])
+  items            String // short readable list, e.g. "2kg Mishti Doi, 1kg Ghee" — not a structured cart
+  deliveryAddress  String? // snapshot at order time; customer may give a different address than their saved one
+  note             String? // any other instruction from the customer (e.g. preferred delivery time)
+  status           String       @default("PENDING") // PENDING, CONFIRMED, FULFILLED, CANCELLED
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([clientId])
 }
