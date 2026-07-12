@@ -53,6 +53,7 @@ model AgentProfile {
   skillReminders       Boolean  @default(false) // placeholder toggle — auto-reminder automation not yet built
   skillSendQr          Boolean  @default(false) // when true + qrCodeUrl is set, webhook sends the QR on payment-related messages
   qrCodeUrl            String?  // pre-made payment QR image (uploaded once in Agent Studio), sent as-is — never generated
+  skillSaveAddress     Boolean  @default(false) // when true, AI can save/update a customer's address via function-calling
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -78,6 +79,7 @@ model Client {
   name           String
   phone          String
   email          String?
+  address        String? // saved by staff, or by the AI via function-calling when a customer shares it on WhatsApp
   notes          String?
   dateOfBirth    DateTime?
   tags           String[]     @default([])
