@@ -78,6 +78,7 @@ async function addClient(formData: FormData) {
   const name = formData.get("name") as string;
   const phone = formData.get("phone") as string;
   const email = (formData.get("email") as string) || undefined;
+  const address = (formData.get("address") as string)?.trim() || undefined;
   const dobRaw = (formData.get("dateOfBirth") as string) || "";
   const tagsRaw = (formData.get("tags") as string) || "";
 
@@ -91,6 +92,7 @@ async function addClient(formData: FormData) {
       name,
       phone,
       email,
+      address,
       dateOfBirth: dob && !isNaN(dob.getTime()) ? dob : undefined,
       tags: parseTags(tagsRaw),
     },
@@ -115,6 +117,7 @@ async function updateClient(formData: FormData) {
   const name = (formData.get("name") as string)?.trim();
   const phone = (formData.get("phone") as string)?.trim();
   const email = (formData.get("email") as string)?.trim();
+  const address = (formData.get("address") as string)?.trim();
   const dobRaw = (formData.get("dateOfBirth") as string) || "";
   const tagsRaw = (formData.get("tags") as string) || "";
   if (!clientId || !name || !phone) return;
@@ -132,6 +135,7 @@ async function updateClient(formData: FormData) {
       name,
       phone,
       email: email || null,
+      address: address || null,
       dateOfBirth: dob && !isNaN(dob.getTime()) ? dob : null,
       tags: parseTags(tagsRaw),
     },
@@ -242,6 +246,7 @@ export default async function ClientsPage({
           <input name="name" placeholder="Name" required className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
           <input name="phone" placeholder="Phone (with country code)" required className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
           <input name="email" placeholder="Email (optional)" className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+          <input name="address" placeholder="Address (optional)" className="flex-1 basis-48 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
           <input name="dateOfBirth" type="date" title="Date of birth (optional)" className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600" />
           <input name="tags" placeholder="Tags, comma separated (optional)" className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
           <button type="submit" className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
@@ -281,6 +286,7 @@ export default async function ClientsPage({
             <tr className="border-b border-gray-100 text-xs text-gray-500">
               <th className="px-4 py-3 font-medium">Name</th>
               <th className="px-4 py-3 font-medium">Phone</th>
+              <th className="px-4 py-3 font-medium">Address</th>
               <th className="px-4 py-3 font-medium">Date of Birth</th>
               <th className="px-4 py-3 font-medium">Tags</th>
               <th className="px-4 py-3 font-medium">Added</th>
@@ -299,6 +305,9 @@ export default async function ClientsPage({
                   </div>
                 </td>
                 <td className="px-4 py-3 text-gray-600">{c.phone}</td>
+                <td className="max-w-[180px] truncate px-4 py-3 text-gray-600" title={c.address ?? ""}>
+                  {c.address || "—"}
+                </td>
                 <td className="px-4 py-3 text-gray-600">{c.dateOfBirth ? formatDate(c.dateOfBirth) : "—"}</td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-1">
@@ -326,6 +335,7 @@ export default async function ClientsPage({
                         <input name="name" defaultValue={c.name} required placeholder="Name" className="rounded border border-gray-300 px-2 py-1 text-xs" />
                         <input name="phone" defaultValue={c.phone} required placeholder="Phone" className="rounded border border-gray-300 px-2 py-1 text-xs" />
                         <input name="email" defaultValue={c.email ?? ""} placeholder="Email" className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                        <input name="address" defaultValue={c.address ?? ""} placeholder="Address" className="rounded border border-gray-300 px-2 py-1 text-xs" />
                         <input
                           name="dateOfBirth"
                           type="date"
@@ -352,7 +362,7 @@ export default async function ClientsPage({
             ))}
             {clients.length === 0 && (
               <tr>
-                <td className="px-4 py-6 text-gray-500" colSpan={6}>
+                <td className="px-4 py-6 text-gray-500" colSpan={7}>
                   {q ? "No clients match your search." : "No clients yet — add your first one above."}
                 </td>
               </tr>
