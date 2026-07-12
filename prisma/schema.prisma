@@ -36,6 +36,7 @@ model Organization {
   products         Product[]
   agentProfile     AgentProfile?
   clientProductInterests ClientProductInterest[]
+  events           Event[]
 }
 
 // Configures how the WhatsApp AI presents itself and behaves — replaces the
@@ -56,6 +57,7 @@ model AgentProfile {
   qrCodeUrl            String?  // pre-made payment QR image (uploaded once in Agent Studio), sent as-is — never generated
   skillSaveAddress     Boolean  @default(false) // when true, AI can save/update a customer's address via function-calling
   skillTrackInterest   Boolean  @default(false) // when true, AI can note which product a customer is interested in
+  skillSendEventPhotos Boolean  @default(false) // when true, webhook sends an Event's photo when a RAG match is close enough
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -108,6 +110,7 @@ model Document {
 
   chunks  DocumentChunk[]
   product Product? // set when this Document was auto-created from a Product Sheet import
+  event   Event? // set when this Document was created from an Event/offer entry
 
   @@index([organizationId])
 }
@@ -277,4 +280,25 @@ model ClientProductInterest {
   @@unique([clientId, productId])
   @@index([organizationId])
   @@index([clientId])
+}
+
+// Festival specials, sale announcements, or other event/offer photos the AI can
+// surface when relevant. Linked 1:1 to a Document (same pattern as Product) so
+// the event's text (title + description + date) feeds the shared RAG knowledge
+// base — when a matched chunk traces back to an Event with an imageUrl, the
+// webhook sends the photo alongside the text answer.
+model Event {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  documentId     String       @unique
+  document       Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?
+  eventDate      DateTime?
+  imageUrl       String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
 }
