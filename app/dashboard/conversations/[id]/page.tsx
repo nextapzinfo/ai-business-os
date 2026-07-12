@@ -1,11 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
-import { sendWhatsAppMessage, sendWhatsAppTemplateMessage } from "@/lib/whatsapp";
+import { sendWhatsAppMessage } from "@/lib/whatsapp";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { formatDateTime } from "@/lib/formatDate";
 import MessageThread from "@/components/MessageThread";
+import SendTemplateButton from "@/components/SendTemplateButton";
 
 export const dynamic = "force-dynamic";
 
@@ -54,72 +55,6 @@ async function sendManualReply(formData: FormData) {
     userId: user.id,
     action: "MANUAL_REPLY_SENT",
     metadata: { conversationId: conversation.id, delivered: !sendError, error: sendError },
-  });
-
-  revalidatePath(`/dashboard/conversations/${conversationId}`);
-}
-
-// Free-text replies only deliver within WhatsApp's 24-hour customer-service
-// window. Outside that window (or any time staff wants a guaranteed-delivery
-// message), an approved template is the only thing Meta will actually send —
-// this lets staff fire one off to a single customer without going through
-// the bulk Broadcasts flow.
-async function sendTemplateToClient(formData: FormData) {
-  "use server";
-  const user = await getCurrentUser();
-  if (!user) return;
-
-  const conversationId = formData.get("conversationId") as string;
-  const templateId = formData.get("templateId") as string;
-  if (!conversationId || !templateId) return;
-
-  const conversation = await prisma.conversation.findFirst({
-    where: { id: conversationId, organizationId: user.organizationId },
-    include: { client: true },
-  });
-  if (!conversation) return;
-
-  const template = await prisma.messageTemplate.findFirst({
-    where: { id: templateId, organizationId: user.organizationId, status: "APPROVED" },
-  });
-  if (!template) return;
-
-  const hasVariable = template.bodyText.includes("{{1}}");
-  let sendError: string | null = null;
-  try {
-    await sendWhatsAppTemplateMessage(
-      conversation.client.phone,
-      template.metaTemplateName,
-      template.language,
-      hasVariable ? [conversation.client.name] : [],
-      template.headerType === "IMAGE" ? template.headerImageUrl ?? undefined : undefined
-    );
-  } catch (err) {
-    sendError = err instanceof Error ? err.message : "Unknown error";
-    console.error("Manual template send failed:", err);
-  }
-
-  const sentBodyText = hasVariable ? template.bodyText.replace("{{1}}", conversation.client.name) : template.bodyText;
-  await prisma.message.create({
-    data: {
-      conversationId: conversation.id,
-      sender: "STAFF",
-      content: sendError
-        ? `[Template: ${template.name}] ${sentBodyText}\n\n[NOT DELIVERED: ${sendError}]`
-        : `[Template: ${template.name}] ${sentBodyText}`,
-    },
-  });
-
-  // Sending a template counts as staff taking over, same as a manual reply.
-  if (!conversation.aiPaused) {
-    await prisma.conversation.update({ where: { id: conversation.id }, data: { aiPaused: true } });
-  }
-
-  await logAudit({
-    organizationId: user.organizationId,
-    userId: user.id,
-    action: "TEMPLATE_SENT_TO_CLIENT",
-    metadata: { conversationId: conversation.id, templateId: template.id, delivered: !sendError, error: sendError },
   });
 
   revalidatePath(`/dashboard/conversations/${conversationId}`);
@@ -233,57 +168,32 @@ export default async function ConversationDetailPage({ params }: { params: { id:
         </div>
       </div>
 
-      <MessageThread clientName={conversation.client.name} messages={threadMessages} />
+      <MessageThread messages={threadMessages} />
 
       <div className="mt-3 flex-shrink-0">
-        <form key={conversation.messages.length} action={sendManualReply} className="flex gap-2">
-          <input type="hidden" name="conversationId" value={conversation.id} />
-          <textarea
-            name="text"
-            placeholder="Type a reply to send on WhatsApp..."
-            required
-            rows={2}
-            className="flex-1 resize-y rounded-lg border border-gray-300 px-3 py-2 text-sm"
-          />
-          <button type="submit" className="self-end rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
-            Send
-          </button>
-        </form>
-        <p className="mt-1.5 text-xs text-gray-400">
-          Sending a reply here automatically pauses the AI for this conversation (so it doesn't also
-          reply) — click "Resume AI" above when you're done. Free-text replies only deliver within
-          24 hours of the customer's last message (WhatsApp's rule).
-        </p>
-
-        {approvedTemplates.length > 0 && (
-          <form action={sendTemplateToClient} className="mt-2 flex gap-2">
+        <div className="flex items-end gap-2">
+          <form key={conversation.messages.length} action={sendManualReply} className="flex flex-1 gap-2">
             <input type="hidden" name="conversationId" value={conversation.id} />
-            <select
-              name="templateId"
+            <textarea
+              name="text"
+              placeholder="Type a reply to send on WhatsApp..."
               required
-              defaultValue=""
-              className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-xs text-gray-700"
-            >
-              <option value="" disabled>
-                Send an approved template instead...
-              </option>
-              {approvedTemplates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.language})
-                </option>
-              ))}
-            </select>
-            <button
-              type="submit"
-              className="flex-shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50"
-            >
-              Send Template
+              rows={2}
+              className="flex-1 resize-y rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            <button type="submit" className="self-end rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
+              Send
             </button>
           </form>
-        )}
-        <p className="mt-1 text-xs text-gray-400">
-          Outside the 24-hour window, only an approved template will actually deliver — use this any
-          time instead of waiting for a bulk broadcast.
+          <SendTemplateButton
+            conversationId={conversation.id}
+            templates={approvedTemplates.map((t) => ({ id: t.id, name: t.name, language: t.language }))}
+          />
+        </div>
+        <p className="mt-1.5 text-xs text-gray-400">
+          Sending a reply here pauses the AI for this conversation — click "Resume AI" above when
+          you're done. Free-text only delivers within 24 hours of the customer's last message; use
+          Send Template outside that window.
         </p>
       </div>
     </div>
