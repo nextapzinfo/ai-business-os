@@ -33,11 +33,11 @@ export default function SendTemplateButton({
   if (templates.length === 0) return null;
 
   return (
-    <div ref={ref} className="relative inline-block">
+    <div ref={ref} className="relative inline-block flex-shrink-0">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 rounded-full border border-primary px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/5"
+        className="flex h-[44px] items-center gap-1.5 rounded-full border border-primary px-3 text-xs font-medium text-primary hover:bg-primary/5"
       >
         <Zap size={13} />
         Send Template

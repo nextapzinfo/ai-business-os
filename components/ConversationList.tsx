@@ -35,7 +35,7 @@ export default function ConversationList({ conversations }: { conversations: Con
           <a
             key={c.id}
             href={`/dashboard/conversations/${c.id}`}
-            className={`flex items-center gap-2.5 border-l-2 px-3 py-3 transition-colors ${
+            className={`flex items-center gap-2 border-l-2 px-2.5 py-2 transition-colors ${
               isActive ? "border-primary bg-primary/5" : "border-transparent hover:bg-gray-50"
             }`}
           >

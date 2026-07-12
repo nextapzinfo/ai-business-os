@@ -46,7 +46,7 @@ export default function SidebarNav({ items }: { items: NavItem[] }) {
           <a
             key={item.href}
             href={item.href}
-            className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors ${
+            className={`flex items-center gap-2 rounded-lg px-2 py-2 text-[13px] transition-colors ${
               isActive
                 ? "bg-white/15 text-white font-medium"
                 : "text-white/70 hover:bg-white/10 hover:text-white"
