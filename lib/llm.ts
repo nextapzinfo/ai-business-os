@@ -6,6 +6,7 @@ export type AgentProfileInput = {
   businessName?: string | null;
   businessDescription?: string | null;
   customInstructions?: string | null;
+  brandLanguage?: string | null; // JSON string: { wordsToUse, wordsToAvoid, terminology: {from,to}[] }
   tone?: string | null; // friendly, formal, casual, traditional, premium, luxury, professional, humorous
   languageStyle?: string | null; // bn, en, mixed
 };
@@ -35,6 +36,47 @@ const LANGUAGE_TEXT: Record<string, string> = {
     "Mirror whatever language the customer actually writes in, the same way ChatGPT does — if they write in English, reply in English; if they write in Hindi, reply in Hindi; if they write in Bengali script, reply in Bengali script; and so on for any other language. Don't default to Bengali just because the business is Bengali. The one special case: if the customer writes Banglish (Bengali words spelled out in English/Roman letters, e.g. 'ghee kamon hobe'), reply in proper Bengali script (বাংলা), not in Roman letters — never reply in Banglish yourself. You can naturally keep English brand/product names mixed into a reply in any language. Only use words and phrases in a language you are certain are grammatically correct and actually mean what you intend; if you're not sure how to say something naturally in a given language, say that part in English instead of guessing or inventing a word.",
 };
 
+// Turns the owner's structured word-swap/vocabulary settings into a short
+// instruction block. Stored as a JSON string so the Agent Studio UI can offer
+// a friendly table instead of a free-text box; parsing failures are swallowed
+// so a malformed value never breaks the whole reply.
+function buildBrandLanguageNote(raw: string | null | undefined): string {
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw) as {
+      wordsToUse?: string[];
+      wordsToAvoid?: string[];
+      terminology?: { from: string; to: string }[];
+    };
+
+    const lines: string[] = [];
+
+    const wordsToUse = (parsed.wordsToUse ?? []).filter((w) => w?.trim());
+    if (wordsToUse.length > 0) {
+      lines.push(`Prefer these words/phrases where natural: ${wordsToUse.join(", ")}.`);
+    }
+
+    const wordsToAvoid = (parsed.wordsToAvoid ?? []).filter((w) => w?.trim());
+    if (wordsToAvoid.length > 0) {
+      lines.push(`Never use these generic words/phrases: ${wordsToAvoid.join(", ")}.`);
+    }
+
+    const terminology = (parsed.terminology ?? []).filter((t) => t?.from?.trim() && t?.to?.trim());
+    if (terminology.length > 0) {
+      const rules = terminology.map((t) => `Never say "${t.from}" — always say "${t.to}" instead.`).join(" ");
+      lines.push(rules);
+    }
+
+    if (lines.length === 0) return "";
+
+    return `\n\nBrand language — this business has its own vocabulary, use it exactly as given below instead of generic terms. This matters a lot for sounding like a real member of the team rather than a generic assistant:\n${lines.join(
+      "\n"
+    )}`;
+  } catch {
+    return "";
+  }
+}
+
 function todayInIndia(): string {
   // en-CA locale formats as YYYY-MM-DD, which doubles as a clean ISO date string.
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
@@ -46,6 +88,7 @@ function buildSystemPrompt(profile: AgentProfileInput | undefined, contextBlock:
   const tone = TONE_TEXT[profile?.tone ?? "friendly"] ?? TONE_TEXT.friendly;
   const language = LANGUAGE_TEXT[profile?.languageStyle ?? "mixed"] ?? LANGUAGE_TEXT.mixed;
   const customInstructions = profile?.customInstructions?.trim();
+  const brandLanguageNote = buildBrandLanguageNote(profile?.brandLanguage);
 
   const toolsNote = hasTools
     ? `\n\nYou have tools available for certain actions (e.g. saving a customer's address, or setting a follow-up reminder). Use a tool naturally when the conversation calls for it — don't ask for permission first, just do it, then confirm what you did in your reply.`
@@ -65,7 +108,7 @@ Write like a real, attentive member of the team — natural and warm, never stif
 
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
-Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions.${toolsNote}${customInstructionsNote}
+Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions.${toolsNote}${customInstructionsNote}${brandLanguageNote}
 
 Reference material:
 ${contextBlock}`;
