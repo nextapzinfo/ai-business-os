@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
-import { askAIWithTools, SAVE_ADDRESS_TOOL, SET_REMINDER_TOOL, type ToolDefinition } from "@/lib/llm";
+import {
+  askAIWithTools,
+  SAVE_ADDRESS_TOOL,
+  SET_REMINDER_TOOL,
+  RECORD_INTEREST_TOOL,
+  type ToolDefinition,
+} from "@/lib/llm";
 import { sendWhatsAppMessage, sendWhatsAppImageMessage } from "@/lib/whatsapp";
 import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
@@ -177,6 +183,7 @@ export async function POST(req: NextRequest) {
     const tools: ToolDefinition[] = [];
     if (agentProfile?.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);
     if (agentProfile?.skillReminders) tools.push(SET_REMINDER_TOOL);
+    if (agentProfile?.skillTrackInterest) tools.push(RECORD_INTEREST_TOOL);
 
     async function executeTool(name: string, args: Record<string, any>): Promise<string> {
       if (name === "save_customer_address") {
@@ -206,6 +213,28 @@ export async function POST(req: NextRequest) {
           metadata: { clientId: client!.id, title, dueDate: dueDateRaw },
         });
         return `Reminder set: "${title}" on ${dueDateRaw}`;
+      }
+      if (name === "record_product_interest") {
+        const productName = (args.productName as string)?.trim();
+        if (!productName) return "No product name given — nothing recorded.";
+
+        const product = await prisma.product.findFirst({
+          where: { organizationId: organization!.id, name: { contains: productName, mode: "insensitive" } },
+        });
+        if (!product) return `No matching product found for "${productName}" — nothing recorded.`;
+
+        const note = (args.note as string)?.trim() || undefined;
+        await prisma.clientProductInterest.upsert({
+          where: { clientId_productId: { clientId: client!.id, productId: product.id } },
+          update: { note },
+          create: { organizationId: organization!.id, clientId: client!.id, productId: product.id, note },
+        });
+        await logAudit({
+          organizationId: organization!.id,
+          action: "PRODUCT_INTEREST_RECORDED_BY_AI",
+          metadata: { clientId: client!.id, productId: product.id, productName: product.name, note },
+        });
+        return `Recorded interest in "${product.name}".`;
       }
       return "Unknown tool.";
     }
