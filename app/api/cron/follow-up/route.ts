@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sendWhatsAppTemplateMessage } from "@/lib/whatsapp";
 import { logAudit } from "@/lib/audit";
+import { logWhatsAppTemplateCost } from "@/lib/billing";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -84,6 +85,7 @@ export async function GET(req: NextRequest) {
           action: "FOLLOW_UP_SENT",
           metadata: { conversationId: conversation.id, clientId: conversation.clientId, templateId: template.id },
         });
+        await logWhatsAppTemplateCost(profile.organizationId, template.category);
         sent++;
       } catch (err) {
         console.error("Follow-up send failed:", err);
