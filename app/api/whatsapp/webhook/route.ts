@@ -8,12 +8,14 @@ import {
   RECORD_INTEREST_TOOL,
   PLACE_ORDER_TOOL,
   REQUEST_HANDOFF_TOOL,
+  applyTerminologySwaps,
   type ToolDefinition,
   type ChatHistoryMessage,
 } from "@/lib/llm";
 import { sendWhatsAppMessage, sendWhatsAppImageMessage } from "@/lib/whatsapp";
 import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
+import { logAiUsage } from "@/lib/billing";
 
 // Turns Meta's structured location payload ({latitude, longitude, name?, address?})
 // into a readable text line — this is what gets logged as the Message and fed to
@@ -382,7 +384,7 @@ export async function POST(req: NextRequest) {
     // goes through the real model — including zero-RAG-match questions, which
     // now get an honest "I don't know, let me get someone" instead of the old
     // hardcoded canned line, and the AI can genuinely escalate when it means it.
-    const answer = await askAIWithTools(
+    const { answer, usage } = await askAIWithTools(
       text,
       results.map((r) => ({ title: r.documentTitle, content: r.content })),
       agentProfile ?? undefined,
@@ -391,6 +393,13 @@ export async function POST(req: NextRequest) {
       history,
       photoNote
     );
+    await logAiUsage(organization.id, "webhook_reply", usage);
+
+    // Guaranteed brand-vocabulary swap (e.g. "পণ্য" → "মিষ্টি") — the system
+    // prompt already asks the model to do this, but that's a hint, not a
+    // promise; this is the actual enforcement so a saved Word Swap is never
+    // silently skipped in what the customer receives.
+    const finalAnswer = applyTerminologySwaps(answer, agentProfile?.brandLanguage);
 
     const noKnowledgeMatch = results.length === 0;
 
@@ -398,13 +407,13 @@ export async function POST(req: NextRequest) {
       data: {
         conversationId: conversation.id,
         sender: "AI",
-        content: answer,
+        content: finalAnswer,
         noKnowledgeMatch,
         answeredQuestion: text,
       },
     });
 
-    await sendWhatsAppMessage(from, answer);
+    await sendWhatsAppMessage(from, finalAnswer);
 
     // Actually send the product/event photo determined above (matchedProduct /
     // matchedEvent were precomputed before the AI call so its text reply could
