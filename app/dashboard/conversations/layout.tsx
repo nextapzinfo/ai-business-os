@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/getCurrentUser";
-import ConversationList from "@/components/ConversationList";
 import AutoRefresh from "@/components/AutoRefresh";
+import ConversationsSplitView from "@/components/ConversationsSplitView";
 
 export const dynamic = "force-dynamic";
 
@@ -32,17 +32,9 @@ export default async function ConversationsLayout({ children }: { children: Reac
   }));
 
   return (
-    <div className="flex overflow-hidden" style={{ height: "calc(100vh - 64px)" }}>
+    <div className="flex h-[calc(100dvh-56px)] overflow-hidden lg:h-[calc(100vh-64px)]">
       <AutoRefresh intervalMs={8000} />
-
-      <div className="flex w-[260px] flex-shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white">
-        <div className="flex-shrink-0 border-b border-gray-100 px-3 py-2.5">
-          <h2 className="text-sm font-semibold text-gray-900">Conversations</h2>
-        </div>
-        <ConversationList conversations={items} />
-      </div>
-
-      <div className="min-w-0 flex-1 overflow-hidden pl-4">{children}</div>
+      <ConversationsSplitView conversations={items}>{children}</ConversationsSplitView>
     </div>
   );
 }
