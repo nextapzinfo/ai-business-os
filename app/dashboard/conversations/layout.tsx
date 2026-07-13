@@ -27,6 +27,7 @@ export default async function ConversationsLayout({ children }: { children: Reac
     channel: c.channel,
     status: c.status,
     aiPaused: c.aiPaused,
+    handoffReason: c.handoffReason,
     lastMessage: c.messages[0]?.content ?? "No messages yet",
   }));
 
