@@ -93,6 +93,7 @@ export async function POST(req: NextRequest) {
         {
           businessName: body.businessName,
           businessDescription: body.businessDescription,
+          coreIdentity: body.coreIdentity,
           customInstructions: body.customInstructions,
           brandLanguage: body.brandLanguage,
           tone: body.tone,
