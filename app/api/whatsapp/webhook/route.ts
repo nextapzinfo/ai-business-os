@@ -239,6 +239,43 @@ export async function POST(req: NextRequest) {
       LIMIT 5
     `) as { content: string; documentTitle: string; documentId: string; distance: number }[];
 
+    // Precompute whether a product/event photo will actually accompany this
+    // reply (same threshold check used below when sending) — the AI needs to
+    // know this BEFORE it writes its answer, otherwise it's guessing blind and
+    // sometimes wrongly claims it "can't share image links" (it actually can,
+    // it just didn't have one this specific time). Reused below so the send
+    // logic doesn't need to re-query the same product/event a second time.
+    const PRODUCT_PHOTO_DISTANCE_THRESHOLD = 0.35; // lower = stricter match required; tune from real usage
+    const EVENT_PHOTO_DISTANCE_THRESHOLD = 0.35;
+    let matchedProduct: { id: string; name: string; imageUrl: string | null } | null = null;
+    let matchedEvent: { id: string; title: string; imageUrl: string | null } | null = null;
+    if (results.length > 0 && results[0].distance <= PRODUCT_PHOTO_DISTANCE_THRESHOLD) {
+      matchedProduct = await prisma.product.findUnique({
+        where: { documentId: results[0].documentId },
+        select: { id: true, name: true, imageUrl: true },
+      });
+    }
+    if (
+      !matchedProduct?.imageUrl &&
+      agentProfile?.skillSendEventPhotos &&
+      results.length > 0 &&
+      results[0].distance <= EVENT_PHOTO_DISTANCE_THRESHOLD
+    ) {
+      matchedEvent = await prisma.event.findUnique({
+        where: { documentId: results[0].documentId },
+        select: { id: true, title: true, imageUrl: true },
+      });
+    }
+
+    let photoNote: string;
+    if (matchedProduct?.imageUrl) {
+      photoNote = `A photo of "${matchedProduct.name}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally (you can casually mention a photo is coming if it fits).`;
+    } else if (matchedEvent?.imageUrl) {
+      photoNote = `A photo for "${matchedEvent.title}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally.`;
+    } else {
+      photoNote = `You ARE able to send product/event photos automatically when one closely matches the question — but none is available for this specific reply. If the customer explicitly asks to see a photo right now and none is available, be honest: say you don't have that photo on hand right now and you'll send it shortly — never say you're generally unable to share images or photo links, because that isn't true.`;
+    }
+
     // Function-calling skills — only wired up when the matching Skills toggle is on
     // in Agent Studio. executeTool actually writes to the real database here (this
     // is the live WhatsApp path, unlike the Test Sandbox which only simulates).
@@ -337,7 +374,8 @@ export async function POST(req: NextRequest) {
         agentProfile ?? undefined,
         tools,
         executeTool,
-        history
+        history,
+        photoNote
       );
     }
 
@@ -347,57 +385,36 @@ export async function POST(req: NextRequest) {
 
     await sendWhatsAppMessage(from, answer);
 
-    // If the top-matching source is a Retail Product with a photo, send it too —
-    // but only when that top match is actually close enough to be relevant.
-    // Vector search always returns *something* from the top 5, even for questions
-    // with no real match (e.g. "Balun" when no such product exists); without this
-    // check, the closest-but-irrelevant product's photo would get attached to an
-    // answer where the AI correctly said "I don't know".
-    const PRODUCT_PHOTO_DISTANCE_THRESHOLD = 0.35; // lower = stricter match required; tune from real usage
-    if (results.length > 0 && results[0].distance <= PRODUCT_PHOTO_DISTANCE_THRESHOLD) {
+    // Actually send the product/event photo determined above (matchedProduct /
+    // matchedEvent were precomputed before the AI call so its text reply could
+    // stay honest about whether a photo is coming — see photoNote above).
+    if (matchedProduct?.imageUrl) {
       try {
-        const product = await prisma.product.findUnique({
-          where: { documentId: results[0].documentId },
+        await sendWhatsAppImageMessage(from, matchedProduct.imageUrl, matchedProduct.name);
+        await prisma.message.create({
+          data: {
+            conversationId: conversation.id,
+            sender: "AI",
+            content: `[Sent photo] ${matchedProduct.name}`,
+            imageUrl: matchedProduct.imageUrl,
+          },
         });
-        if (product?.imageUrl) {
-          await sendWhatsAppImageMessage(from, product.imageUrl, product.name);
-          await prisma.message.create({
-            data: {
-              conversationId: conversation.id,
-              sender: "AI",
-              content: `[Sent photo] ${product.name}`,
-              imageUrl: product.imageUrl,
-            },
-          });
-        }
       } catch (err) {
         console.error("Product image send failed:", err);
       }
     }
 
-    // Same idea for Events (festival specials, sale announcements) — opt-in via
-    // the Skills toggle since owners may not always want promo photos auto-sent.
-    const EVENT_PHOTO_DISTANCE_THRESHOLD = 0.35;
-    if (
-      agentProfile?.skillSendEventPhotos &&
-      results.length > 0 &&
-      results[0].distance <= EVENT_PHOTO_DISTANCE_THRESHOLD
-    ) {
+    if (matchedEvent?.imageUrl) {
       try {
-        const event = await prisma.event.findUnique({
-          where: { documentId: results[0].documentId },
+        await sendWhatsAppImageMessage(from, matchedEvent.imageUrl, matchedEvent.title);
+        await prisma.message.create({
+          data: {
+            conversationId: conversation.id,
+            sender: "AI",
+            content: `[Sent photo] ${matchedEvent.title}`,
+            imageUrl: matchedEvent.imageUrl,
+          },
         });
-        if (event?.imageUrl) {
-          await sendWhatsAppImageMessage(from, event.imageUrl, event.title);
-          await prisma.message.create({
-            data: {
-              conversationId: conversation.id,
-              sender: "AI",
-              content: `[Sent photo] ${event.title}`,
-              imageUrl: event.imageUrl,
-            },
-          });
-        }
       } catch (err) {
         console.error("Event image send failed:", err);
       }
