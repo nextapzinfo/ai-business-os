@@ -38,6 +38,7 @@ model Organization {
   clientProductInterests ClientProductInterest[]
   events           Event[]
   orders           Order[]
+  conversationInsights ConversationInsight[]
 }
 
 // Configures how the WhatsApp AI presents itself and behaves — replaces the
@@ -63,6 +64,10 @@ model AgentProfile {
   skillTrackInterest   Boolean  @default(false) // when true, AI can note which product a customer is interested in
   skillSendEventPhotos Boolean  @default(false) // when true, webhook sends an Event's photo when a RAG match is close enough
   skillTakeOrders      Boolean  @default(false) // when true, AI can record a customer's order via function-calling (record_order)
+  skillFollowUp        Boolean  @default(false) // when true, the daily cron sends followUpTemplateId to customers who haven't replied in followUpHours
+  followUpHours        Int      @default(24) // how long to wait with no customer reply before sending the follow-up template
+  followUpTemplateId   String?  // MessageTemplate.id to send — loose reference (not a hard FK) so a deleted template doesn't break the profile
+  skillSelfAnalysis    Boolean  @default(false) // when true, the nightly cron asks the AI to self-critique each newly-closed conversation
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -148,9 +153,12 @@ model Conversation {
   channel        String       @default("WHATSAPP")
   status         String       @default("OPEN") // OPEN, ESCALATED, CLOSED
   aiPaused       Boolean      @default(false) // true once staff "intervenes" — AI stops auto-replying until resumed
+  handoffReason  String?      // set by the AI itself (request_human_handoff tool) when it escalates — cleared when staff replies or resumes AI; distinguishes an AI-initiated escalation from a staff manually pausing
+  lastFollowUpAt DateTime?    // set when the AI Follow-up cron sends a nudge template — prevents sending more than once
   createdAt      DateTime     @default(now())
 
   messages Message[]
+  insight  ConversationInsight?
 
   @@index([organizationId])
 }
@@ -162,6 +170,11 @@ model Message {
   sender         String // CLIENT, AI, STAFF
   content        String
   imageUrl       String? // set when this message included a photo (template header image, product/event photo)
+  noKnowledgeMatch    Boolean  @default(false) // set on an AI message when the RAG search found zero relevant Knowledge Base chunks — surfaced on the Analytics/Training pages as a knowledge gap
+  answeredQuestion    String?  // the customer's question this AI message was answering — set for AI messages, used by Analytics/Training so they don't have to hunt for the preceding message
+  flaggedWrong        Boolean  @default(false) // staff marked this AI reply as wrong from the conversation thread
+  correctionNote      String?  // staff's corrected answer, written on the Training Dashboard
+  correctionStatus    String   @default("PENDING") // PENDING, ADDED_TO_KB, DISMISSED
   createdAt      DateTime     @default(now())
 
   @@index([conversationId])
@@ -336,4 +349,26 @@ model Order {
 
   @@index([organizationId])
   @@index([clientId])
+}
+
+// One row per CLOSED conversation, written once by the nightly self-analysis
+// cron (not per-chat — that would mean an extra OpenAI call every single
+// conversation, which gets expensive fast). The AI reviews its own transcript
+// and self-critiques; this is only ever a SUGGESTION for the owner to review
+// on the Training Dashboard — nothing here is auto-applied to the Knowledge
+// Base or Custom Instructions on its own.
+model ConversationInsight {
+  id                 String       @id @default(cuid())
+  organizationId     String
+  organization       Organization @relation(fields: [organizationId], references: [id])
+  conversationId     String       @unique
+  conversation       Conversation @relation(fields: [conversationId], references: [id])
+  mistakes           String? // what the AI thinks it got wrong, in its own words
+  unanswered         String? // questions it couldn't answer
+  suggestedKnowledge String? // what it thinks should be added to the Knowledge Base
+  suggestedRules     String? // a new Custom Instruction rule it thinks might help
+  status             String       @default("PENDING") // PENDING (needs owner review), REVIEWED
+  createdAt          DateTime     @default(now())
+
+  @@index([organizationId])
 }
