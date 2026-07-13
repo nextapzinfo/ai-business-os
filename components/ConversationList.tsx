@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { AlertCircle } from "lucide-react";
 
 export type ConversationListItem = {
   id: string;
@@ -8,6 +9,7 @@ export type ConversationListItem = {
   channel: string;
   status: string;
   aiPaused: boolean;
+  handoffReason: string | null;
   lastMessage: string;
 };
 
@@ -50,7 +52,13 @@ export default function ConversationList({ conversations }: { conversations: Con
                   title={c.aiPaused ? "Staff Handling" : "AI Active"}
                 />
               </div>
-              <p className="truncate text-xs text-gray-500">{c.lastMessage}</p>
+              {c.handoffReason ? (
+                <p className="flex items-center gap-1 truncate text-xs font-medium text-red-600">
+                  <AlertCircle size={11} className="flex-shrink-0" /> Needs you — {c.handoffReason}
+                </p>
+              ) : (
+                <p className="truncate text-xs text-gray-500">{c.lastMessage}</p>
+              )}
             </div>
           </a>
         );
