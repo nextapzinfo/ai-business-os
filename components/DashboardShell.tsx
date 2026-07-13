@@ -29,7 +29,7 @@ export default function DashboardShell({
   return (
     <div className="flex min-h-screen bg-gray-50">
       {/* Mobile-only top bar — desktop keeps the sidebar permanently visible so this is redundant there */}
-      <div className="fixed inset-x-0 top-0 z-30 flex h-12 items-center gap-2 border-b border-black/10 bg-primary-dark px-3 lg:hidden">
+      <div className="fixed inset-x-0 top-0 z-30 flex h-12 items-center gap-2 border-b border-black/10 bg-primary-dark px-3 print:hidden lg:hidden">
         <button
           type="button"
           onClick={() => setOpen(true)}
@@ -51,7 +51,7 @@ export default function DashboardShell({
 
       {/* Sidebar — fixed off-canvas drawer on mobile (slides in/out), sticky always-visible column on desktop */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex h-screen w-[220px] flex-shrink-0 flex-col overflow-y-auto bg-primary-dark p-2.5 transition-transform duration-200 ease-out lg:sticky lg:top-0 lg:z-auto lg:w-[180px] lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 flex h-screen w-[220px] flex-shrink-0 flex-col overflow-y-auto bg-primary-dark p-2.5 transition-transform duration-200 ease-out print:hidden lg:sticky lg:top-0 lg:z-auto lg:w-[180px] lg:translate-x-0 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -89,7 +89,7 @@ export default function DashboardShell({
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 p-4 pt-14 lg:p-8">{children}</main>
+      <main className="min-w-0 flex-1 p-4 pt-14 print:p-0 lg:p-8">{children}</main>
     </div>
   );
 }
