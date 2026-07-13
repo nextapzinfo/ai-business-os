@@ -9,6 +9,7 @@ import {
   SET_REMINDER_TOOL,
   RECORD_INTEREST_TOOL,
   PLACE_ORDER_TOOL,
+  REQUEST_HANDOFF_TOOL,
   type ToolDefinition,
   type ChatHistoryMessage,
 } from "@/lib/llm";
@@ -18,6 +19,9 @@ import {
 // clients/reminders. Matches the "nothing here reaches real customers or gets
 // logged" promise shown in the Test Sandbox UI.
 async function simulateTool(name: string, args: Record<string, any>): Promise<string> {
+  if (name === "request_human_handoff") {
+    return `[Sandbox only — not actually paused] Would hand off to a staff member. Reason: ${args.reason}`;
+  }
   if (name === "save_customer_address") {
     return `[Sandbox only — not actually saved] Would save address: ${args.address}`;
   }
@@ -76,34 +80,28 @@ export async function POST(req: NextRequest) {
       LIMIT 5
     `) as { content: string; documentTitle: string }[];
 
-    const tools: ToolDefinition[] = [];
+    const tools: ToolDefinition[] = [REQUEST_HANDOFF_TOOL];
     if (body.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);
     if (body.skillReminders) tools.push(SET_REMINDER_TOOL);
     if (body.skillTrackInterest) tools.push(RECORD_INTEREST_TOOL);
     if (body.skillTakeOrders) tools.push(PLACE_ORDER_TOOL);
 
-    let answer: string;
-    if (results.length === 0 && tools.length === 0) {
-      answer =
-        "Thanks for your message — we don't have an answer ready for that yet, our team will get back to you shortly.";
-    } else {
-      answer = await askAIWithTools(
-        question,
-        results.map((r) => ({ title: r.documentTitle, content: r.content })),
-        {
-          businessName: body.businessName,
-          businessDescription: body.businessDescription,
-          coreIdentity: body.coreIdentity,
-          customInstructions: body.customInstructions,
-          brandLanguage: body.brandLanguage,
-          tone: body.tone,
-          languageStyle: body.languageStyle,
-        },
-        tools,
-        simulateTool,
-        history
-      );
-    }
+    const answer = await askAIWithTools(
+      question,
+      results.map((r) => ({ title: r.documentTitle, content: r.content })),
+      {
+        businessName: body.businessName,
+        businessDescription: body.businessDescription,
+        coreIdentity: body.coreIdentity,
+        customInstructions: body.customInstructions,
+        brandLanguage: body.brandLanguage,
+        tone: body.tone,
+        languageStyle: body.languageStyle,
+      },
+      tools,
+      simulateTool,
+      history
+    );
 
     return NextResponse.json({ answer, sourcesUsed: results.length });
   } catch (err) {
