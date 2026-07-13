@@ -50,6 +50,7 @@ model AgentProfile {
   businessName         String?
   greetingMessage      String?
   businessDescription  String?
+  coreIdentity         String?  // free-text persona/identity paragraph — replaces the auto-generated opening line of the system prompt when set; overall voice/judgment, not narrow rules (those go in customInstructions)
   customInstructions   String?  // free-text rules the owner writes, always injected into the system prompt (not RAG-dependent)
   brandLanguage        String?  // JSON: { wordsToUse: string[], wordsToAvoid: string[], terminology: {from:string,to:string}[] } — brand-specific vocabulary, always injected
   tone                 String   @default("friendly") // friendly, formal, casual
