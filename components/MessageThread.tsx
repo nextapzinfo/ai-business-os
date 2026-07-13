@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Search, X } from "lucide-react";
+import { Check, Search, X, ThumbsDown } from "lucide-react";
+import { flagMessageWrong } from "@/app/dashboard/conversations/[id]/actions";
 
 type ThreadMessage = {
   id: string;
   sender: string;
   content: string;
   imageUrl?: string | null;
+  flaggedWrong?: boolean;
   createdAt: string; // pre-formatted on the server (IST) — Server Components can't pass Date objects to Client Components
 };
 
@@ -46,10 +48,20 @@ function renderWithLinks(text: string) {
 export default function MessageThread({ messages }: { messages: ThreadMessage[] }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [flaggedLocally, setFlaggedLocally] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length]);
+
+  async function handleFlagWrong(messageId: string) {
+    setFlaggedLocally((prev) => new Set(prev).add(messageId)); // optimistic — instant feedback
+    try {
+      await flagMessageWrong(messageId);
+    } catch (err) {
+      console.error("Flag wrong failed:", err);
+    }
+  }
 
   return (
     <>
@@ -88,7 +100,20 @@ export default function MessageThread({ messages }: { messages: ThreadMessage[] 
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-600">Staff</p>
                   )}
                   <p className="whitespace-pre-wrap text-[14px] text-gray-900">{renderWithLinks(m.content)}</p>
-                  <div className="mt-0.5 flex items-center justify-end gap-0.5">
+                  <div className="mt-0.5 flex items-center justify-end gap-1.5">
+                    {m.sender === "AI" &&
+                      (m.flaggedWrong || flaggedLocally.has(m.id) ? (
+                        <span className="text-[10px] text-gray-400">Flagged for review</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleFlagWrong(m.id)}
+                          title="Mark this reply as wrong — sends it to the Training page for review"
+                          className="text-gray-400 hover:text-red-500"
+                        >
+                          <ThumbsDown size={11} />
+                        </button>
+                      ))}
                     <span className="text-[11px] text-gray-500">{m.createdAt}</span>
                     {sent && <Check size={12} className="flex-shrink-0 text-gray-500" />}
                   </div>

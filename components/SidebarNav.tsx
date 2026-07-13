@@ -12,6 +12,8 @@ import {
   Bot,
   PartyPopper,
   ShoppingBag,
+  BarChart3,
+  GraduationCap,
   type LucideIcon,
 } from "lucide-react";
 
@@ -26,6 +28,8 @@ const ICONS: Record<string, LucideIcon> = {
   "/dashboard/products": Package,
   "/dashboard/events": PartyPopper,
   "/dashboard/orders": ShoppingBag,
+  "/dashboard/analytics": BarChart3,
+  "/dashboard/training": GraduationCap,
 };
 
 export type NavItem = { href: string; label: string };

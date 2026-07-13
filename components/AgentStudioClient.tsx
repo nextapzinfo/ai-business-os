@@ -74,10 +74,12 @@ export default function AgentStudioClient({
   initialProfile,
   initialDocuments,
   qrCodeUrl,
+  approvedTemplates,
 }: {
   initialProfile: AgentProfileData;
   initialDocuments: KnowledgeDocument[];
   qrCodeUrl: string | null;
+  approvedTemplates: { id: string; name: string; language: string }[];
 }) {
   const [form, setForm] = useState<AgentProfileData>(initialProfile);
   const [activeTab, setActiveTab] = useState<TabKey>("profile");
@@ -528,6 +530,16 @@ export default function AgentStudioClient({
 
           {activeTab === "skills" && (
             <div className="flex flex-col gap-4">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <h3 className="text-sm font-semibold text-gray-900">Human Handoff — always on</h3>
+                <p className="mt-1 text-xs text-gray-600">
+                  If the AI genuinely can't help — it doesn't know the answer, or the customer explicitly asks
+                  for a real person — it pauses itself and flags the conversation for you (a red "Needs you"
+                  badge in the Conversations list). This isn't a toggle since every business wants this safety
+                  net; it happens automatically.
+                </p>
+              </div>
+
               <div className="rounded-xl border border-gray-200 bg-white p-4">
                 <h3 className="text-sm font-semibold text-gray-900">Skills</h3>
                 <p className="mt-1 text-xs text-gray-500">
@@ -613,6 +625,75 @@ export default function AgentStudioClient({
                     </span>
                   </label>
                 </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-gray-900">AI Follow-up</h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  If a customer goes quiet after the AI's (or staff's) last message, automatically nudge them
+                  once with an approved template — runs once a day, so the wait time below is rounded to the
+                  nearest day it checks, not exact to the hour.
+                </p>
+                <label className="mt-3 flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={form.skillFollowUp}
+                    onChange={(e) => update("skillFollowUp", e.target.checked)}
+                  />
+                  Send an automatic follow-up
+                </label>
+                {form.skillFollowUp && (
+                  <div className="mt-3 flex flex-col gap-3 border-t border-gray-100 pt-3">
+                    <label className="text-xs font-medium text-gray-600">
+                      Wait this many hours with no reply before following up
+                      <input
+                        type="number"
+                        min={1}
+                        value={form.followUpHours}
+                        onChange={(e) => update("followUpHours", Number(e.target.value) || 24)}
+                        className={`${inputClass} w-24`}
+                      />
+                    </label>
+                    <label className="text-xs font-medium text-gray-600">
+                      Template to send
+                      <select
+                        value={form.followUpTemplateId}
+                        onChange={(e) => update("followUpTemplateId", e.target.value)}
+                        className={inputClass}
+                      >
+                        <option value="">Select an approved template...</option>
+                        {approvedTemplates.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name} ({t.language})
+                          </option>
+                        ))}
+                      </select>
+                      {approvedTemplates.length === 0 && (
+                        <span className="mt-1 block text-[11px] font-normal text-amber-600">
+                          No approved templates yet — create and get one approved on the Templates page first.
+                        </span>
+                      )}
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-gray-900">AI Self-Review</h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  Once a day, the AI reviews conversations you've marked Closed and honestly critiques its own
+                  performance — mistakes, questions it couldn't answer, what to add to Knowledge. This never
+                  changes anything on its own; suggestions just show up on the Training page for you to review.
+                  Uses one extra AI call per closed conversation per day, so there's a small added cost.
+                </p>
+                <label className="mt-3 flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={form.skillSelfAnalysis}
+                    onChange={(e) => update("skillSelfAnalysis", e.target.checked)}
+                  />
+                  Enable nightly self-review
+                </label>
               </div>
 
               <div className="rounded-xl border border-gray-200 bg-white p-4">
