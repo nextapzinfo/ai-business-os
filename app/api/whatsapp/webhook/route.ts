@@ -7,6 +7,7 @@ import {
   SET_REMINDER_TOOL,
   RECORD_INTEREST_TOOL,
   PLACE_ORDER_TOOL,
+  REQUEST_HANDOFF_TOOL,
   type ToolDefinition,
   type ChatHistoryMessage,
 } from "@/lib/llm";
@@ -279,13 +280,27 @@ export async function POST(req: NextRequest) {
     // Function-calling skills — only wired up when the matching Skills toggle is on
     // in Agent Studio. executeTool actually writes to the real database here (this
     // is the live WhatsApp path, unlike the Test Sandbox which only simulates).
-    const tools: ToolDefinition[] = [];
+    // REQUEST_HANDOFF_TOOL is always included (not a toggle) — see its definition.
+    const tools: ToolDefinition[] = [REQUEST_HANDOFF_TOOL];
     if (agentProfile?.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);
     if (agentProfile?.skillReminders) tools.push(SET_REMINDER_TOOL);
     if (agentProfile?.skillTrackInterest) tools.push(RECORD_INTEREST_TOOL);
     if (agentProfile?.skillTakeOrders) tools.push(PLACE_ORDER_TOOL);
 
     async function executeTool(name: string, args: Record<string, any>): Promise<string> {
+      if (name === "request_human_handoff") {
+        const reason = (args.reason as string)?.trim() || "AI couldn't help — needs a staff member.";
+        await prisma.conversation.update({
+          where: { id: conversation!.id },
+          data: { aiPaused: true, handoffReason: reason },
+        });
+        await logAudit({
+          organizationId: organization!.id,
+          action: "AI_INITIATED_HANDOFF",
+          metadata: { clientId: client!.id, reason },
+        });
+        return `Handed off to a staff member. Let the customer know someone will follow up shortly — don't say anything that implies you'll keep helping after this.`;
+      }
       if (name === "save_customer_address") {
         const address = (args.address as string)?.trim();
         if (!address) return "No address was given — nothing saved.";
@@ -363,24 +378,30 @@ export async function POST(req: NextRequest) {
       return "Unknown tool.";
     }
 
-    let answer: string;
-    if (results.length === 0 && tools.length === 0) {
-      answer =
-        "Thanks for your message — we don't have an answer ready for that yet, our team will get back to you shortly.";
-    } else {
-      answer = await askAIWithTools(
-        text,
-        results.map((r) => ({ title: r.documentTitle, content: r.content })),
-        agentProfile ?? undefined,
-        tools,
-        executeTool,
-        history,
-        photoNote
-      );
-    }
+    // REQUEST_HANDOFF_TOOL is always in `tools` now (see above), so this always
+    // goes through the real model — including zero-RAG-match questions, which
+    // now get an honest "I don't know, let me get someone" instead of the old
+    // hardcoded canned line, and the AI can genuinely escalate when it means it.
+    const answer = await askAIWithTools(
+      text,
+      results.map((r) => ({ title: r.documentTitle, content: r.content })),
+      agentProfile ?? undefined,
+      tools,
+      executeTool,
+      history,
+      photoNote
+    );
+
+    const noKnowledgeMatch = results.length === 0;
 
     await prisma.message.create({
-      data: { conversationId: conversation.id, sender: "AI", content: answer },
+      data: {
+        conversationId: conversation.id,
+        sender: "AI",
+        content: answer,
+        noKnowledgeMatch,
+        answeredQuestion: text,
+      },
     });
 
     await sendWhatsAppMessage(from, answer);
