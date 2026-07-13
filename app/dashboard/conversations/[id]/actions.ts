@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { sendWhatsAppTemplateMessage } from "@/lib/whatsapp";
+import { logWhatsAppTemplateCost } from "@/lib/billing";
 import { revalidatePath } from "next/cache";
 
 // Free-text replies only deliver within WhatsApp's 24-hour customer-service
@@ -40,6 +41,7 @@ export async function sendTemplateToClient(formData: FormData) {
       hasVariable ? [conversation.client.name] : [],
       template.headerType === "IMAGE" ? template.headerImageUrl ?? undefined : undefined
     );
+    await logWhatsAppTemplateCost(user.organizationId, template.category);
   } catch (err) {
     sendError = err instanceof Error ? err.message : "Unknown error";
     console.error("Manual template send failed:", err);
