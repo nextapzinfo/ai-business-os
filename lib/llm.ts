@@ -9,6 +9,18 @@ type SourceChunk = { title: string; content: string };
 // nothing to resolve those against and falls back to a generic greeting.
 export type ChatHistoryMessage = { role: "user" | "assistant"; content: string };
 
+// Real token counts OpenAI returns with every response — this is what powers
+// the Billing page's exact (not estimated) OpenAI cost figure.
+export type TokenUsage = { promptTokens: number; completionTokens: number };
+export type AiCallResult = { answer: string; usage: TokenUsage };
+
+function extractUsage(data: any): TokenUsage {
+  return {
+    promptTokens: data?.usage?.prompt_tokens ?? 0,
+    completionTokens: data?.usage?.completion_tokens ?? 0,
+  };
+}
+
 export type AgentProfileInput = {
   businessName?: string | null;
   businessDescription?: string | null;
@@ -85,6 +97,38 @@ function buildBrandLanguageNote(raw: string | null | undefined): string {
   }
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Prompt instructions ("never say X, always say Y") are a strong hint to the
+// model, not a guarantee — with several swap rules plus tone/language/custom
+// instructions all competing for the model's attention, an occasional miss is
+// normal, especially on a smaller model like gpt-4o-mini. This runs AFTER the
+// model replies, doing a real find-and-replace on the exact terminology pairs
+// from Brand Language — so a swap like "পণ্য" → "মিষ্টি" is 100% guaranteed in
+// what the customer actually receives, regardless of what the model wrote.
+// Case-insensitive, whole-string substring match (no stemming/pluralization —
+// "Products" won't match a "Product" rule); applied in the order the owner
+// listed the pairs, so a later rule can re-match an earlier rule's output.
+export function applyTerminologySwaps(text: string, brandLanguageRaw: string | null | undefined): string {
+  if (!text || !brandLanguageRaw) return text;
+  try {
+    const parsed = JSON.parse(brandLanguageRaw) as { terminology?: { from: string; to: string }[] };
+    const pairs = (parsed.terminology ?? []).filter((t) => t?.from?.trim() && t?.to?.trim());
+    if (pairs.length === 0) return text;
+
+    let result = text;
+    for (const { from, to } of pairs) {
+      const pattern = new RegExp(escapeRegExp(from.trim()), "gi");
+      result = result.replace(pattern, to.trim());
+    }
+    return result;
+  } catch {
+    return text; // malformed JSON — leave the reply untouched rather than break it
+  }
+}
+
 function todayInIndia(): string {
   // en-CA locale formats as YYYY-MM-DD, which doubles as a clean ISO date string.
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
@@ -151,7 +195,7 @@ export async function askAI(
   profile?: AgentProfileInput,
   history: ChatHistoryMessage[] = [],
   photoNote: string = ""
-): Promise<string> {
+): Promise<AiCallResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
@@ -184,7 +228,7 @@ export async function askAI(
   }
 
   const data = await res.json();
-  return data.choices[0].message.content as string;
+  return { answer: (data.choices[0].message.content as string) ?? "", usage: extractUsage(data) };
 }
 
 // ---- Function calling (agentic skills) ----
@@ -321,7 +365,11 @@ export type ToolExecutor = (name: string, args: Record<string, any>) => Promise<
 
 type ChatMessage = Record<string, any>;
 
-async function callChat(apiKey: string, messages: ChatMessage[], tools: ToolDefinition[]): Promise<ChatMessage> {
+async function callChat(
+  apiKey: string,
+  messages: ChatMessage[],
+  tools: ToolDefinition[]
+): Promise<{ message: ChatMessage; usage: TokenUsage }> {
   const res = await fetch(OPENAI_CHAT_URL, {
     method: "POST",
     headers: {
@@ -342,7 +390,7 @@ async function callChat(apiKey: string, messages: ChatMessage[], tools: ToolDefi
   }
 
   const data = await res.json();
-  return data.choices[0].message;
+  return { message: data.choices[0].message, usage: extractUsage(data) };
 }
 
 // Same idea as askAI, but with tools the model can call. Runs up to two
@@ -357,7 +405,7 @@ export async function askAIWithTools(
   executeTool: ToolExecutor,
   history: ChatHistoryMessage[] = [],
   photoNote: string = ""
-): Promise<string> {
+): Promise<AiCallResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
@@ -377,17 +425,19 @@ export async function askAIWithTools(
     { role: "user", content: question },
   ];
 
-  const firstMessage = await callChat(apiKey, messages, tools);
+  const first = await callChat(apiKey, messages, tools);
+  let promptTokens = first.usage.promptTokens;
+  let completionTokens = first.usage.completionTokens;
 
-  const toolCalls = firstMessage.tool_calls as
+  const toolCalls = first.message.tool_calls as
     | { id: string; function: { name: string; arguments: string } }[]
     | undefined;
 
   if (!toolCalls || toolCalls.length === 0) {
-    return (firstMessage.content as string) ?? "";
+    return { answer: (first.message.content as string) ?? "", usage: { promptTokens, completionTokens } };
   }
 
-  messages.push(firstMessage);
+  messages.push(first.message);
 
   for (const call of toolCalls) {
     let args: Record<string, any> = {};
@@ -407,8 +457,13 @@ export async function askAIWithTools(
     messages.push({ role: "tool", tool_call_id: call.id, content: resultText });
   }
 
-  const secondMessage = await callChat(apiKey, messages, []);
-  return (secondMessage.content as string) ?? "";
+  // Second call has no tools available — it just turns the tool result(s)
+  // into the actual reply text. Usage from BOTH calls counts toward real cost.
+  const second = await callChat(apiKey, messages, []);
+  promptTokens += second.usage.promptTokens;
+  completionTokens += second.usage.completionTokens;
+
+  return { answer: (second.message.content as string) ?? "", usage: { promptTokens, completionTokens } };
 }
 
 // ---- Self-analysis (nightly batch, see /api/cron/self-analysis) ----
@@ -425,14 +480,16 @@ export type ConversationInsightResult = {
   suggestedRules: string;
 };
 
+export type ConversationInsightCallResult = { result: ConversationInsightResult | null; usage: TokenUsage };
+
 export async function analyzeConversationForInsights(
   transcript: { sender: string; content: string }[],
   businessName?: string | null
-): Promise<ConversationInsightResult | null> {
+): Promise<ConversationInsightCallResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
-  if (transcript.length === 0) return null;
+  if (transcript.length === 0) return { result: null, usage: { promptTokens: 0, completionTokens: 0 } };
 
   const transcriptText = transcript
     .map((m) => `${m.sender}: ${m.content}`)
@@ -473,17 +530,21 @@ Respond ONLY with a JSON object with exactly these four string fields (empty str
   }
 
   const data = await res.json();
+  const usage = extractUsage(data);
   const raw = data.choices[0].message.content as string;
 
   try {
     const parsed = JSON.parse(raw);
     return {
-      mistakes: (parsed.mistakes ?? "").toString().trim(),
-      unanswered: (parsed.unanswered ?? "").toString().trim(),
-      suggestedKnowledge: (parsed.suggestedKnowledge ?? "").toString().trim(),
-      suggestedRules: (parsed.suggestedRules ?? "").toString().trim(),
+      result: {
+        mistakes: (parsed.mistakes ?? "").toString().trim(),
+        unanswered: (parsed.unanswered ?? "").toString().trim(),
+        suggestedKnowledge: (parsed.suggestedKnowledge ?? "").toString().trim(),
+        suggestedRules: (parsed.suggestedRules ?? "").toString().trim(),
+      },
+      usage,
     };
   } catch {
-    return null; // malformed JSON from the model — skip this conversation, cron continues to the next
+    return { result: null, usage }; // malformed JSON from the model — skip this conversation, cron continues to the next
   }
 }
