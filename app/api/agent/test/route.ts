@@ -10,9 +10,11 @@ import {
   RECORD_INTEREST_TOOL,
   PLACE_ORDER_TOOL,
   REQUEST_HANDOFF_TOOL,
+  applyTerminologySwaps,
   type ToolDefinition,
   type ChatHistoryMessage,
 } from "@/lib/llm";
+import { logAiUsage } from "@/lib/billing";
 
 // Sandbox tool execution never touches the real database — it just describes
 // what would happen, so staff can preview the skill without creating fake
@@ -86,7 +88,7 @@ export async function POST(req: NextRequest) {
     if (body.skillTrackInterest) tools.push(RECORD_INTEREST_TOOL);
     if (body.skillTakeOrders) tools.push(PLACE_ORDER_TOOL);
 
-    const answer = await askAIWithTools(
+    const { answer, usage } = await askAIWithTools(
       question,
       results.map((r) => ({ title: r.documentTitle, content: r.content })),
       {
@@ -102,8 +104,15 @@ export async function POST(req: NextRequest) {
       simulateTool,
       history
     );
+    // Sandbox testing still burns real OpenAI tokens (the model call is real, only
+    // the tool side-effects are simulated) — log it so Billing reflects true spend.
+    await logAiUsage(organizationId, "sandbox_test", usage);
 
-    return NextResponse.json({ answer, sourcesUsed: results.length });
+    // Same guaranteed brand-vocabulary enforcement as the live webhook — so
+    // the sandbox reply staff sees is exactly what a real customer would get.
+    const finalAnswer = applyTerminologySwaps(answer, body.brandLanguage);
+
+    return NextResponse.json({ answer: finalAnswer, sourcesUsed: results.length });
   } catch (err) {
     console.error("Agent test sandbox failed:", err);
     return NextResponse.json({ error: "Test failed — check server logs." }, { status: 500 });
