@@ -89,7 +89,12 @@ function todayInIndia(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 
-function buildSystemPrompt(profile: AgentProfileInput | undefined, contextBlock: string, hasTools: boolean): string {
+function buildSystemPrompt(
+  profile: AgentProfileInput | undefined,
+  contextBlock: string,
+  hasTools: boolean,
+  photoNote: string = ""
+): string {
   const businessName = profile?.businessName?.trim() || "the business";
   const description = profile?.businessDescription?.trim();
   const tone = TONE_TEXT[profile?.tone ?? "friendly"] ?? TONE_TEXT.friendly;
@@ -105,17 +110,19 @@ function buildSystemPrompt(profile: AgentProfileInput | undefined, contextBlock:
     ? `\n\nAdditional rules from the business owner — always follow these:\n${customInstructions}`
     : "";
 
+  const photoInstructionNote = photoNote ? `\n\n${photoNote}` : "";
+
   return `You are the WhatsApp assistant for ${businessName}${description ? `, ${description}` : ""}. You answer questions from customers and staff.
 
 Tone: be ${tone}. ${language}
 
-Language quality matters a lot here — a wrong or made-up word looks unprofessional to a real customer. Keep sentences short and simple rather than reaching for a fancier word or phrase you're unsure of.
+Language quality matters a lot here — a wrong or made-up word, or an awkward/ungrammatical sentence, looks unprofessional to a real customer. Keep sentences short and simple rather than reaching for a fancier word or phrase you're unsure of. When writing in Bengali specifically, use natural verb conjugation and word order — never construct a sentence by translating English word-for-word; if a sentence would come out sounding unnatural or grammatically off, simplify it rather than sending it as-is.
 
 Write like a real, attentive member of the team — natural and warm, never stiff or robotic, and don't narrate that you're following instructions. If a customer directly and sincerely asks whether they're chatting with a bot/AI or a human, answer honestly — don't deny it or lie about it.
 
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
-Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions.${toolsNote}${customInstructionsNote}${brandLanguageNote}
+Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions.${toolsNote}${customInstructionsNote}${brandLanguageNote}${photoInstructionNote}
 
 Reference material:
 ${contextBlock}`;
@@ -127,7 +134,8 @@ export async function askAI(
   question: string,
   sources: SourceChunk[],
   profile?: AgentProfileInput,
-  history: ChatHistoryMessage[] = []
+  history: ChatHistoryMessage[] = [],
+  photoNote: string = ""
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
@@ -136,7 +144,7 @@ export async function askAI(
     .map((s, i) => `[Source ${i + 1}: ${s.title}]\n${s.content}`)
     .join("\n\n---\n\n");
 
-  const systemPrompt = buildSystemPrompt(profile, contextBlock, false);
+  const systemPrompt = buildSystemPrompt(profile, contextBlock, false, photoNote);
 
   const res = await fetch(OPENAI_CHAT_URL, {
     method: "POST",
@@ -308,20 +316,21 @@ export async function askAIWithTools(
   profile: AgentProfileInput | undefined,
   tools: ToolDefinition[],
   executeTool: ToolExecutor,
-  history: ChatHistoryMessage[] = []
+  history: ChatHistoryMessage[] = [],
+  photoNote: string = ""
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
   if (tools.length === 0) {
-    return askAI(question, sources, profile, history);
+    return askAI(question, sources, profile, history, photoNote);
   }
 
   const contextBlock = sources
     .map((s, i) => `[Source ${i + 1}: ${s.title}]\n${s.content}`)
     .join("\n\n---\n\n");
 
-  const systemPrompt = buildSystemPrompt(profile, contextBlock, true);
+  const systemPrompt = buildSystemPrompt(profile, contextBlock, true, photoNote);
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
