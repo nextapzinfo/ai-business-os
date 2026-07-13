@@ -21,6 +21,7 @@ const navItems: (NavItem & { verticals?: string[] })[] = [
   { href: "/dashboard/orders", label: "Orders", verticals: ["RETAIL"] },
   { href: "/dashboard/analytics", label: "Analytics" },
   { href: "/dashboard/training", label: "Training" },
+  { href: "/dashboard/billing", label: "Billing" },
 ];
 
 export default async function DashboardLayout({
