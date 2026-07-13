@@ -12,6 +12,7 @@ export type ChatHistoryMessage = { role: "user" | "assistant"; content: string }
 export type AgentProfileInput = {
   businessName?: string | null;
   businessDescription?: string | null;
+  coreIdentity?: string | null; // free-text persona paragraph — see buildSystemPrompt for how this overrides the default opening line
   customInstructions?: string | null;
   brandLanguage?: string | null; // JSON string: { wordsToUse, wordsToAvoid, terminology: {from,to}[] }
   tone?: string | null; // friendly, formal, casual, traditional, premium, luxury, professional, humorous
@@ -97,6 +98,7 @@ function buildSystemPrompt(
 ): string {
   const businessName = profile?.businessName?.trim() || "the business";
   const description = profile?.businessDescription?.trim();
+  const coreIdentity = profile?.coreIdentity?.trim();
   const tone = TONE_TEXT[profile?.tone ?? "friendly"] ?? TONE_TEXT.friendly;
   const language = LANGUAGE_TEXT[profile?.languageStyle ?? "mixed"] ?? LANGUAGE_TEXT.mixed;
   const customInstructions = profile?.customInstructions?.trim();
@@ -112,7 +114,20 @@ function buildSystemPrompt(
 
   const photoInstructionNote = photoNote ? `\n\n${photoNote}` : "";
 
-  return `You are the WhatsApp assistant for ${businessName}${description ? `, ${description}` : ""}. You answer questions from customers and staff.
+  // Core AI Identity (set in Agent Studio → Profile, top of the page) is a
+  // free-text persona/voice/judgment paragraph the owner writes themselves.
+  // When present it REPLACES this default one-liner as the opening frame —
+  // a rich, coherent identity paragraph shapes tone and judgment far more
+  // consistently than a pile of separate small rules ever can. A short
+  // technical anchor line is still appended so the model always knows it's
+  // actually the WhatsApp assistant for this specific business.
+  const openingLine = coreIdentity
+    ? `${coreIdentity}\n\nYou represent ${businessName} on WhatsApp${
+        description ? ` (${description})` : ""
+      } and answer questions from customers and staff.`
+    : `You are the WhatsApp assistant for ${businessName}${description ? `, ${description}` : ""}. You answer questions from customers and staff.`;
+
+  return `${openingLine}
 
 Tone: be ${tone}. ${language}
 
