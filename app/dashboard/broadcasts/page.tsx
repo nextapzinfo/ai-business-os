@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { sendWhatsAppTemplateMessage } from "@/lib/whatsapp";
+import { logWhatsAppTemplateCost } from "@/lib/billing";
 import { revalidatePath } from "next/cache";
 import { formatDate } from "@/lib/formatDate";
 import ClientCheckboxList from "./ClientCheckboxList";
@@ -79,6 +80,7 @@ async function createBroadcast(formData: FormData) {
         where: { id: recipient.id },
         data: { status: "SENT", sentAt: new Date() },
       });
+      await logWhatsAppTemplateCost(user.organizationId, template.category);
     } catch (err) {
       anyFailed = true;
       await prisma.broadcastRecipient.update({
