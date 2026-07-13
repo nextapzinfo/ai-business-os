@@ -293,6 +293,30 @@ export const PLACE_ORDER_TOOL: ToolDefinition = {
   },
 };
 
+// Always included, regardless of Agent Studio skill toggles — unlike the other
+// tools this isn't an opt-in "feature", it's a safety net every business wants:
+// when the AI genuinely can't help, it should say so and step aside rather than
+// loop or bluff. See webhook route.ts / test route.ts where `tools` is built.
+export const REQUEST_HANDOFF_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "request_human_handoff",
+    description:
+      "Use this when you genuinely cannot help the customer — you don't know the answer even after checking the knowledge base, the customer explicitly asks to speak to a real person/staff/owner, or the customer seems frustrated or upset with automated replies. This pauses your automatic replies so a staff member can take over personally. Don't overuse it — only call this when a human is genuinely needed, not for every question you're unsure about; try your best to help first.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description:
+            "Brief reason for the handoff so staff know what's needed, e.g. 'Customer wants a refund for a damaged order' or 'Customer explicitly asked to speak to a human'.",
+        },
+      },
+      required: ["reason"],
+    },
+  },
+};
+
 export type ToolExecutor = (name: string, args: Record<string, any>) => Promise<string>;
 
 type ChatMessage = Record<string, any>;
@@ -385,4 +409,81 @@ export async function askAIWithTools(
 
   const secondMessage = await callChat(apiKey, messages, []);
   return (secondMessage.content as string) ?? "";
+}
+
+// ---- Self-analysis (nightly batch, see /api/cron/self-analysis) ----
+// The AI reviews a transcript of its OWN closed conversation and self-critiques.
+// This is intentionally NOT run per-chat (that's an extra OpenAI call every
+// single conversation) — it's a once-daily batch job the owner opts into.
+// Output is always just a suggestion for the owner to review on the Training
+// Dashboard; nothing here writes to the Knowledge Base or Custom Instructions
+// on its own.
+export type ConversationInsightResult = {
+  mistakes: string;
+  unanswered: string;
+  suggestedKnowledge: string;
+  suggestedRules: string;
+};
+
+export async function analyzeConversationForInsights(
+  transcript: { sender: string; content: string }[],
+  businessName?: string | null
+): Promise<ConversationInsightResult | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+
+  if (transcript.length === 0) return null;
+
+  const transcriptText = transcript
+    .map((m) => `${m.sender}: ${m.content}`)
+    .join("\n");
+
+  const systemPrompt = `You are reviewing your OWN past conversation as the WhatsApp AI assistant for ${
+    businessName?.trim() || "this business"
+  }, to honestly self-critique your performance. Be specific and concrete — vague generic feedback isn't useful. If you genuinely did fine and there's nothing meaningful to flag, say so plainly in each field rather than inventing a problem.
+
+Respond ONLY with a JSON object with exactly these four string fields (empty string "" if nothing applies to that field):
+{
+  "mistakes": "Specific mistakes you made in this conversation, if any (wrong info, bad tone, missed context, repeated itself, etc.)",
+  "unanswered": "Specific questions from the customer you couldn't answer or answered poorly",
+  "suggestedKnowledge": "Specific facts/info that should be added to the Knowledge Base to answer this better next time",
+  "suggestedRules": "A specific new Custom Instruction rule that would have helped in this conversation, if any"
+}`;
+
+  const res = await fetch(OPENAI_CHAT_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      max_tokens: 600,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Transcript:\n${transcriptText}` },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenAI self-analysis call failed: ${res.status} ${errText}`);
+  }
+
+  const data = await res.json();
+  const raw = data.choices[0].message.content as string;
+
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      mistakes: (parsed.mistakes ?? "").toString().trim(),
+      unanswered: (parsed.unanswered ?? "").toString().trim(),
+      suggestedKnowledge: (parsed.suggestedKnowledge ?? "").toString().trim(),
+      suggestedRules: (parsed.suggestedRules ?? "").toString().trim(),
+    };
+  } catch {
+    return null; // malformed JSON from the model — skip this conversation, cron continues to the next
+  }
 }
