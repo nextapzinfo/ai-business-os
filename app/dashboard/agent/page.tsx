@@ -13,7 +13,7 @@ export default async function AgentStudioPage() {
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const [profile, documents] = await Promise.all([
+  const [profile, documents, approvedTemplates] = await Promise.all([
     prisma.agentProfile.findUnique({
       where: { organizationId: user.organizationId },
     }),
@@ -21,6 +21,11 @@ export default async function AgentStudioPage() {
       where: { organizationId: user.organizationId },
       include: { product: { select: { id: true } } },
       orderBy: { createdAt: "desc" },
+    }),
+    prisma.messageTemplate.findMany({
+      where: { organizationId: user.organizationId, status: "APPROVED" },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, language: true },
     }),
   ]);
 
@@ -40,6 +45,10 @@ export default async function AgentStudioPage() {
     skillTrackInterest: profile?.skillTrackInterest ?? false,
     skillSendEventPhotos: profile?.skillSendEventPhotos ?? false,
     skillTakeOrders: profile?.skillTakeOrders ?? false,
+    skillFollowUp: profile?.skillFollowUp ?? false,
+    followUpHours: profile?.followUpHours ?? 24,
+    followUpTemplateId: profile?.followUpTemplateId ?? "",
+    skillSelfAnalysis: profile?.skillSelfAnalysis ?? false,
   };
 
   const initialDocuments = documents.map((d) => ({
@@ -66,6 +75,7 @@ export default async function AgentStudioPage() {
           initialProfile={initialProfile}
           initialDocuments={initialDocuments}
           qrCodeUrl={profile?.qrCodeUrl ?? null}
+          approvedTemplates={approvedTemplates}
         />
       </div>
     </div>

@@ -24,6 +24,10 @@ export type AgentProfileData = {
   skillTrackInterest: boolean;
   skillSendEventPhotos: boolean;
   skillTakeOrders: boolean;
+  skillFollowUp: boolean;
+  followUpHours: number;
+  followUpTemplateId: string;
+  skillSelfAnalysis: boolean;
 };
 
 export async function saveAgentProfile(data: AgentProfileData) {
@@ -47,7 +51,9 @@ export async function saveAgentProfile(data: AgentProfileData) {
 
 // Shared by both the "paste text" and "upload file" Knowledge tab forms — chunks
 // the raw text, embeds each chunk, and marks the Document PROCESSED/FAILED.
-async function processKnowledgeContent(organizationId: string, documentId: string, content: string) {
+// Exported so the Training Dashboard can reuse it when staff push a correction
+// straight into the Knowledge Base — same pipeline, no duplicated logic.
+export async function processKnowledgeContent(organizationId: string, documentId: string, content: string) {
   try {
     const trimmed = content.trim();
     if (!trimmed) throw new Error("No readable text found.");
