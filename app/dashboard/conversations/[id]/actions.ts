@@ -71,3 +71,28 @@ export async function sendTemplateToClient(formData: FormData) {
 
   revalidatePath(`/dashboard/conversations/${conversationId}`);
 }
+
+// Staff taps a thumbs-down on an AI reply that was wrong — this just flags it
+// so it shows up on the Training Dashboard for review; nothing about the AI's
+// behavior changes until staff actually writes a correction there.
+export async function flagMessageWrong(messageId: string) {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const message = await prisma.message.findFirst({
+    where: { id: messageId, sender: "AI", conversation: { organizationId: user.organizationId } },
+  });
+  if (!message) return;
+
+  await prisma.message.update({
+    where: { id: messageId },
+    data: { flaggedWrong: true },
+  });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "AI_MESSAGE_FLAGGED_WRONG",
+    metadata: { messageId },
+  });
+}

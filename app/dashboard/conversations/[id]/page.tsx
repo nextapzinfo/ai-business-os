@@ -42,13 +42,13 @@ async function sendManualReply(formData: FormData) {
   });
 
   // Sending a manual reply counts as "taking over" the conversation — pause the
-  // AI so it doesn't also reply to the customer's next message and talk over staff.
-  if (!conversation.aiPaused) {
-    await prisma.conversation.update({
-      where: { id: conversation.id },
-      data: { aiPaused: true },
-    });
-  }
+  // AI so it doesn't also reply to the customer's next message and talk over
+  // staff. Also clears handoffReason, if the AI had flagged one: staff replying
+  // IS the response to that handoff, so the "needs you" badge should clear.
+  await prisma.conversation.update({
+    where: { id: conversation.id },
+    data: { aiPaused: true, handoffReason: null },
+  });
 
   await logAudit({
     organizationId: user.organizationId,
@@ -90,15 +90,16 @@ async function toggleAiPaused(formData: FormData) {
   });
   if (!conversation) return;
 
+  const resuming = conversation.aiPaused; // currently paused → this click resumes it
   await prisma.conversation.update({
     where: { id: conversation.id },
-    data: { aiPaused: !conversation.aiPaused },
+    data: { aiPaused: !conversation.aiPaused, ...(resuming ? { handoffReason: null } : {}) },
   });
 
   await logAudit({
     organizationId: user.organizationId,
     userId: user.id,
-    action: conversation.aiPaused ? "AI_RESUMED" : "AI_INTERVENED",
+    action: resuming ? "AI_RESUMED" : "AI_INTERVENED",
     metadata: { conversationId: conversation.id },
   });
 
@@ -127,6 +128,7 @@ export default async function ConversationDetailPage({ params }: { params: { id:
     sender: m.sender,
     content: m.content,
     imageUrl: m.imageUrl,
+    flaggedWrong: m.flaggedWrong,
     createdAt: formatDateTime(m.createdAt),
   }));
 
@@ -167,6 +169,11 @@ export default async function ConversationDetailPage({ params }: { params: { id:
             </form>
           </div>
         </div>
+        {conversation.handoffReason && (
+          <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-red-50 px-2.5 py-1.5 text-[12px] font-medium text-red-700">
+            ⚠️ AI handed off: {conversation.handoffReason}
+          </div>
+        )}
       </div>
 
       <MessageThread messages={threadMessages} />
