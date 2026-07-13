@@ -25,6 +25,20 @@ model Organization {
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
+  // Billing page rate assumptions — all editable by the owner, since none of
+  // these are numbers we can know for certain. usdToInrRate is a manual
+  // conversion (no live forex API, kept simple/reliable). The three template
+  // rates default to rough India averages from Meta's public 2025+ per-message
+  // pricing; costPerConversation defaults to 0 because Meta moved off
+  // conversation-based billing in July 2025 — free-form replies inside the
+  // 24-hour window are free — this field only matters if a business's setup
+  // still has some conversation-based charge.
+  usdToInrRate         Float @default(88)
+  costPerMarketingMsg  Float @default(0.010)
+  costPerUtilityMsg    Float @default(0.002)
+  costPerAuthMsg       Float @default(0.002)
+  costPerConversation  Float @default(0)
+
   users            User[]
   clients          Client[]
   documents        Document[]
@@ -39,6 +53,8 @@ model Organization {
   events           Event[]
   orders           Order[]
   conversationInsights ConversationInsight[]
+  aiUsageLogs      AiUsageLog[]
+  whatsAppCostLogs WhatsAppCostLog[]
 }
 
 // Configures how the WhatsApp AI presents itself and behaves — replaces the
@@ -371,4 +387,40 @@ model ConversationInsight {
   createdAt          DateTime     @default(now())
 
   @@index([organizationId])
+}
+
+// One row per real OpenAI API call (webhook replies, sandbox tests, nightly
+// self-analysis) — cost is computed at write time from ACTUAL tokens returned
+// by OpenAI, using the published gpt-4o-mini per-token rate. This is exact,
+// not an estimate, unlike WhatsAppCostLog below.
+model AiUsageLog {
+  id               String       @id @default(cuid())
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id])
+  source           String // webhook_reply, sandbox_test, self_analysis
+  promptTokens     Int
+  completionTokens Int
+  costUsd          Float
+  createdAt        DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([createdAt])
+}
+
+// One row per WhatsApp template/conversation send that has a real cost —
+// costUsd is an ESTIMATE using the organization's configured per-message rate
+// (Meta's actual charge depends on the recipient's country and can change;
+// the true number always lives in Meta's own Billing dashboard). Logged from
+// Broadcasts, single Send Template, and the AI Follow-up cron.
+model WhatsAppCostLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  kind           String // TEMPLATE, CONVERSATION
+  category       String? // MARKETING, UTILITY, AUTHENTICATION — set when kind = TEMPLATE
+  costUsd        Float
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([createdAt])
 }
