@@ -176,6 +176,7 @@ export default function AgentStudioClient({
           history: sandboxMessages.map((m) => ({ role: m.role, content: m.text })),
           businessName: form.businessName,
           businessDescription: form.businessDescription,
+          coreIdentity: form.coreIdentity,
           customInstructions: form.customInstructions,
           brandLanguage: form.brandLanguage,
           tone: form.tone,
@@ -244,6 +245,31 @@ export default function AgentStudioClient({
         {/* Active tab content */}
         <div className="flex flex-col gap-4">
           {activeTab === "profile" && (
+            <div className="flex flex-col gap-4">
+            <div className="rounded-xl border border-gray-200 bg-primary/5 p-4">
+              <h3 className="text-sm font-semibold text-gray-900">Core AI Identity</h3>
+              <p className="mt-1 text-xs text-gray-500">
+                Who the AI fundamentally IS — its persona, voice, and how it thinks/judges things. Write this
+                as a real paragraph, not bullet points. This has the strongest effect on how the AI actually
+                behaves — more than any single rule below. For narrow, specific rules ("never mention
+                competitors", "always offer delivery above ৳500"), use Custom Instructions instead — that's
+                the right place for those, not here.
+              </p>
+              <textarea
+                value={form.coreIdentity}
+                onChange={(e) => update("coreIdentity", e.target.value)}
+                placeholder={
+                  'e.g. "You are a warm, experienced senior staff member at Banglar Doi, a three-generation ' +
+                  'Bengali sweets and dairy shop. You know the regulars and speak like you personally remember ' +
+                  'them. You take genuine pride in the quality of the doi and sweets, and you\'d rather gently ' +
+                  'talk a customer out of over-ordering something that won\'t stay fresh than make a bigger sale. ' +
+                  'You think like a trusted shopkeeper, not a call-center script."'
+                }
+                rows={6}
+                className={`${inputClass} mt-3`}
+              />
+            </div>
+
             <div className="rounded-xl border border-gray-200 bg-white p-4">
               <h3 className="text-sm font-semibold text-gray-900">Business Profile</h3>
               <p className="mt-1 text-xs text-gray-500">Who the AI represents — used in every WhatsApp reply.</p>
@@ -358,6 +384,7 @@ export default function AgentStudioClient({
                   </div>
                 </div>
               </div>
+            </div>
             </div>
           )}
 
