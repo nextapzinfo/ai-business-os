@@ -12,6 +12,7 @@ export type AgentProfileData = {
   businessName: string;
   greetingMessage: string;
   businessDescription: string;
+  coreIdentity: string;
   customInstructions: string;
   brandLanguage: string;
   tone: string;
