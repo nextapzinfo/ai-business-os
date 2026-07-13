@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { analyzeConversationForInsights } from "@/lib/llm";
+import { logAiUsage } from "@/lib/billing";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -43,7 +44,8 @@ export async function GET(req: NextRequest) {
 
       try {
         const transcript = conversation.messages.map((m) => ({ sender: m.sender, content: m.content }));
-        const result = await analyzeConversationForInsights(transcript, profile.businessName);
+        const { result, usage } = await analyzeConversationForInsights(transcript, profile.businessName);
+        await logAiUsage(profile.organizationId, "self_analysis", usage);
         if (!result) continue; // malformed JSON from the model — skip, try again next run isn't possible since insight stays absent, which is fine
 
         await prisma.conversationInsight.create({
