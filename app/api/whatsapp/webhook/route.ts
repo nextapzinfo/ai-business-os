@@ -271,6 +271,27 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Deterministic fallback — a context-only follow-up like "pic ache?" (no
+    // product name repeated) usually RAG-matches too weakly on its own to
+    // clear the threshold above, even though the customer clearly means the
+    // product just discussed. Rather than relying on the model to correctly
+    // call send_product_photo every single time (it doesn't, reliably — same
+    // lesson as the guaranteed terminology swaps), fall back to whatever
+    // product this conversation last resolved to, when the message itself
+    // looks like a photo request. This runs BEFORE photoNote is built, so if
+    // it fires, the reply below correctly says "sending automatically."
+    const PHOTO_REQUEST_REGEX =
+      /\b(pic|pics|photo|photos|picture|pictures|image|images)\b|ছবি|ফটো|দেখতে চাই|দেখাও|দেখান|দেখব/i;
+    if (!matchedProduct?.imageUrl && !matchedEvent?.imageUrl && PHOTO_REQUEST_REGEX.test(text) && conversation.lastProductId) {
+      const fallbackProduct = await prisma.product.findUnique({
+        where: { id: conversation.lastProductId },
+        select: { id: true, name: true, imageUrl: true },
+      });
+      if (fallbackProduct?.imageUrl) {
+        matchedProduct = fallbackProduct;
+      }
+    }
+
     let photoNote: string;
     if (matchedProduct?.imageUrl) {
       photoNote = `A photo of "${matchedProduct.name}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally (you can casually mention a photo is coming if it fits).`;
@@ -278,6 +299,20 @@ export async function POST(req: NextRequest) {
       photoNote = `A photo for "${matchedEvent.title}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally.`;
     } else {
       photoNote = `No product/event photo is precomputed for this specific reply. If the customer is asking to see a photo of a specific product — including a product only mentioned earlier in this conversation, not necessarily repeated just now — use the send_product_photo tool with that product's exact name. You DO have this capability; never say you're generally unable to share images or photo links. Only if the tool itself reports no photo is saved should you honestly say you don't have one on hand right now.`;
+    }
+
+    // Remember which product this reply settled on (RAG match or the fallback
+    // above) so a LATER context-only "pic ache?" can resolve back to it, even
+    // several turns from now — this is what the fallback block above reads.
+    if (matchedProduct && conversation.lastProductId !== matchedProduct.id) {
+      try {
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { lastProductId: matchedProduct.id },
+        });
+      } catch (err) {
+        console.error("Failed to update conversation.lastProductId:", err);
+      }
     }
 
     // Function-calling skills — only wired up when the matching Skills toggle is on
@@ -321,6 +356,10 @@ export async function POST(req: NextRequest) {
             },
           });
           toolSentPhotoForProductId = product.id;
+          await prisma.conversation.update({
+            where: { id: conversation!.id },
+            data: { lastProductId: product.id },
+          }).catch((err) => console.error("Failed to update conversation.lastProductId:", err));
           await logAudit({
             organizationId: organization!.id,
             action: "PRODUCT_PHOTO_SENT_BY_AI",
