@@ -92,6 +92,14 @@ export async function POST(req: NextRequest) {
     if (body.skillTrackInterest) tools.push(RECORD_INTEREST_TOOL);
     if (body.skillTakeOrders) tools.push(PLACE_ORDER_TOOL);
 
+    // The live webhook precomputes a real photoNote from an actual RAG/product
+    // match — the sandbox has no real conversation/product-matching context to
+    // do that with, so without SOME note here the model gets zero information
+    // about its photo capability and falls back to a generic "I can't share
+    // images" refusal reflex, even with the tool available. This generic note
+    // at least tells it the capability exists and how to use it.
+    const sandboxPhotoNote = `You have a send_product_photo tool for sending product photos on WhatsApp — you DO have this capability. If the customer asks to see a photo of a specific product (including one mentioned earlier in this test conversation), call send_product_photo with that product's exact name. Never say you're generally unable to share images or photo links. (This is the Test Sandbox — the tool call is simulated, nothing is actually sent.)`;
+
     const { answer, usage } = await askAIWithTools(
       question,
       results.map((r) => ({ title: r.documentTitle, content: r.content })),
@@ -106,7 +114,8 @@ export async function POST(req: NextRequest) {
       },
       tools,
       simulateTool,
-      history
+      history,
+      sandboxPhotoNote
     );
     // Sandbox testing still burns real OpenAI tokens (the model call is real, only
     // the tool side-effects are simulated) — log it so Billing reflects true spend.
