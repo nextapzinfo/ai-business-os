@@ -10,6 +10,7 @@ import {
   RECORD_INTEREST_TOOL,
   PLACE_ORDER_TOOL,
   REQUEST_HANDOFF_TOOL,
+  SEND_PRODUCT_PHOTO_TOOL,
   applyTerminologySwaps,
   type ToolDefinition,
   type ChatHistoryMessage,
@@ -23,6 +24,9 @@ import { logAiUsage } from "@/lib/billing";
 async function simulateTool(name: string, args: Record<string, any>): Promise<string> {
   if (name === "request_human_handoff") {
     return `[Sandbox only — not actually paused] Would hand off to a staff member. Reason: ${args.reason}`;
+  }
+  if (name === "send_product_photo") {
+    return `[Sandbox only — not actually sent] Would send a photo of "${args.productName}" (if one is saved for that product).`;
   }
   if (name === "save_customer_address") {
     return `[Sandbox only — not actually saved] Would save address: ${args.address}`;
@@ -82,7 +86,7 @@ export async function POST(req: NextRequest) {
       LIMIT 5
     `) as { content: string; documentTitle: string }[];
 
-    const tools: ToolDefinition[] = [REQUEST_HANDOFF_TOOL];
+    const tools: ToolDefinition[] = [REQUEST_HANDOFF_TOOL, SEND_PRODUCT_PHOTO_TOOL];
     if (body.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);
     if (body.skillReminders) tools.push(SET_REMINDER_TOOL);
     if (body.skillTrackInterest) tools.push(RECORD_INTEREST_TOOL);
