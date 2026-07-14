@@ -171,6 +171,7 @@ model Conversation {
   aiPaused       Boolean      @default(false) // true once staff "intervenes" — AI stops auto-replying until resumed
   handoffReason  String?      // set by the AI itself (request_human_handoff tool) when it escalates — cleared when staff replies or resumes AI; distinguishes an AI-initiated escalation from a staff manually pausing
   lastFollowUpAt DateTime?    // set when the AI Follow-up cron sends a nudge template — prevents sending more than once
+  lastProductId  String?      // last Product this conversation clearly resolved to (RAG match or send_product_photo tool) — lets a context-only "pic ache?" follow-up (no product name repeated) still find the right product. Loose reference, not a hard FK, so a deleted product doesn't break the conversation.
   createdAt      DateTime     @default(now())
 
   messages Message[]
