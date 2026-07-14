@@ -8,6 +8,7 @@ import {
   RECORD_INTEREST_TOOL,
   PLACE_ORDER_TOOL,
   REQUEST_HANDOFF_TOOL,
+  SEND_PRODUCT_PHOTO_TOOL,
   applyTerminologySwaps,
   type ToolDefinition,
   type ChatHistoryMessage,
@@ -276,20 +277,61 @@ export async function POST(req: NextRequest) {
     } else if (matchedEvent?.imageUrl) {
       photoNote = `A photo for "${matchedEvent.title}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally.`;
     } else {
-      photoNote = `You ARE able to send product/event photos automatically when one closely matches the question — but none is available for this specific reply. If the customer explicitly asks to see a photo right now and none is available, be honest: say you don't have that photo on hand right now and you'll send it shortly — never say you're generally unable to share images or photo links, because that isn't true.`;
+      photoNote = `No product/event photo is precomputed for this specific reply. If the customer is asking to see a photo of a specific product — including a product only mentioned earlier in this conversation, not necessarily repeated just now — use the send_product_photo tool with that product's exact name. You DO have this capability; never say you're generally unable to share images or photo links. Only if the tool itself reports no photo is saved should you honestly say you don't have one on hand right now.`;
     }
 
     // Function-calling skills — only wired up when the matching Skills toggle is on
     // in Agent Studio. executeTool actually writes to the real database here (this
     // is the live WhatsApp path, unlike the Test Sandbox which only simulates).
     // REQUEST_HANDOFF_TOOL is always included (not a toggle) — see its definition.
-    const tools: ToolDefinition[] = [REQUEST_HANDOFF_TOOL];
+    const tools: ToolDefinition[] = [REQUEST_HANDOFF_TOOL, SEND_PRODUCT_PHOTO_TOOL];
     if (agentProfile?.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);
     if (agentProfile?.skillReminders) tools.push(SET_REMINDER_TOOL);
     if (agentProfile?.skillTrackInterest) tools.push(RECORD_INTEREST_TOOL);
     if (agentProfile?.skillTakeOrders) tools.push(PLACE_ORDER_TOOL);
 
+    // Tracks a product photo already sent via the send_product_photo tool this
+    // reply, so the automatic RAG-matched send below doesn't fire a duplicate
+    // image for the same product.
+    let toolSentPhotoForProductId: string | null = null;
+
     async function executeTool(name: string, args: Record<string, any>): Promise<string> {
+      if (name === "send_product_photo") {
+        const productName = (args.productName as string)?.trim();
+        if (!productName) return "No product specified — nothing sent.";
+
+        const product = await prisma.product.findFirst({
+          where: { organizationId: organization!.id, name: { contains: productName, mode: "insensitive" } },
+        });
+        if (!product) {
+          return `No matching product found for "${productName}" — tell the customer honestly you couldn't find that product, don't pretend to send a photo.`;
+        }
+        if (!product.imageUrl) {
+          return `No photo is saved for "${product.name}" yet — tell the customer honestly you don't have a photo on hand right now, don't pretend to send one.`;
+        }
+
+        try {
+          await sendWhatsAppImageMessage(from, product.imageUrl, product.name);
+          await prisma.message.create({
+            data: {
+              conversationId: conversation!.id,
+              sender: "AI",
+              content: `[Sent photo] ${product.name}`,
+              imageUrl: product.imageUrl,
+            },
+          });
+          toolSentPhotoForProductId = product.id;
+          await logAudit({
+            organizationId: organization!.id,
+            action: "PRODUCT_PHOTO_SENT_BY_AI",
+            metadata: { clientId: client!.id, productId: product.id },
+          });
+          return `Sent a photo of "${product.name}". Just acknowledge briefly in your reply — don't re-describe the product in detail again.`;
+        } catch (err) {
+          console.error("send_product_photo tool failed:", err);
+          return `Failed to send the photo due to a technical issue — apologize briefly and say you'll send it shortly instead.`;
+        }
+      }
       if (name === "request_human_handoff") {
         const reason = (args.reason as string)?.trim() || "AI couldn't help — needs a staff member.";
         await prisma.conversation.update({
@@ -418,7 +460,7 @@ export async function POST(req: NextRequest) {
     // Actually send the product/event photo determined above (matchedProduct /
     // matchedEvent were precomputed before the AI call so its text reply could
     // stay honest about whether a photo is coming — see photoNote above).
-    if (matchedProduct?.imageUrl) {
+    if (matchedProduct?.imageUrl && matchedProduct.id !== toolSentPhotoForProductId) {
       try {
         await sendWhatsAppImageMessage(from, matchedProduct.imageUrl, matchedProduct.name);
         await prisma.message.create({
