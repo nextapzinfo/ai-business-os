@@ -361,6 +361,35 @@ export const REQUEST_HANDOFF_TOOL: ToolDefinition = {
   },
 };
 
+// Always included, same as REQUEST_HANDOFF_TOOL — product photo sharing isn't
+// gated by a Skills toggle. This exists because the OLD photo logic only ever
+// looked at the CURRENT message's RAG match: a direct "Sorbhaja ache?" matched
+// fine, but a context-dependent follow-up like "pic ache?" (no product name
+// repeated) scored too weak a match on its own, so no photo was attached —
+// even though the model's TEXT reply correctly remembered "Sorbhaja" from
+// history. Giving the model an explicit tool lets its own already-working
+// context resolution drive the actual send, instead of a second, context-blind
+// lookup. See webhook route.ts / test route.ts for how `tools` is built.
+export const SEND_PRODUCT_PHOTO_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "send_product_photo",
+    description:
+      "Send a photo of a specific product to the customer on WhatsApp. Use this whenever the customer asks to see a photo/picture of a product — including when they're asking about a product mentioned earlier in the conversation, not just repeated in their latest message. You DO have this capability; never claim you're unable to share photos or image links — if no photo happens to be saved for that product, the tool result will tell you, and you can say so honestly then.",
+    parameters: {
+      type: "object",
+      properties: {
+        productName: {
+          type: "string",
+          description:
+            "The exact product name being asked about, as close as possible to how it's listed in the catalog — resolve this from conversation context if the customer's latest message didn't repeat the product name.",
+        },
+      },
+      required: ["productName"],
+    },
+  },
+};
+
 export type ToolExecutor = (name: string, args: Record<string, any>) => Promise<string>;
 
 type ChatMessage = Record<string, any>;
