@@ -26,7 +26,7 @@ async function simulateTool(name: string, args: Record<string, any>): Promise<st
     return `[Sandbox only — not actually paused] Would hand off to a staff member. Reason: ${args.reason}`;
   }
   if (name === "send_product_photo") {
-    return `[Sandbox only — not actually sent] Would send a photo of "${args.productName}" (if one is saved for that product).`;
+    return `[SANDBOX SIMULATION — no real photo was sent, this window can't display images at all] In a real WhatsApp chat, a photo of "${args.productName}" would be sent now (if one is saved for that product). Tell the tester plainly and consistently that this is just a sandbox simulation and no image was actually sent here — do NOT say "I've sent the photo" or similar, and do NOT apologize for a delivery failure either, since nothing was attempted. Just state clearly this is a test/simulation.`;
   }
   if (name === "save_customer_address") {
     return `[Sandbox only — not actually saved] Would save address: ${args.address}`;
