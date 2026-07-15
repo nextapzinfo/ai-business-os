@@ -120,8 +120,28 @@ export function applyTerminologySwaps(text: string, brandLanguageRaw: string | n
 
     let result = text;
     for (const { from, to } of pairs) {
-      const pattern = new RegExp(escapeRegExp(from.trim()), "gi");
-      result = result.replace(pattern, to.trim());
+      const fromTrimmed = from.trim();
+      const toTrimmed = to.trim();
+      if (fromTrimmed.toLowerCase() === toTrimmed.toLowerCase()) continue; // no-op rule
+
+      // A rule like "kheer doi" → "laal kheer doi" must NOT turn an already-
+      // correct "Laal Kheer Doi" into "Laal laal kheer doi" — "kheer doi" is a
+      // real substring of the correct output too. Find every span where the
+      // TARGET text already occurs first, and skip any `from` match that
+      // falls inside one of those spans — only replace genuinely bare,
+      // not-yet-fixed occurrences.
+      const toRegex = new RegExp(escapeRegExp(toTrimmed), "gi");
+      const protectedRanges: [number, number][] = [];
+      let m: RegExpExecArray | null;
+      while ((m = toRegex.exec(result))) {
+        protectedRanges.push([m.index, m.index + m[0].length]);
+      }
+
+      const fromRegex = new RegExp(escapeRegExp(fromTrimmed), "gi");
+      result = result.replace(fromRegex, (match, offset) => {
+        const isAlreadyCorrect = protectedRanges.some(([start, end]) => offset >= start && offset < end);
+        return isAlreadyCorrect ? match : toTrimmed;
+      });
     }
     return result;
   } catch {
