@@ -70,6 +70,40 @@ async function updateOrderStatus(formData: FormData) {
   revalidatePath("/dashboard/orders");
 }
 
+// Manual, staff-set payment status — there's no payment gateway wired up yet
+// (see the Billing/Razorpay build plan for the future automated path). Staff
+// checks a customer's payment screenshot (now visible in Conversations, see
+// the image-handling fix) and flips this themselves.
+async function togglePaymentStatus(formData: FormData) {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const orderId = formData.get("orderId") as string;
+  if (!orderId) return;
+
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, organizationId: user.organizationId },
+  });
+  if (!order) return;
+
+  const nextStatus = order.paymentStatus === "PAID" ? "UNPAID" : "PAID";
+  await prisma.order.update({ where: { id: orderId }, data: { paymentStatus: nextStatus } });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "ORDER_PAYMENT_STATUS_UPDATED",
+    metadata: { orderId, paymentStatus: nextStatus },
+  });
+
+  revalidatePath("/dashboard/orders");
+}
+
+function paymentBadgeClass(paymentStatus: string) {
+  return paymentStatus === "PAID" ? "bg-accent-light text-accent" : "bg-gray-100 text-gray-500";
+}
+
 function statusBadgeClass(status: string) {
   if (status === "FULFILLED") return "bg-accent-light text-accent";
   if (status === "CONFIRMED") return "bg-sky-100 text-sky-700";
@@ -147,6 +181,7 @@ export default async function OrdersPage() {
               <th className="px-4 py-3 font-medium">Items</th>
               <th className="px-4 py-3 font-medium">Delivery</th>
               <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Payment</th>
               <th className="px-4 py-3 font-medium">Placed</th>
               <th className="px-4 py-3 font-medium"></th>
             </tr>
@@ -156,14 +191,34 @@ export default async function OrdersPage() {
               <tr key={o.id} className="border-b border-gray-50 last:border-0 align-top">
                 <td className="px-4 py-3 font-medium text-gray-900">{o.client.name}</td>
                 <td className="px-4 py-3 text-gray-600">
-                  {o.items}
+                  <span className="whitespace-pre-line">{o.items}</span>
                   {o.note && <p className="mt-0.5 text-xs text-gray-400">{o.note}</p>}
+                  {o.totalAmount != null && (
+                    <p className="mt-1 text-xs font-medium text-gray-700">
+                      Total: ৳{o.totalAmount}{" "}
+                      <span className="font-normal text-gray-400">
+                        (Sub ৳{o.subtotal} + Ship ৳{o.shippingCharge})
+                      </span>
+                    </p>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-gray-600">{o.deliveryAddress || "Pickup / not given"}</td>
                 <td className="px-4 py-3">
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(o.status)}`}>
                     {o.status}
                   </span>
+                </td>
+                <td className="px-4 py-3">
+                  <form action={togglePaymentStatus}>
+                    <input type="hidden" name="orderId" value={o.id} />
+                    <button
+                      type="submit"
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${paymentBadgeClass(o.paymentStatus)}`}
+                      title="Click to toggle after checking the customer's payment screenshot"
+                    >
+                      {o.paymentStatus}
+                    </button>
+                  </form>
                 </td>
                 <td className="px-4 py-3 text-gray-500">{formatDate(o.createdAt)}</td>
                 <td className="px-4 py-3">
@@ -203,7 +258,7 @@ export default async function OrdersPage() {
             ))}
             {orders.length === 0 && (
               <tr>
-                <td className="px-4 py-6 text-gray-500" colSpan={6}>
+                <td className="px-4 py-6 text-gray-500" colSpan={7}>
                   No orders yet.
                 </td>
               </tr>
