@@ -37,7 +37,17 @@ model Organization {
   costPerMarketingMsg  Float @default(0.010)
   costPerUtilityMsg    Float @default(0.002)
   costPerAuthMsg       Float @default(0.002)
+
+  // Flat shipping charge added to every WhatsApp Catalog cart checkout bill
+  // (see Order.shippingCharge below). Editable on the Products page. Simple
+  // flat-rate for now — no distance/weight-based calculation.
+  shippingCharge       Float @default(0)
   costPerConversation  Float @default(0)
+
+  // Meta Commerce Manager catalog id, connected to this org's WABA — powers
+  // native WhatsApp Catalog/Cart messages (Product.retailerId maps each of
+  // our products to an entry in this catalog).
+  metaCatalogId String?
 
   users            User[]
   clients          Client[]
@@ -296,6 +306,7 @@ model Product {
   price          String? // kept as text — retail price strings vary ("৳500", "500-700", etc.)
   description    String?
   imageUrl       String?
+  retailerId     String? // Meta Commerce Manager "Content ID" for this product — links it to the WhatsApp Catalog entry so it can be sent as a native Interactive Product Message (see Catalog/Cart build plan). Not the same as our internal Product.id.
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -361,6 +372,17 @@ model Order {
   deliveryAddress  String? // snapshot at order time; customer may give a different address than their saved one
   note             String? // any other instruction from the customer (e.g. preferred delivery time)
   status           String       @default("PENDING") // PENDING, CONFIRMED, FULFILLED, CANCELLED
+  paymentStatus    String       @default("UNPAID") // UNPAID, PAID — set manually by staff after checking a customer's payment screenshot; no payment gateway wired up yet (see Billing/Razorpay build plan for the future automated path)
+
+  // Only populated for orders placed via native WhatsApp Catalog/Cart checkout
+  // (message.type === "order") — Meta hands us exact item prices pulled from
+  // the connected Commerce Manager catalog at checkout time, so these are
+  // trustworthy numbers even though Product.price itself is free-text.
+  // Manually-added orders (the form on the Orders page) leave these null.
+  subtotal         Float?
+  shippingCharge   Float?
+  totalAmount      Float?
+
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
