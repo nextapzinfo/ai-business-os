@@ -13,10 +13,16 @@ import {
   type ToolDefinition,
   type ChatHistoryMessage,
 } from "@/lib/llm";
-import { sendWhatsAppMessage, sendWhatsAppImageMessage } from "@/lib/whatsapp";
+import {
+  sendWhatsAppMessage,
+  sendWhatsAppImageMessage,
+  sendWhatsAppProductMessage,
+  downloadWhatsAppMedia,
+} from "@/lib/whatsapp";
 import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
 import { logAiUsage } from "@/lib/billing";
+import { put } from "@vercel/blob";
 
 // Turns Meta's structured location payload ({latitude, longitude, name?, address?})
 // into a readable text line — this is what gets logged as the Message and fed to
@@ -72,19 +78,30 @@ export async function POST(req: NextRequest) {
     if (
       !message ||
       !phoneNumberId ||
-      (message.type !== "text" && message.type !== "button" && message.type !== "location")
+      (message.type !== "text" &&
+        message.type !== "button" &&
+        message.type !== "location" &&
+        message.type !== "image" &&
+        message.type !== "order")
     ) {
       return NextResponse.json({ status: "ignored" });
     }
 
     const from = message.from as string; // sender's WhatsApp number
+    const isImage = message.type === "image";
+    // "order" = customer hit "Send order" on a WhatsApp Catalog cart review
+    // screen (built from Interactive Product Messages we sent — see
+    // sendWhatsAppProductMessage). Structured event, no free text attached.
+    const isOrder = message.type === "order";
     const text =
-      message.type === "button"
+      isImage || isOrder
+        ? ""
+        : message.type === "button"
         ? (message.button?.text as string)
         : message.type === "location"
         ? formatLocationMessage(message.location)
         : (message.text.body as string);
-    if (!text) {
+    if (!isImage && !isOrder && !text) {
       return NextResponse.json({ status: "ignored" });
     }
     const contactName = value.contacts?.[0]?.profile?.name ?? from;
@@ -152,6 +169,147 @@ export async function POST(req: NextRequest) {
         },
       });
       isNewConversation = true;
+    }
+
+    // Customer sent a photo — most commonly a payment screenshot for staff to
+    // verify (manual-confirm flow, no payment gateway). This never goes
+    // through RAG/AI question-answering (there's no text to search against);
+    // it's just stored so it shows up in Conversations for a human to look at,
+    // plus a short FIXED acknowledgment (not an OpenAI call — no point paying
+    // for a reply here) so the customer knows it was received.
+    if (isImage) {
+      const mediaId = message.image?.id as string | undefined;
+      let imageUrl: string | null = null;
+      if (mediaId) {
+        try {
+          const { buffer, contentType } = await downloadWhatsAppMedia(mediaId);
+          const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
+          const blob = await put(
+            `customer-uploads/${organization.id}/${conversation.id}-${Date.now()}.${ext}`,
+            buffer,
+            { access: "public", contentType, addRandomSuffix: true }
+          );
+          imageUrl = blob.url;
+        } catch (err) {
+          console.error("Failed to download/store customer image:", err);
+        }
+      }
+
+      await prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          sender: "CLIENT",
+          content: (message.image?.caption as string) || "📷 Photo",
+          imageUrl,
+        },
+      });
+
+      if (!conversation.aiPaused) {
+        const ackText = "আপনার ছবি/স্ক্রিনশট পেয়েছি। আমাদের টিম শীঘ্রই যাচাই করে জানাবে। ধন্যবাদ!";
+        try {
+          await sendWhatsAppMessage(from, ackText);
+          await prisma.message.create({
+            data: { conversationId: conversation.id, sender: "AI", content: ackText },
+          });
+        } catch (err) {
+          console.error("Image ack send failed:", err);
+        }
+      }
+
+      await logAudit({
+        organizationId: organization.id,
+        action: "WHATSAPP_IMAGE_RECEIVED",
+        metadata: { clientId: client.id, hasImageUrl: !!imageUrl },
+      });
+
+      return NextResponse.json({ status: "image-received" });
+    }
+
+    // Customer completed a WhatsApp Catalog cart checkout ("Send order" from
+    // the cart review screen). Meta hands us the exact items + prices it
+    // pulled from the connected Commerce Manager catalog at that moment — we
+    // use those, not our own Product.price (which is free-text and can't be
+    // trusted for math). Structured event, never goes through AI/RAG.
+    if (isOrder) {
+      const orderPayload = message.order as {
+        catalog_id?: string;
+        // Meta's webhook payload sends quantity/item_price as either numbers
+        // or numeric strings depending on version — Number() handles both.
+        product_items?: { product_retailer_id: string; quantity: number | string; item_price: number | string; currency?: string }[];
+        text?: string;
+      };
+      const productItems = orderPayload?.product_items ?? [];
+
+      const retailerIds = productItems.map((it) => it.product_retailer_id).filter(Boolean);
+      const matchedProducts = retailerIds.length
+        ? await prisma.product.findMany({
+            where: { organizationId: organization.id, retailerId: { in: retailerIds } },
+          })
+        : [];
+      const productByRetailerId = new Map(matchedProducts.map((p) => [p.retailerId, p]));
+
+      let subtotal = 0;
+      const lineLines: string[] = [];
+      for (const item of productItems) {
+        const qty = Number(item.quantity) || 0;
+        const price = Number(item.item_price) || 0;
+        const lineTotal = price * qty;
+        subtotal += lineTotal;
+        const name = productByRetailerId.get(item.product_retailer_id)?.name || item.product_retailer_id;
+        lineLines.push(`${qty} x ${name} — ৳${price} = ৳${lineTotal}`);
+      }
+      const shippingCharge = organization.shippingCharge ?? 0;
+      const totalAmount = subtotal + shippingCharge;
+      const itemsSummary = lineLines.join("\n") || "(no items)";
+
+      const order = await prisma.order.create({
+        data: {
+          organizationId: organization.id,
+          clientId: client.id,
+          items: itemsSummary,
+          note: orderPayload?.text?.trim() || undefined,
+          status: "PENDING",
+          subtotal,
+          shippingCharge,
+          totalAmount,
+        },
+      });
+
+      const billText =
+        `আপনার অর্ডার পেয়েছি! 🧾\n\n${itemsSummary}\n\n` +
+        `Subtotal: ৳${subtotal}\n` +
+        `Shipping: ৳${shippingCharge}\n` +
+        `মোট (Total): ৳${totalAmount}\n\n` +
+        `নিচের QR কোড স্ক্যান করে পেমেন্ট করুন এবং পেমেন্টের স্ক্রিনশট পাঠান — আমাদের টিম যাচাই করে অর্ডার কনফার্ম করবে।`;
+
+      try {
+        await sendWhatsAppMessage(from, billText);
+        await prisma.message.create({
+          data: { conversationId: conversation.id, sender: "AI", content: billText },
+        });
+
+        if (agentProfile?.qrCodeUrl) {
+          await sendWhatsAppImageMessage(from, agentProfile.qrCodeUrl, "Payment QR Code");
+          await prisma.message.create({
+            data: {
+              conversationId: conversation.id,
+              sender: "AI",
+              content: "[Sent payment QR code]",
+              imageUrl: agentProfile.qrCodeUrl,
+            },
+          });
+        }
+      } catch (err) {
+        console.error("Order bill/QR send failed:", err);
+      }
+
+      await logAudit({
+        organizationId: organization.id,
+        action: "WHATSAPP_ORDER_RECEIVED",
+        metadata: { clientId: client.id, orderId: order.id, subtotal, shippingCharge, totalAmount },
+      });
+
+      return NextResponse.json({ status: "order-received" });
     }
 
     // Fetch recent history BEFORE logging this new message (so it isn't
@@ -251,16 +409,17 @@ export async function POST(req: NextRequest) {
     // logic doesn't need to re-query the same product/event a second time.
     const PRODUCT_PHOTO_DISTANCE_THRESHOLD = 0.35; // lower = stricter match required; tune from real usage
     const EVENT_PHOTO_DISTANCE_THRESHOLD = 0.35;
-    let matchedProduct: { id: string; name: string; imageUrl: string | null } | null = null;
+    let matchedProduct: { id: string; name: string; imageUrl: string | null; retailerId: string | null } | null = null;
     let matchedEvent: { id: string; title: string; imageUrl: string | null } | null = null;
     if (results.length > 0 && results[0].distance <= PRODUCT_PHOTO_DISTANCE_THRESHOLD) {
       matchedProduct = await prisma.product.findUnique({
         where: { documentId: results[0].documentId },
-        select: { id: true, name: true, imageUrl: true },
+        select: { id: true, name: true, imageUrl: true, retailerId: true },
       });
     }
     if (
       !matchedProduct?.imageUrl &&
+      !matchedProduct?.retailerId &&
       agentProfile?.skillSendEventPhotos &&
       results.length > 0 &&
       results[0].distance <= EVENT_PHOTO_DISTANCE_THRESHOLD
@@ -282,18 +441,24 @@ export async function POST(req: NextRequest) {
     // it fires, the reply below correctly says "sending automatically."
     const PHOTO_REQUEST_REGEX =
       /\b(pic|pics|photo|photos|picture|pictures|image|images)\b|ছবি|ফটো|দেখতে চাই|দেখাও|দেখান|দেখব/i;
-    if (!matchedProduct?.imageUrl && !matchedEvent?.imageUrl && PHOTO_REQUEST_REGEX.test(text) && conversation.lastProductId) {
+    if (
+      !matchedProduct?.imageUrl &&
+      !matchedProduct?.retailerId &&
+      !matchedEvent?.imageUrl &&
+      PHOTO_REQUEST_REGEX.test(text) &&
+      conversation.lastProductId
+    ) {
       const fallbackProduct = await prisma.product.findUnique({
         where: { id: conversation.lastProductId },
-        select: { id: true, name: true, imageUrl: true },
+        select: { id: true, name: true, imageUrl: true, retailerId: true },
       });
-      if (fallbackProduct?.imageUrl) {
+      if (fallbackProduct?.imageUrl || fallbackProduct?.retailerId) {
         matchedProduct = fallbackProduct;
       }
     }
 
     let photoNote: string;
-    if (matchedProduct?.imageUrl) {
+    if (matchedProduct?.imageUrl || matchedProduct?.retailerId) {
       photoNote = `A photo of "${matchedProduct.name}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally (you can casually mention a photo is coming if it fits).`;
     } else if (matchedEvent?.imageUrl) {
       photoNote = `A photo for "${matchedEvent.title}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally.`;
@@ -341,17 +506,22 @@ export async function POST(req: NextRequest) {
         if (!product) {
           return `No matching product found for "${productName}" — tell the customer honestly you couldn't find that product, don't pretend to send a photo.`;
         }
-        if (!product.imageUrl) {
+        if (!product.imageUrl && !product.retailerId) {
           return `No photo is saved for "${product.name}" yet — tell the customer honestly you don't have a photo on hand right now, don't pretend to send one.`;
         }
 
         try {
-          await sendWhatsAppImageMessage(from, product.imageUrl, product.name);
+          const useCatalogCard = !!(product.retailerId && organization!.metaCatalogId);
+          if (useCatalogCard) {
+            await sendWhatsAppProductMessage(from, organization!.metaCatalogId!, product.retailerId!, product.name);
+          } else {
+            await sendWhatsAppImageMessage(from, product.imageUrl!, product.name);
+          }
           await prisma.message.create({
             data: {
               conversationId: conversation!.id,
               sender: "AI",
-              content: `[Sent photo] ${product.name}`,
+              content: `[Sent photo${useCatalogCard ? " + Add to Cart" : ""}] ${product.name}`,
               imageUrl: product.imageUrl,
             },
           });
@@ -499,14 +669,19 @@ export async function POST(req: NextRequest) {
     // Actually send the product/event photo determined above (matchedProduct /
     // matchedEvent were precomputed before the AI call so its text reply could
     // stay honest about whether a photo is coming — see photoNote above).
-    if (matchedProduct?.imageUrl && matchedProduct.id !== toolSentPhotoForProductId) {
+    if ((matchedProduct?.imageUrl || matchedProduct?.retailerId) && matchedProduct.id !== toolSentPhotoForProductId) {
       try {
-        await sendWhatsAppImageMessage(from, matchedProduct.imageUrl, matchedProduct.name);
+        const useCatalogCard = !!(matchedProduct.retailerId && organization.metaCatalogId);
+        if (useCatalogCard) {
+          await sendWhatsAppProductMessage(from, organization.metaCatalogId!, matchedProduct.retailerId!, matchedProduct.name);
+        } else {
+          await sendWhatsAppImageMessage(from, matchedProduct.imageUrl!, matchedProduct.name);
+        }
         await prisma.message.create({
           data: {
             conversationId: conversation.id,
             sender: "AI",
-            content: `[Sent photo] ${matchedProduct.name}`,
+            content: `[Sent photo${useCatalogCard ? " + Add to Cart" : ""}] ${matchedProduct.name}`,
             imageUrl: matchedProduct.imageUrl,
           },
         });
