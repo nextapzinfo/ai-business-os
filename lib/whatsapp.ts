@@ -63,6 +63,82 @@ export async function sendWhatsAppImageMessage(
   }
 }
 
+// Sends a native WhatsApp Catalog "Interactive Product Message" — shows the
+// product's image/price/name straight from the connected Commerce Manager
+// catalog, plus (since "Add to cart" is turned on for the account in
+// WhatsApp Manager) a native Add to Cart affordance under it. This is what
+// lets a customer build a cart across several products and hit "Send order"
+// to check out — that checkout arrives back at our webhook as a
+// message.type === "order" event. Requires both the org's metaCatalogId and
+// the specific Product's retailerId (its Commerce Manager Content ID) to be
+// set; falls back to a plain image (sendWhatsAppImageMessage) elsewhere in
+// the app when either is missing.
+export async function sendWhatsAppProductMessage(
+  to: string,
+  catalogId: string,
+  retailerId: string,
+  bodyText: string
+): Promise<void> {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!accessToken || !phoneNumberId) {
+    throw new Error("WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID is not set");
+  }
+
+  const res = await fetch(`${WHATSAPP_API_BASE}/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "interactive",
+      interactive: {
+        type: "product",
+        body: { text: bodyText },
+        action: { catalog_id: catalogId, product_retailer_id: retailerId },
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`WhatsApp product message send failed: ${res.status} ${errText}`);
+  }
+}
+
+// Downloads an incoming media attachment (e.g. a customer's payment screenshot)
+// by its WhatsApp media id. Two-step Graph API dance: first resolve the id to
+// a short-lived download URL, then fetch that URL — both calls need the same
+// access token, the second one is NOT a public link on its own.
+export async function downloadWhatsAppMedia(mediaId: string): Promise<{ buffer: Buffer; contentType: string }> {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!accessToken) {
+    throw new Error("WHATSAPP_ACCESS_TOKEN is not set");
+  }
+
+  const metaRes = await fetch(`${WHATSAPP_API_BASE}/${mediaId}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const meta = await metaRes.json();
+  if (!metaRes.ok || !meta.url) {
+    throw new Error(`WhatsApp media lookup failed: ${metaRes.status} ${JSON.stringify(meta)}`);
+  }
+
+  const fileRes = await fetch(meta.url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!fileRes.ok) {
+    throw new Error(`WhatsApp media download failed: ${fileRes.status}`);
+  }
+
+  const buffer = Buffer.from(await fileRes.arrayBuffer());
+  const contentType = (meta.mime_type as string) || fileRes.headers.get("content-type") || "image/jpeg";
+  return { buffer, contentType };
+}
+
 // Sends an already-Meta-approved template message. Required for messaging a
 // customer outside the 24-hour service window (e.g. bulk broadcasts).
 //
