@@ -500,8 +500,20 @@ export async function POST(req: NextRequest) {
         const productName = (args.productName as string)?.trim();
         if (!productName) return "No product specified — nothing sent.";
 
+        // Match on name OR description — a customer usually says the brand/
+        // generic name (e.g. "Laal Kheer Doi"), but the actual Product row is
+        // often named after its catalog SKU/variant instead (e.g. "Doi 500 gm
+        // (App)"), which name-only search would miss even though the product
+        // clearly exists. The description field almost always still contains
+        // the full product name in a sentence, so it's a reliable fallback.
         const product = await prisma.product.findFirst({
-          where: { organizationId: organization!.id, name: { contains: productName, mode: "insensitive" } },
+          where: {
+            organizationId: organization!.id,
+            OR: [
+              { name: { contains: productName, mode: "insensitive" } },
+              { description: { contains: productName, mode: "insensitive" } },
+            ],
+          },
         });
         if (!product) {
           return `No matching product found for "${productName}" — tell the customer honestly you couldn't find that product, don't pretend to send a photo.`;
@@ -587,7 +599,13 @@ export async function POST(req: NextRequest) {
         if (!productName) return "No product name given — nothing recorded.";
 
         const product = await prisma.product.findFirst({
-          where: { organizationId: organization!.id, name: { contains: productName, mode: "insensitive" } },
+          where: {
+            organizationId: organization!.id,
+            OR: [
+              { name: { contains: productName, mode: "insensitive" } },
+              { description: { contains: productName, mode: "insensitive" } },
+            ],
+          },
         });
         if (!product) return `No matching product found for "${productName}" — nothing recorded.`;
 
