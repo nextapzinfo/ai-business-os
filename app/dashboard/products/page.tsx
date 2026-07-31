@@ -44,6 +44,38 @@ async function reembedProduct(organizationId: string, documentId: string, name: 
   }
 }
 
+// One catalog ID per organization — connects our Products to the Meta
+// Commerce Manager catalog linked to this WABA, so native Catalog/Cart
+// messages know which catalog to reference. Shipping charge is a flat rate
+// added to every WhatsApp Catalog cart checkout bill (see the webhook's
+// message.type === "order" handling) — kept simple, no distance/weight math.
+async function updateCheckoutSettings(formData: FormData) {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const metaCatalogId = (formData.get("metaCatalogId") as string)?.trim();
+  const shippingChargeRaw = (formData.get("shippingCharge") as string)?.trim();
+  const shippingCharge = shippingChargeRaw ? parseFloat(shippingChargeRaw) : 0;
+
+  await prisma.organization.update({
+    where: { id: user.organizationId },
+    data: {
+      metaCatalogId: metaCatalogId || null,
+      shippingCharge: isNaN(shippingCharge) ? 0 : shippingCharge,
+    },
+  });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "CHECKOUT_SETTINGS_UPDATED",
+    metadata: { metaCatalogId, shippingCharge },
+  });
+
+  revalidatePath("/dashboard/products");
+}
+
 async function importFromSheet(formData: FormData) {
   "use server";
   const user = await getCurrentUser();
@@ -160,6 +192,7 @@ async function updateProduct(formData: FormData) {
   const name = (formData.get("name") as string)?.trim();
   const price = (formData.get("price") as string)?.trim();
   const description = (formData.get("description") as string)?.trim();
+  const retailerId = (formData.get("retailerId") as string)?.trim();
   if (!productId || !name) return;
 
   const product = await prisma.product.findFirst({
@@ -169,7 +202,7 @@ async function updateProduct(formData: FormData) {
 
   await prisma.product.update({
     where: { id: productId },
-    data: { name, price: price || null, description: description || null },
+    data: { name, price: price || null, description: description || null, retailerId: retailerId || null },
   });
 
   await reembedProduct(user.organizationId, product.documentId, name, price || "", description || "");
@@ -221,10 +254,16 @@ export default async function ProductsPage() {
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const products = await prisma.product.findMany({
-    where: { organizationId: user.organizationId },
-    orderBy: { createdAt: "desc" },
-  });
+  const [products, org] = await Promise.all([
+    prisma.product.findMany({
+      where: { organizationId: user.organizationId },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.organization.findUnique({
+      where: { id: user.organizationId },
+      select: { metaCatalogId: true, shippingCharge: true },
+    }),
+  ]);
 
   return (
     <div>
@@ -236,6 +275,40 @@ export default async function ProductsPage() {
       </p>
 
       <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
+        <h3 className="text-sm font-semibold text-gray-900">WhatsApp Catalog &amp; checkout</h3>
+        <p className="mt-1 text-xs text-gray-500">
+          The Meta Commerce Manager catalog ID connected to your WhatsApp number — needed for native product
+          cards with an Add to Cart button. Find it in the catalog's Settings → Catalog page (Catalog ID field).
+          Shipping charge is a flat amount added to every cart checkout bill.
+        </p>
+        <form action={updateCheckoutSettings} className="mt-2 flex flex-wrap items-end gap-2">
+          <label className="flex flex-1 basis-64 flex-col gap-1">
+            <span className="text-[11px] text-gray-500">Catalog ID</span>
+            <input
+              name="metaCatalogId"
+              defaultValue={org?.metaCatalogId ?? ""}
+              placeholder="e.g. 1598918611911177"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="flex basis-32 flex-col gap-1">
+            <span className="text-[11px] text-gray-500">Shipping charge (৳)</span>
+            <input
+              name="shippingCharge"
+              type="number"
+              step="0.01"
+              min="0"
+              defaultValue={org?.shippingCharge ?? 0}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+          </label>
+          <button type="submit" className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
+            Save Settings
+          </button>
+        </form>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-gray-900">Import from Google Sheet</h3>
         <form action={importFromSheet} className="mt-3 flex flex-wrap gap-2">
           <input
@@ -277,6 +350,7 @@ export default async function ProductsPage() {
                 )}
               </div>
               <p className="line-clamp-2 text-xs text-gray-500">{p.description || "No description"}</p>
+              {p.retailerId && <p className="text-[10px] text-gray-400">Catalog ID: {p.retailerId}</p>}
               <p className="mt-auto pt-1 text-[11px] text-gray-400">Added {formatDate(p.createdAt)}</p>
 
               <form action={uploadProductPhoto} className="mt-2 flex items-center gap-1.5">
@@ -296,6 +370,12 @@ export default async function ProductsPage() {
                   <input name="name" defaultValue={p.name} required placeholder="Name" className="rounded border border-gray-300 px-2 py-1 text-xs" />
                   <input name="price" defaultValue={p.price ?? ""} placeholder="Price" className="rounded border border-gray-300 px-2 py-1 text-xs" />
                   <textarea name="description" defaultValue={p.description ?? ""} placeholder="Description" rows={2} className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                  <input
+                    name="retailerId"
+                    defaultValue={p.retailerId ?? ""}
+                    placeholder="Meta Catalog Content ID (e.g. k4c1walsjc)"
+                    className="rounded border border-gray-300 px-2 py-1 text-xs"
+                  />
                   <button type="submit" className="mt-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-light">
                     Save Changes
                   </button>
