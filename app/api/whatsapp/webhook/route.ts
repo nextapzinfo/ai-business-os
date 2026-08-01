@@ -17,6 +17,7 @@ import {
   sendWhatsAppMessage,
   sendWhatsAppImageMessage,
   sendWhatsAppProductMessage,
+  sendWhatsAppProductListMessage,
   downloadWhatsAppMedia,
 } from "@/lib/whatsapp";
 import { logAudit } from "@/lib/audit";
@@ -411,7 +412,31 @@ export async function POST(req: NextRequest) {
     const EVENT_PHOTO_DISTANCE_THRESHOLD = 0.35;
     let matchedProduct: { id: string; name: string; imageUrl: string | null; retailerId: string | null } | null = null;
     let matchedEvent: { id: string; title: string; imageUrl: string | null } | null = null;
-    if (results.length > 0 && results[0].distance <= PRODUCT_PHOTO_DISTANCE_THRESHOLD) {
+
+    // Direct name/description word-match — checked FIRST, ahead of the RAG
+    // distance threshold below. Proven more reliable than embedding distance
+    // for this specific purpose: a customer typing a product's actual name
+    // ("Sorbhaja") should always resolve to that exact product, but RAG has
+    // both missed real matches (distance landing just above the threshold)
+    // and picked the WRONG product on short/generic messages like "pics"
+    // (embedding noise matching an unrelated product by coincidence).
+    const textWords = text
+      .toLowerCase()
+      .split(/[^a-z0-9ঀ-৿]+/i)
+      .filter((w) => w.length >= 4);
+    if (textWords.length > 0) {
+      const orgProducts = await prisma.product.findMany({
+        where: { organizationId: organization.id },
+        select: { id: true, name: true, description: true, imageUrl: true, retailerId: true },
+      });
+      const nameMatch = orgProducts.find((p) => {
+        const haystack = `${p.name} ${p.description ?? ""}`.toLowerCase();
+        return textWords.some((w) => haystack.includes(w));
+      });
+      if (nameMatch) matchedProduct = nameMatch;
+    }
+
+    if (!matchedProduct && results.length > 0 && results[0].distance <= PRODUCT_PHOTO_DISTANCE_THRESHOLD) {
       matchedProduct = await prisma.product.findUnique({
         where: { documentId: results[0].documentId },
         select: { id: true, name: true, imageUrl: true, retailerId: true },
@@ -457,11 +482,35 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // General "show me your products" browsing — only checked when nothing
+    // more specific matched above (no named product, no context follow-up).
+    // Sends a native swipeable carousel of a few featured/bestseller
+    // products (marked on the Products page) instead of the AI guessing at
+    // one product to push, matching how a customer expects to browse when
+    // they haven't named anything specific yet.
+    const BROWSE_REQUEST_REGEX =
+      /\b(products?|items?|menu|catalog|catalogue|shop|options?)\b|প্রোডাক্ট|প্রডাক্ট|মেনু|কি কি আছে|কি আছে|সব দেখা|লিস্ট/i;
+    let featuredCarousel: { id: string; name: string; retailerId: string | null; imageUrl: string | null }[] = [];
+    if (
+      !matchedProduct?.imageUrl &&
+      !matchedProduct?.retailerId &&
+      !matchedEvent?.imageUrl &&
+      BROWSE_REQUEST_REGEX.test(text)
+    ) {
+      featuredCarousel = await prisma.product.findMany({
+        where: { organizationId: organization.id, featured: true },
+        select: { id: true, name: true, retailerId: true, imageUrl: true },
+        take: 3,
+      });
+    }
+
     let photoNote: string;
     if (matchedProduct?.imageUrl || matchedProduct?.retailerId) {
       photoNote = `A photo of "${matchedProduct.name}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally (you can casually mention a photo is coming if it fits).`;
     } else if (matchedEvent?.imageUrl) {
       photoNote = `A photo for "${matchedEvent.title}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally.`;
+    } else if (featuredCarousel.length > 0) {
+      photoNote = `A carousel of a few of our featured products (with photos) will be sent automatically right after this text reply — you do NOT need to list product photos yourself; just answer naturally and briefly mention you're sharing a few options.`;
     } else {
       photoNote = `No product/event photo is precomputed for this specific reply. If the customer is asking to see a photo of a specific product — including a product only mentioned earlier in this conversation, not necessarily repeated just now — use the send_product_photo tool with that product's exact name. You DO have this capability; never say you're generally unable to share images or photo links. Only if the tool itself reports no photo is saved should you honestly say you don't have one on hand right now.`;
     }
@@ -517,6 +566,12 @@ export async function POST(req: NextRequest) {
         });
         if (!product) {
           return `No matching product found for "${productName}" — tell the customer honestly you couldn't find that product, don't pretend to send a photo.`;
+        }
+        // Guard against the model calling this tool twice for the same
+        // product in one turn (it does happen occasionally) — without this,
+        // the customer gets the identical photo/card sent to them twice.
+        if (toolSentPhotoForProductId === product.id) {
+          return `Already sent a photo of "${product.name}" earlier in this same reply — do not send it again, just acknowledge naturally.`;
         }
         if (!product.imageUrl && !product.retailerId) {
           return `No photo is saved for "${product.name}" yet — tell the customer honestly you don't have a photo on hand right now, don't pretend to send one.`;
@@ -738,6 +793,45 @@ export async function POST(req: NextRequest) {
         });
       } catch (err) {
         console.error("Event image send failed:", err);
+      }
+    }
+
+    // Featured products carousel — general "what do you sell" browsing
+    // (precomputed above, before the AI's text answer, so photoNote can tell
+    // it a carousel is coming). Prefer the native swipeable Multi-Product
+    // Message when every featured item has a catalog Content ID; otherwise
+    // fall back to sending each one's plain photo individually so the
+    // customer still sees them.
+    if (featuredCarousel.length > 0) {
+      try {
+        const withRetailer = featuredCarousel.filter((p) => p.retailerId);
+        if (withRetailer.length === featuredCarousel.length && organization.metaCatalogId) {
+          await sendWhatsAppProductListMessage(
+            from,
+            organization.metaCatalogId,
+            "Our Products",
+            withRetailer.map((p) => p.retailerId!),
+            "Our Products",
+            "Here are a few of our favourites — tap any to see more or add to cart."
+          );
+          await prisma.message.create({
+            data: {
+              conversationId: conversation.id,
+              sender: "AI",
+              content: `[Sent product carousel] ${withRetailer.map((p) => p.name).join(", ")}`,
+            },
+          });
+        } else {
+          for (const p of featuredCarousel) {
+            if (!p.imageUrl) continue;
+            await sendWhatsAppImageMessage(from, p.imageUrl, p.name);
+            await prisma.message.create({
+              data: { conversationId: conversation.id, sender: "AI", content: `[Sent photo] ${p.name}`, imageUrl: p.imageUrl },
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Featured carousel send failed:", err);
       }
     }
 
