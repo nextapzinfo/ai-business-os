@@ -109,6 +109,64 @@ export async function sendWhatsAppProductMessage(
   }
 }
 
+// Sends a native WhatsApp "Multi-Product Message" — a swipeable carousel of
+// several catalog products in one message (image/name/price pulled straight
+// from the connected catalog, same as the single-product card), used when a
+// customer asks about products generally rather than naming one. Meta caps
+// this at 30 products across sections; we only ever send a handful (featured
+// items) so a single section is enough. Requires every retailerId passed in
+// to exist in the connected catalog — same real-catalog dependency as the
+// single Interactive Product Message.
+export async function sendWhatsAppProductListMessage(
+  to: string,
+  catalogId: string,
+  sectionTitle: string,
+  retailerIds: string[],
+  headerText: string,
+  bodyText: string
+): Promise<void> {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!accessToken || !phoneNumberId) {
+    throw new Error("WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID is not set");
+  }
+  if (retailerIds.length === 0) {
+    throw new Error("sendWhatsAppProductListMessage called with no retailerIds");
+  }
+
+  const res = await fetch(`${WHATSAPP_API_BASE}/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "interactive",
+      interactive: {
+        type: "product_list",
+        header: { type: "text", text: headerText },
+        body: { text: bodyText },
+        action: {
+          catalog_id: catalogId,
+          sections: [
+            {
+              title: sectionTitle,
+              product_items: retailerIds.map((id) => ({ product_retailer_id: id })),
+            },
+          ],
+        },
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`WhatsApp product list message send failed: ${res.status} ${errText}`);
+  }
+}
+
 // Downloads an incoming media attachment (e.g. a customer's payment screenshot)
 // by its WhatsApp media id. Two-step Graph API dance: first resolve the id to
 // a short-lived download URL, then fetch that URL — both calls need the same
