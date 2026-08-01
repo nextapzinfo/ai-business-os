@@ -413,27 +413,49 @@ export async function POST(req: NextRequest) {
     let matchedProduct: { id: string; name: string; imageUrl: string | null; retailerId: string | null } | null = null;
     let matchedEvent: { id: string; title: string; imageUrl: string | null } | null = null;
 
-    // Direct name/description word-match — checked FIRST, ahead of the RAG
-    // distance threshold below. Proven more reliable than embedding distance
-    // for this specific purpose: a customer typing a product's actual name
-    // ("Sorbhaja") should always resolve to that exact product, but RAG has
-    // both missed real matches (distance landing just above the threshold)
-    // and picked the WRONG product on short/generic messages like "pics"
-    // (embedding noise matching an unrelated product by coincidence).
-    const textWords = text
-      .toLowerCase()
-      .split(/[^a-z0-9ঀ-৿]+/i)
-      .filter((w) => w.length >= 4);
+    // Direct name word-match — checked FIRST, ahead of the RAG distance
+    // threshold below. A customer typing a product's actual name ("Sorbhaja")
+    // should always resolve to that exact product, but RAG has both missed
+    // real matches (distance landing just above the threshold) and picked
+    // the WRONG product on short/generic messages (embedding noise).
+    //
+    // Matches ONLY against the product NAME (not description — description
+    // is marketing prose full of generic words like "customer"/"product"
+    // that appear on every item and caused false matches), filters out
+    // common filler words first, and picks the product with the MOST
+    // matching words rather than the first one sharing any single word —
+    // otherwise a shared category word like "Baked" alone could match the
+    // wrong "Baked ___" product instead of the one actually named.
+    const STOPWORDS = new Set([
+      "customer", "customers", "product", "products", "order", "orders", "please", "want", "wants",
+      "would", "have", "this", "that", "with", "from", "details", "detail", "about", "some", "more",
+      "info", "information", "price", "prices", "item", "items", "shop", "menu", "hello", "thanks",
+      "chai", "chan", "korte", "korbo", "ache", "achi", "amar", "apnar", "kichu", "janan", "janate",
+      "dekhte", "dekhan", "koto", "kobe", "kore", "hoy", "hobe", "niben", "nite", "valo", "bhalo",
+    ]);
+    function extractWords(s: string): string[] {
+      return s
+        .toLowerCase()
+        .split(/[^a-z0-9ঀ-৿]+/i)
+        .filter((w) => w.length >= 4 && !STOPWORDS.has(w));
+    }
+    const textWords = extractWords(text);
     if (textWords.length > 0) {
       const orgProducts = await prisma.product.findMany({
         where: { organizationId: organization.id },
-        select: { id: true, name: true, description: true, imageUrl: true, retailerId: true },
+        select: { id: true, name: true, imageUrl: true, retailerId: true },
       });
-      const nameMatch = orgProducts.find((p) => {
-        const haystack = `${p.name} ${p.description ?? ""}`.toLowerCase();
-        return textWords.some((w) => haystack.includes(w));
-      });
-      if (nameMatch) matchedProduct = nameMatch;
+      let bestMatch: (typeof orgProducts)[number] | null = null;
+      let bestScore = 0;
+      for (const p of orgProducts) {
+        const nameWords = extractWords(p.name);
+        const score = textWords.filter((w) => nameWords.includes(w)).length;
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = p;
+        }
+      }
+      if (bestMatch) matchedProduct = bestMatch;
     }
 
     if (!matchedProduct && results.length > 0 && results[0].distance <= PRODUCT_PHOTO_DISTANCE_THRESHOLD) {
