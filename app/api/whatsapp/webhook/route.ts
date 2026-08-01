@@ -437,31 +437,42 @@ export async function POST(req: NextRequest) {
       return s
         .toLowerCase()
         .split(/[^a-z0-9ঀ-৿]+/i)
-        .filter((w) => w.length >= 4 && !STOPWORDS.has(w));
+        .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
     }
     type ProductForMatch = { id: string; name: string; imageUrl: string | null; retailerId: string | null };
-    // Confident match = at least 2 shared words (rules out a single shared
-    // category word like "Baked" picking the wrong "Baked ___" item), OR a
-    // single shared word that's long/distinctive enough on its own (e.g.
-    // "Sorbhaja" — a one-word product name shouldn't need a second word to
-    // confirm it, since it isn't a generic category term to begin with).
+    // Confident match = at least one shared word that's DISTINCTIVE — i.e.
+    // appears in exactly one product's name across the whole catalog. A word
+    // shared by multiple products (e.g. "Kheer", appearing in both "Laal
+    // Kheer Doi" and "Baked Kheer Malai"; or "Baked", shared by two "Baked
+    // ___" items) is a category term, not an identifier, and must never
+    // decide a match — length alone isn't a reliable enough signal for that
+    // (a long word can still be a shared category term). Products that only
+    // share non-distinctive words correctly resolve to "no confident match"
+    // rather than guessing — e.g. a bare "doi" with no variant specified
+    // legitimately can't tell 500gm Doi from 1kg Doi apart, so no photo
+    // should be forced; a later "pic" gets resolved by conversation context
+    // instead (see the send_product_photo tool).
     function findBestProductMatch(words: string[], products: ProductForMatch[]): ProductForMatch | null {
-      let bestMatch: ProductForMatch | null = null;
-      let bestScore = 0;
-      let bestHasStrongWord = false;
-      for (const p of products) {
-        const nameWords = extractWords(p.name);
-        const matched = words.filter((w) => nameWords.includes(w));
-        const score = matched.length;
-        const hasStrongWord = matched.some((w) => w.length >= 6);
-        if (score > 0 && (score > bestScore || (score === bestScore && hasStrongWord && !bestHasStrongWord))) {
-          bestScore = score;
-          bestMatch = p;
-          bestHasStrongWord = hasStrongWord;
+      const productNameWords = products.map((p) => extractWords(p.name));
+      const wordProductCount = new Map<string, number>();
+      for (const nameWords of productNameWords) {
+        for (const w of new Set(nameWords)) {
+          wordProductCount.set(w, (wordProductCount.get(w) ?? 0) + 1);
         }
       }
-      if (bestMatch && (bestScore >= 2 || bestHasStrongWord)) return bestMatch;
-      return null;
+
+      let bestMatch: ProductForMatch | null = null;
+      let bestScore = 0;
+      products.forEach((p, i) => {
+        const nameWords = productNameWords[i];
+        const distinctiveMatches = words.filter((w) => nameWords.includes(w) && wordProductCount.get(w) === 1);
+        const score = distinctiveMatches.length;
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = p;
+        }
+      });
+      return bestScore > 0 ? bestMatch : null;
     }
     const textWords = extractWords(text);
     if (textWords.length > 0) {
@@ -816,7 +827,16 @@ export async function POST(req: NextRequest) {
     // Actually send the product/event photo determined above (matchedProduct /
     // matchedEvent were precomputed before the AI call so its text reply could
     // stay honest about whether a photo is coming — see photoNote above).
-    if ((matchedProduct?.imageUrl || matchedProduct?.retailerId) && matchedProduct.id !== toolSentPhotoForProductId) {
+    //
+    // If the model already sent a photo via the send_product_photo tool this
+    // turn, skip this automatic send entirely — even if it resolved to a
+    // DIFFERENT product than matchedProduct. The tool call is informed by
+    // the model reading the full conversation history and its own
+    // just-written answer, which is a better signal than our precomputed
+    // guess (e.g. a stale conversation.lastProductId from several turns
+    // back) — sending both means the customer gets one right photo and one
+    // wrong/extra one.
+    if ((matchedProduct?.imageUrl || matchedProduct?.retailerId) && !toolSentPhotoForProductId) {
       try {
         let sentWithCard = !!(matchedProduct.retailerId && organization.metaCatalogId);
         if (sentWithCard) {
