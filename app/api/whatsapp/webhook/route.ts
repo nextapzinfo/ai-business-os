@@ -523,9 +523,19 @@ export async function POST(req: NextRequest) {
         }
 
         try {
-          const useCatalogCard = !!(product.retailerId && organization!.metaCatalogId);
-          if (useCatalogCard) {
-            await sendWhatsAppProductMessage(from, organization!.metaCatalogId!, product.retailerId!, product.name);
+          let sentWithCard = !!(product.retailerId && organization!.metaCatalogId);
+          if (sentWithCard) {
+            try {
+              await sendWhatsAppProductMessage(from, organization!.metaCatalogId!, product.retailerId!, product.name);
+            } catch (cardErr) {
+              // Meta rejected the catalog card (e.g. a catalog-side eligibility
+              // issue, often with variant items) — fall back to a plain photo
+              // so the customer still gets something instead of nothing.
+              console.error("Catalog card send failed, falling back to plain image:", cardErr);
+              sentWithCard = false;
+              if (!product.imageUrl) throw cardErr; // nothing to fall back to
+              await sendWhatsAppImageMessage(from, product.imageUrl, product.name);
+            }
           } else {
             await sendWhatsAppImageMessage(from, product.imageUrl!, product.name);
           }
@@ -533,7 +543,7 @@ export async function POST(req: NextRequest) {
             data: {
               conversationId: conversation!.id,
               sender: "AI",
-              content: `[Sent photo${useCatalogCard ? " + Add to Cart" : ""}] ${product.name}`,
+              content: `[Sent photo${sentWithCard ? " + Add to Cart" : ""}] ${product.name}`,
               imageUrl: product.imageUrl,
             },
           });
@@ -689,9 +699,16 @@ export async function POST(req: NextRequest) {
     // stay honest about whether a photo is coming — see photoNote above).
     if ((matchedProduct?.imageUrl || matchedProduct?.retailerId) && matchedProduct.id !== toolSentPhotoForProductId) {
       try {
-        const useCatalogCard = !!(matchedProduct.retailerId && organization.metaCatalogId);
-        if (useCatalogCard) {
-          await sendWhatsAppProductMessage(from, organization.metaCatalogId!, matchedProduct.retailerId!, matchedProduct.name);
+        let sentWithCard = !!(matchedProduct.retailerId && organization.metaCatalogId);
+        if (sentWithCard) {
+          try {
+            await sendWhatsAppProductMessage(from, organization.metaCatalogId!, matchedProduct.retailerId!, matchedProduct.name);
+          } catch (cardErr) {
+            console.error("Catalog card send failed, falling back to plain image:", cardErr);
+            sentWithCard = false;
+            if (!matchedProduct.imageUrl) throw cardErr;
+            await sendWhatsAppImageMessage(from, matchedProduct.imageUrl, matchedProduct.name);
+          }
         } else {
           await sendWhatsAppImageMessage(from, matchedProduct.imageUrl!, matchedProduct.name);
         }
@@ -699,7 +716,7 @@ export async function POST(req: NextRequest) {
           data: {
             conversationId: conversation.id,
             sender: "AI",
-            content: `[Sent photo${useCatalogCard ? " + Add to Cart" : ""}] ${matchedProduct.name}`,
+            content: `[Sent photo${sentWithCard ? " + Add to Cart" : ""}] ${matchedProduct.name}`,
             imageUrl: matchedProduct.imageUrl,
           },
         });
