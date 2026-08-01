@@ -439,23 +439,37 @@ export async function POST(req: NextRequest) {
         .split(/[^a-z0-9ঀ-৿]+/i)
         .filter((w) => w.length >= 4 && !STOPWORDS.has(w));
     }
+    type ProductForMatch = { id: string; name: string; imageUrl: string | null; retailerId: string | null };
+    // Confident match = at least 2 shared words (rules out a single shared
+    // category word like "Baked" picking the wrong "Baked ___" item), OR a
+    // single shared word that's long/distinctive enough on its own (e.g.
+    // "Sorbhaja" — a one-word product name shouldn't need a second word to
+    // confirm it, since it isn't a generic category term to begin with).
+    function findBestProductMatch(words: string[], products: ProductForMatch[]): ProductForMatch | null {
+      let bestMatch: ProductForMatch | null = null;
+      let bestScore = 0;
+      let bestHasStrongWord = false;
+      for (const p of products) {
+        const nameWords = extractWords(p.name);
+        const matched = words.filter((w) => nameWords.includes(w));
+        const score = matched.length;
+        const hasStrongWord = matched.some((w) => w.length >= 6);
+        if (score > 0 && (score > bestScore || (score === bestScore && hasStrongWord && !bestHasStrongWord))) {
+          bestScore = score;
+          bestMatch = p;
+          bestHasStrongWord = hasStrongWord;
+        }
+      }
+      if (bestMatch && (bestScore >= 2 || bestHasStrongWord)) return bestMatch;
+      return null;
+    }
     const textWords = extractWords(text);
     if (textWords.length > 0) {
       const orgProducts = await prisma.product.findMany({
         where: { organizationId: organization.id },
         select: { id: true, name: true, imageUrl: true, retailerId: true },
       });
-      let bestMatch: (typeof orgProducts)[number] | null = null;
-      let bestScore = 0;
-      for (const p of orgProducts) {
-        const nameWords = extractWords(p.name);
-        const score = textWords.filter((w) => nameWords.includes(w)).length;
-        if (score > bestScore) {
-          bestScore = score;
-          bestMatch = p;
-        }
-      }
-      if (bestMatch) matchedProduct = bestMatch;
+      matchedProduct = findBestProductMatch(textWords, orgProducts);
     }
 
     if (!matchedProduct && results.length > 0 && results[0].distance <= PRODUCT_PHOTO_DISTANCE_THRESHOLD) {
@@ -750,6 +764,34 @@ export async function POST(req: NextRequest) {
       photoNote
     );
     await logAiUsage(organization.id, "webhook_reply", usage);
+
+    // If nothing was resolved to a specific product BEFORE the AI answered
+    // (no name match on the customer's own text, no tool call), check
+    // whether the AI's OWN answer names one confidently — e.g. it
+    // recommends "SORBHAJA" as the best-seller even though the customer's
+    // message just said "what's best?" with no product name in it. Without
+    // this, that reply sends no photo at all, AND conversation.lastProductId
+    // stays stuck on whatever product was last resolved several turns ago —
+    // so a following "pic" wrongly pulls up the STALE old product instead of
+    // the one the AI just actually talked about.
+    if (!matchedProduct && !toolSentPhotoForProductId) {
+      const answerWords = extractWords(answer);
+      if (answerWords.length > 0) {
+        const orgProducts = await prisma.product.findMany({
+          where: { organizationId: organization.id },
+          select: { id: true, name: true, imageUrl: true, retailerId: true },
+        });
+        const bestMatch = findBestProductMatch(answerWords, orgProducts);
+        if (bestMatch && (bestMatch.imageUrl || bestMatch.retailerId)) {
+          matchedProduct = bestMatch;
+          if (conversation.lastProductId !== matchedProduct.id) {
+            await prisma.conversation
+              .update({ where: { id: conversation.id }, data: { lastProductId: matchedProduct.id } })
+              .catch((err) => console.error("Failed to update conversation.lastProductId:", err));
+          }
+        }
+      }
+    }
 
     // Guaranteed brand-vocabulary swap (e.g. "পণ্য" → "মিষ্টি") — the system
     // prompt already asks the model to do this, but that's a hint, not a
