@@ -193,6 +193,7 @@ async function updateProduct(formData: FormData) {
   const price = (formData.get("price") as string)?.trim();
   const description = (formData.get("description") as string)?.trim();
   const retailerId = (formData.get("retailerId") as string)?.trim();
+  const featured = formData.get("featured") === "on";
   if (!productId || !name) return;
 
   const product = await prisma.product.findFirst({
@@ -202,7 +203,7 @@ async function updateProduct(formData: FormData) {
 
   await prisma.product.update({
     where: { id: productId },
-    data: { name, price: price || null, description: description || null, retailerId: retailerId || null },
+    data: { name, price: price || null, description: description || null, retailerId: retailerId || null, featured },
   });
 
   await reembedProduct(user.organizationId, product.documentId, name, price || "", description || "");
@@ -351,6 +352,11 @@ export default async function ProductsPage() {
               </div>
               <p className="line-clamp-2 text-xs text-gray-500">{p.description || "No description"}</p>
               {p.retailerId && <p className="text-[10px] text-gray-400">Catalog ID: {p.retailerId}</p>}
+              {p.featured && (
+                <span className="w-fit rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                  ★ Featured
+                </span>
+              )}
               <p className="mt-auto pt-1 text-[11px] text-gray-400">Added {formatDate(p.createdAt)}</p>
 
               <form action={uploadProductPhoto} className="mt-2 flex items-center gap-1.5">
@@ -376,6 +382,10 @@ export default async function ProductsPage() {
                     placeholder="Meta Catalog Content ID (e.g. k4c1walsjc)"
                     className="rounded border border-gray-300 px-2 py-1 text-xs"
                   />
+                  <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                    <input type="checkbox" name="featured" defaultChecked={p.featured} className="h-3.5 w-3.5" />
+                    ★ Featured (shown when a customer asks about products generally)
+                  </label>
                   <button type="submit" className="mt-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-light">
                     Save Changes
                   </button>
