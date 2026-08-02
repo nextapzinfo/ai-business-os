@@ -173,6 +173,7 @@ export type MetaCatalogProduct = {
   name: string;
   description: string | null;
   price: string | null; // Meta returns e.g. "250.00 INR" — caller decides how to reformat
+  salePrice: string | null; // discounted price, if the owner set one in Commerce Manager — this is what customers should actually be quoted when present
   imageUrl: string | null;
   availability: string | null; // "in stock" / "out of stock" etc
 };
@@ -191,7 +192,7 @@ export async function fetchMetaCatalogProducts(catalogId: string): Promise<MetaC
 
   const results: MetaCatalogProduct[] = [];
   let url: string | null =
-    `${WHATSAPP_API_BASE}/${catalogId}/products?fields=id,retailer_id,name,description,price,image_url,availability&limit=100`;
+    `${WHATSAPP_API_BASE}/${catalogId}/products?fields=id,retailer_id,name,description,price,sale_price,image_url,availability&limit=100`;
 
   let pages = 0;
   while (url && pages < 10) {
@@ -209,6 +210,7 @@ export async function fetchMetaCatalogProducts(catalogId: string): Promise<MetaC
         name: item.name ?? "Unnamed product",
         description: item.description ?? null,
         price: item.price ?? null,
+        salePrice: item.sale_price ?? null,
         imageUrl: item.image_url ?? null,
         availability: item.availability ?? null,
       });
