@@ -591,6 +591,75 @@ export async function POST(req: NextRequest) {
     // image for the same product.
     let toolSentPhotoForProductId: string | null = null;
 
+    // Sends a product to the customer — either a single Interactive Product
+    // card (with plain-image fallback if the card fails), or, when this
+    // product belongs to a multi-item variant group (owner-tagged in
+    // Products → "Variant group", e.g. all 3 Ghee pack sizes sharing the
+    // label "Ghee"), a swipeable carousel of every sibling so the customer
+    // can pick which size to add to cart instead of guessing from one card.
+    type SendableProduct = { id: string; name: string; imageUrl: string | null; retailerId: string | null };
+    async function sendProductCardOrVariants(
+      to: string,
+      product: SendableProduct,
+      organizationId: string,
+      metaCatalogId: string | null
+    ): Promise<{ sentWithCard: boolean; sentAsCarousel: boolean; sentNames: string[] }> {
+      const full = await prisma.product.findUnique({ where: { id: product.id }, select: { variantGroup: true } });
+      if (full?.variantGroup) {
+        const siblings = await prisma.product.findMany({
+          where: { organizationId, variantGroup: full.variantGroup },
+          select: { id: true, name: true, imageUrl: true, retailerId: true },
+        });
+        if (siblings.length > 1) {
+          const withRetailer = siblings.filter((p) => p.retailerId);
+          if (withRetailer.length === siblings.length && metaCatalogId) {
+            try {
+              await sendWhatsAppProductListMessage(
+                to,
+                metaCatalogId,
+                full.variantGroup,
+                withRetailer.map((p) => p.retailerId!),
+                full.variantGroup,
+                `Here are all the ${full.variantGroup} options — tap the one you'd like to add to cart.`
+              );
+              return { sentWithCard: true, sentAsCarousel: true, sentNames: withRetailer.map((p) => p.name) };
+            } catch (err) {
+              console.error("Variant carousel send failed, falling back to single card:", err);
+              // fall through to single-card logic below for just this one product
+            }
+          } else {
+            // Not every sibling has a Content ID yet — send plain photos for
+            // each so the customer still sees all sizes instead of just one.
+            const sentNames: string[] = [];
+            for (const p of siblings) {
+              if (!p.imageUrl) continue;
+              await sendWhatsAppImageMessage(to, p.imageUrl, p.name);
+              sentNames.push(p.name);
+            }
+            if (sentNames.length > 0) {
+              return { sentWithCard: false, sentAsCarousel: true, sentNames };
+            }
+          }
+        }
+      }
+
+      // Single product — original behavior.
+      let sentWithCard = !!(product.retailerId && metaCatalogId);
+      if (sentWithCard) {
+        try {
+          await sendWhatsAppProductMessage(to, metaCatalogId!, product.retailerId!, product.name);
+        } catch (cardErr) {
+          console.error("Catalog card send failed, falling back to plain image:", cardErr);
+          sentWithCard = false;
+          if (!product.imageUrl) throw cardErr;
+          await sendWhatsAppImageMessage(to, product.imageUrl, product.name);
+        }
+      } else {
+        await sendWhatsAppImageMessage(to, product.imageUrl!, product.name);
+      }
+      return { sentWithCard, sentAsCarousel: false, sentNames: [product.name] };
+    }
+
     async function executeTool(name: string, args: Record<string, any>): Promise<string> {
       if (name === "send_product_photo") {
         const productName = (args.productName as string)?.trim();
@@ -625,27 +694,19 @@ export async function POST(req: NextRequest) {
         }
 
         try {
-          let sentWithCard = !!(product.retailerId && organization!.metaCatalogId);
-          if (sentWithCard) {
-            try {
-              await sendWhatsAppProductMessage(from, organization!.metaCatalogId!, product.retailerId!, product.name);
-            } catch (cardErr) {
-              // Meta rejected the catalog card (e.g. a catalog-side eligibility
-              // issue, often with variant items) — fall back to a plain photo
-              // so the customer still gets something instead of nothing.
-              console.error("Catalog card send failed, falling back to plain image:", cardErr);
-              sentWithCard = false;
-              if (!product.imageUrl) throw cardErr; // nothing to fall back to
-              await sendWhatsAppImageMessage(from, product.imageUrl, product.name);
-            }
-          } else {
-            await sendWhatsAppImageMessage(from, product.imageUrl!, product.name);
-          }
+          const { sentWithCard, sentAsCarousel, sentNames } = await sendProductCardOrVariants(
+            from,
+            product,
+            organization!.id,
+            organization!.metaCatalogId
+          );
           await prisma.message.create({
             data: {
               conversationId: conversation!.id,
               sender: "AI",
-              content: `[Sent photo${sentWithCard ? " + Add to Cart" : ""}] ${product.name}`,
+              content: sentAsCarousel
+                ? `[Sent variant carousel] ${sentNames.join(", ")}`
+                : `[Sent photo${sentWithCard ? " + Add to Cart" : ""}] ${product.name}`,
               imageUrl: product.imageUrl,
             },
           });
@@ -659,7 +720,9 @@ export async function POST(req: NextRequest) {
             action: "PRODUCT_PHOTO_SENT_BY_AI",
             metadata: { clientId: client!.id, productId: product.id },
           });
-          return `Sent a photo of "${product.name}". Just acknowledge briefly in your reply — don't re-describe the product in detail again.`;
+          return sentAsCarousel
+            ? `Sent a carousel showing all the size/variant options for "${product.name}" (${sentNames.join(", ")}) so the customer can pick which one to add to cart. Just acknowledge briefly — don't re-describe each one in detail.`
+            : `Sent a photo of "${product.name}". Just acknowledge briefly in your reply — don't re-describe the product in detail again.`;
         } catch (err) {
           console.error("send_product_photo tool failed:", err);
           return `Failed to send the photo due to a technical issue — apologize briefly and say you'll send it shortly instead.`;
@@ -838,24 +901,19 @@ export async function POST(req: NextRequest) {
     // wrong/extra one.
     if ((matchedProduct?.imageUrl || matchedProduct?.retailerId) && !toolSentPhotoForProductId) {
       try {
-        let sentWithCard = !!(matchedProduct.retailerId && organization.metaCatalogId);
-        if (sentWithCard) {
-          try {
-            await sendWhatsAppProductMessage(from, organization.metaCatalogId!, matchedProduct.retailerId!, matchedProduct.name);
-          } catch (cardErr) {
-            console.error("Catalog card send failed, falling back to plain image:", cardErr);
-            sentWithCard = false;
-            if (!matchedProduct.imageUrl) throw cardErr;
-            await sendWhatsAppImageMessage(from, matchedProduct.imageUrl, matchedProduct.name);
-          }
-        } else {
-          await sendWhatsAppImageMessage(from, matchedProduct.imageUrl!, matchedProduct.name);
-        }
+        const { sentWithCard, sentAsCarousel, sentNames } = await sendProductCardOrVariants(
+          from,
+          matchedProduct,
+          organization.id,
+          organization.metaCatalogId
+        );
         await prisma.message.create({
           data: {
             conversationId: conversation.id,
             sender: "AI",
-            content: `[Sent photo${sentWithCard ? " + Add to Cart" : ""}] ${matchedProduct.name}`,
+            content: sentAsCarousel
+              ? `[Sent variant carousel] ${sentNames.join(", ")}`
+              : `[Sent photo${sentWithCard ? " + Add to Cart" : ""}] ${matchedProduct.name}`,
             imageUrl: matchedProduct.imageUrl,
           },
         });
