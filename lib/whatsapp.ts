@@ -195,8 +195,8 @@ export async function fetchMetaCatalogProducts(catalogId: string): Promise<MetaC
 
   let pages = 0;
   while (url && pages < 10) {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-    const data = await res.json();
+    const res: Response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const data: any = await res.json();
     if (!res.ok) {
       throw new Error(`Meta catalog fetch failed: ${res.status} ${JSON.stringify(data)}`);
     }
