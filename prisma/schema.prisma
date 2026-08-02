@@ -308,6 +308,7 @@ model Product {
   imageUrl       String?
   retailerId     String? // Meta Commerce Manager "Content ID" for this product — links it to the WhatsApp Catalog entry so it can be sent as a native Interactive Product Message (see Catalog/Cart build plan). Not the same as our internal Product.id.
   featured       Boolean      @default(false) // shown in the auto-sent product carousel when a customer asks about products generally (not a specific one) — mark your 3-5 bestsellers
+  variantGroup   String? // owner-set label (e.g. "Ghee") grouping pack-size variants of the same item — when a customer asks about a product that has siblings sharing this label, all of them are sent as a carousel instead of one card, so the customer can pick which size to add to cart
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
