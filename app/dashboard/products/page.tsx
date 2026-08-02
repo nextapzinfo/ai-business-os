@@ -114,7 +114,10 @@ async function syncFromMetaCatalog() {
   for (const cp of catalogProducts) {
     // Meta returns price like "250.00 INR" — strip the trailing currency
     // code so it reads the same as everything else on this page ("250.00").
-    const priceText = cp.price ? cp.price.replace(/\s*[A-Z]{3}$/, "").trim() : null;
+    // If the owner set a discounted "sale price" in Commerce Manager, that's
+    // the real price customers should be quoted — prefer it over the base price.
+    const rawPrice = cp.salePrice || cp.price;
+    const priceText = rawPrice ? rawPrice.replace(/\s*[A-Z]{3}$/, "").trim() : null;
     const description = cp.description || null;
 
     const existing = await prisma.product.findFirst({
