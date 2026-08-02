@@ -7,6 +7,7 @@ import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import { revalidatePath } from "next/cache";
 import { put, del } from "@vercel/blob";
 import { formatDate } from "@/lib/formatDate";
+import { fetchMetaCatalogProducts } from "@/lib/whatsapp";
 import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
 
 // Vercel: importing many product rows (chunk + embed each) can take a while.
@@ -71,6 +72,97 @@ async function updateCheckoutSettings(formData: FormData) {
     userId: user.id,
     action: "CHECKOUT_SETTINGS_UPDATED",
     metadata: { metaCatalogId, shippingCharge },
+  });
+
+  revalidatePath("/dashboard/products");
+}
+
+// Pulls every product from the connected Meta catalog and syncs it into our
+// own Products table — creates a new Product (with its own Document/RAG
+// chunks, so the AI can immediately answer questions about it) for any
+// catalog item not already linked, and refreshes name/price/description/
+// photo for ones already linked by Content ID. This is what replaces having
+// to type each product in twice (once in Commerce Manager, once here).
+async function syncFromMetaCatalog() {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const org = await prisma.organization.findUnique({
+    where: { id: user.organizationId },
+    select: { metaCatalogId: true },
+  });
+  if (!org?.metaCatalogId) return;
+
+  let catalogProducts: Awaited<ReturnType<typeof fetchMetaCatalogProducts>>;
+  try {
+    catalogProducts = await fetchMetaCatalogProducts(org.metaCatalogId);
+  } catch (err) {
+    console.error("Meta catalog sync failed:", err);
+    await logAudit({
+      organizationId: user.organizationId,
+      userId: user.id,
+      action: "META_CATALOG_SYNC_FAILED",
+      metadata: { error: (err as Error).message },
+    });
+    revalidatePath("/dashboard/products");
+    return;
+  }
+
+  let created = 0;
+  let updated = 0;
+  for (const cp of catalogProducts) {
+    // Meta returns price like "250.00 INR" — strip the trailing currency
+    // code so it reads the same as everything else on this page ("250.00").
+    const priceText = cp.price ? cp.price.replace(/\s*[A-Z]{3}$/, "").trim() : null;
+    const description = cp.description || null;
+
+    const existing = await prisma.product.findFirst({
+      where: { organizationId: user.organizationId, retailerId: cp.retailerId },
+    });
+
+    if (existing) {
+      await prisma.product.update({
+        where: { id: existing.id },
+        data: {
+          name: cp.name,
+          price: priceText,
+          description,
+          imageUrl: cp.imageUrl || existing.imageUrl,
+        },
+      });
+      await reembedProduct(user.organizationId, existing.documentId, cp.name, priceText || "", description || "");
+      updated++;
+    } else {
+      const document = await prisma.document.create({
+        data: {
+          organizationId: user.organizationId,
+          title: cp.name,
+          fileUrl: "meta-catalog-sync",
+          status: "PENDING",
+        },
+      });
+      await reembedProduct(user.organizationId, document.id, cp.name, priceText || "", description || "");
+      await prisma.product.create({
+        data: {
+          organizationId: user.organizationId,
+          documentId: document.id,
+          name: cp.name,
+          price: priceText,
+          description,
+          imageUrl: cp.imageUrl,
+          retailerId: cp.retailerId,
+        },
+      });
+      created++;
+    }
+  }
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "META_CATALOG_SYNCED",
+    metadata: { created, updated, total: catalogProducts.length },
   });
 
   revalidatePath("/dashboard/products");
@@ -307,6 +399,21 @@ export default async function ProductsPage() {
             Save Settings
           </button>
         </form>
+
+        {org?.metaCatalogId && (
+          <form action={syncFromMetaCatalog} className="mt-3 border-t border-gray-100 pt-3">
+            <p className="text-xs text-gray-500">
+              Pull every product from your Meta catalog straight into the list below — no need to type each one
+              in twice. Existing products already linked by Content ID get refreshed; new ones get added.
+            </p>
+            <button
+              type="submit"
+              className="mt-2 rounded-lg border border-primary px-4 py-2 text-sm font-medium text-primary hover:bg-primary-light/20"
+            >
+              Sync from Meta Catalog
+            </button>
+          </form>
+        )}
       </div>
 
       <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
