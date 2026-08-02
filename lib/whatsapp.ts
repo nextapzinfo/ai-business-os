@@ -167,6 +167,60 @@ export async function sendWhatsAppProductListMessage(
   }
 }
 
+export type MetaCatalogProduct = {
+  id: string; // Meta's internal catalog item id
+  retailerId: string; // the Content ID — what our Product.retailerId stores, links the two systems
+  name: string;
+  description: string | null;
+  price: string | null; // Meta returns e.g. "250.00 INR" — caller decides how to reformat
+  imageUrl: string | null;
+  availability: string | null; // "in stock" / "out of stock" etc
+};
+
+// Pulls every product from a connected Meta Commerce Manager catalog, so the
+// dashboard can sync them into our own Products table instead of requiring
+// everything to be typed in twice (once in Commerce Manager, once here).
+// Skips any catalog item with no Content ID set — nothing to link it to on
+// our side. Paginates automatically; capped at 10 pages (1000 items) as a
+// safety limit, well above Meta's own 500-product-per-catalog cap.
+export async function fetchMetaCatalogProducts(catalogId: string): Promise<MetaCatalogProduct[]> {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!accessToken) {
+    throw new Error("WHATSAPP_ACCESS_TOKEN is not set");
+  }
+
+  const results: MetaCatalogProduct[] = [];
+  let url: string | null =
+    `${WHATSAPP_API_BASE}/${catalogId}/products?fields=id,retailer_id,name,description,price,image_url,availability&limit=100`;
+
+  let pages = 0;
+  while (url && pages < 10) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(`Meta catalog fetch failed: ${res.status} ${JSON.stringify(data)}`);
+    }
+
+    for (const item of data.data ?? []) {
+      if (!item.retailer_id) continue;
+      results.push({
+        id: item.id,
+        retailerId: item.retailer_id,
+        name: item.name ?? "Unnamed product",
+        description: item.description ?? null,
+        price: item.price ?? null,
+        imageUrl: item.image_url ?? null,
+        availability: item.availability ?? null,
+      });
+    }
+
+    url = data.paging?.next ?? null;
+    pages++;
+  }
+
+  return results;
+}
+
 // Downloads an incoming media attachment (e.g. a customer's payment screenshot)
 // by its WhatsApp media id. Two-step Graph API dance: first resolve the id to
 // a short-lived download URL, then fetch that URL — both calls need the same
