@@ -289,6 +289,7 @@ async function updateProduct(formData: FormData) {
   const description = (formData.get("description") as string)?.trim();
   const retailerId = (formData.get("retailerId") as string)?.trim();
   const featured = formData.get("featured") === "on";
+  const variantGroup = (formData.get("variantGroup") as string)?.trim();
   if (!productId || !name) return;
 
   const product = await prisma.product.findFirst({
@@ -298,7 +299,14 @@ async function updateProduct(formData: FormData) {
 
   await prisma.product.update({
     where: { id: productId },
-    data: { name, price: price || null, description: description || null, retailerId: retailerId || null, featured },
+    data: {
+      name,
+      price: price || null,
+      description: description || null,
+      retailerId: retailerId || null,
+      featured,
+      variantGroup: variantGroup || null,
+    },
   });
 
   await reembedProduct(user.organizationId, product.documentId, name, price || "", description || "");
@@ -467,6 +475,11 @@ export default async function ProductsPage() {
                   ★ Featured
                 </span>
               )}
+              {p.variantGroup && (
+                <span className="w-fit rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                  Variant group: {p.variantGroup}
+                </span>
+              )}
               <p className="mt-auto pt-1 text-[11px] text-gray-400">Added {formatDate(p.createdAt)}</p>
 
               <form action={uploadProductPhoto} className="mt-2 flex items-center gap-1.5">
@@ -490,6 +503,12 @@ export default async function ProductsPage() {
                     name="retailerId"
                     defaultValue={p.retailerId ?? ""}
                     placeholder="Meta Catalog Content ID (e.g. k4c1walsjc)"
+                    className="rounded border border-gray-300 px-2 py-1 text-xs"
+                  />
+                  <input
+                    name="variantGroup"
+                    defaultValue={p.variantGroup ?? ""}
+                    placeholder="Variant group (e.g. Ghee — same label on all pack sizes)"
                     className="rounded border border-gray-300 px-2 py-1 text-xs"
                   />
                   <label className="flex items-center gap-1.5 text-xs text-gray-600">
