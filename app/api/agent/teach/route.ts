@@ -14,10 +14,13 @@ import { logAiUsage } from "@/lib/billing";
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   const user = session?.user as { organizationId?: string; id?: string } | undefined;
-  const organizationId = user?.organizationId;
-  if (!organizationId) {
+  const organizationIdMaybe = user?.organizationId;
+  if (!organizationIdMaybe) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  // Re-bound to a definitely-string const — TypeScript's narrowing from the
+  // guard above doesn't carry into the nested executeTool closure otherwise.
+  const organizationId: string = organizationIdMaybe;
 
   const body = await req.json();
   const message = (body.message as string)?.trim();
