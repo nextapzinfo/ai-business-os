@@ -547,7 +547,8 @@ export async function POST(req: NextRequest) {
       featuredCarousel = await prisma.product.findMany({
         where: { organizationId: organization.id, featured: true },
         select: { id: true, name: true, retailerId: true, imageUrl: true },
-        take: 3,
+        orderBy: [{ featuredOrder: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
+        take: 10,
       });
     }
 
@@ -557,7 +558,14 @@ export async function POST(req: NextRequest) {
     } else if (matchedEvent?.imageUrl) {
       photoNote = `A photo for "${matchedEvent.title}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally.`;
     } else if (featuredCarousel.length > 0) {
-      photoNote = `A carousel of a few of our featured products (with photos) will be sent automatically right after this text reply — you do NOT need to list product photos yourself; just answer naturally and briefly mention you're sharing a few options.`;
+      // The carousel sent right after this text is HARD-CODED to exactly this
+      // list, in exactly this order (see featuredCarousel query above, sorted
+      // by the owner's featuredOrder). The text reply must name these same
+      // products in this same order — otherwise the customer sees a written
+      // list that doesn't match the photos underneath it, which reads as
+      // broken/confusing. Never substitute, add, or reorder products here.
+      const orderedNames = featuredCarousel.map((p, i) => `${i + 1}. ${p.name}`).join("\n");
+      photoNote = `A carousel of these exact products (with photos), in this exact order, will be sent automatically right after this text reply:\n${orderedNames}\n\nYour text reply must list these SAME products in this SAME order (a short numbered or bulleted list is fine) — do not substitute different products, add extra ones, or change the order. You do not need to describe each in detail; the carousel below your text will show photos and prices.`;
     } else {
       photoNote = `No product/event photo is precomputed for this specific reply. If the customer is asking to see a photo of a specific product — including a product only mentioned earlier in this conversation, not necessarily repeated just now — use the send_product_photo tool with that product's exact name. You DO have this capability; never say you're generally unable to share images or photo links. Only if the tool itself reports no photo is saved should you honestly say you don't have one on hand right now.`;
     }
