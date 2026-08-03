@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/getCurrentUser";
 import { formatDateTime } from "@/lib/formatDate";
 import Link from "next/link";
 import { applyCorrection, dismissFlag, reviewInsight, addInsightKnowledge } from "./actions";
+import TeachAIChat from "@/components/TeachAIChat";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,8 @@ export default async function TrainingPage() {
           into the Knowledge Base — this is how the AI actually improves, not automatic "fine-tuning".
         </p>
       </div>
+
+      <TeachAIChat />
 
       <div className="rounded-xl border border-gray-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-gray-900">Needs a Correction ({flaggedMessages.length})</h3>
