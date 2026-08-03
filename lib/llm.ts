@@ -199,6 +199,11 @@ Language quality matters a lot here — a wrong or made-up word, or an awkward/u
 
 Write like a real, attentive member of the team — natural and warm, never stiff or robotic, and don't narrate that you're following instructions. If a customer directly and sincerely asks whether they're chatting with a bot/AI or a human, answer honestly — don't deny it or lie about it.
 
+Formatting rules — this is WhatsApp, not a document. WhatsApp does NOT render Markdown headers or list syntax — if you write "###" or "##" it shows up as literal hash symbols, and a leading "- " shows up as a literal dash. NEVER use "#", "##", "###", or a leading "-" or "*" for list items. For emphasis use single asterisks like *this* (WhatsApp renders that as bold) — never double asterisks. When listing multiple products or items, put each one on its own line and use the bullet character "•" (not a hyphen) if you need a marker, e.g.:
+*SORBHAJA* — 5 pcs — ₹250
+*Laal Kheer Doi* — 500 gm — ₹300
+Keep it looking like a real WhatsApp message a person would type, not a formatted report.
+
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
 Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions.${toolsNote}${customInstructionsNote}${brandLanguageNote}${photoInstructionNote}
@@ -409,6 +414,125 @@ export const SEND_PRODUCT_PHOTO_TOOL: ToolDefinition = {
     },
   },
 };
+
+// ---- Teach AI chat (Agent Studio / Training page) ----
+// Lets the business owner update the AI's knowledge conversationally instead
+// of filling out forms — "Sorbhaja er dam ekhon 260" should just work, the
+// same way chatting with Meta's own built-in Business Agent does. See
+// app/api/agent/teach/route.ts for how these are wired to real DB writes.
+export const UPDATE_PRODUCT_INFO_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "update_product_info",
+    description:
+      "Update an EXISTING product's price and/or description when the owner tells you new or corrected information about it. Only use this when you're confident which product they mean — match by name as closely as possible. If it's unclear which product they're referring to, or if this sounds like a brand-new fact rather than a correction to a specific product, do NOT call this — ask a clarifying question in your reply instead, or use add_knowledge_note.",
+    parameters: {
+      type: "object",
+      properties: {
+        productName: {
+          type: "string",
+          description: "The product's name, as close as possible to how the owner referred to it.",
+        },
+        newPrice: {
+          type: "string",
+          description: "The corrected price, only if the owner mentioned a price change.",
+        },
+        newDescription: {
+          type: "string",
+          description: "The corrected/updated description, only if the owner mentioned a description change.",
+        },
+      },
+      required: ["productName"],
+    },
+  },
+};
+
+export const ADD_KNOWLEDGE_NOTE_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "add_knowledge_note",
+    description:
+      "Save a new fact, policy, or piece of information the owner just told you, when it is NOT a correction to a specific existing product's price/description. This becomes permanent knowledge the AI uses when answering customers — e.g. store hours, delivery policy, a new offer, or an answer to a common question.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "A short label for this fact, e.g. 'Weekend closure' or 'COD policy'.",
+        },
+        content: {
+          type: "string",
+          description: "The fact/policy itself, written out in full — this is what the AI will read later.",
+        },
+      },
+      required: ["title", "content"],
+    },
+  },
+};
+
+// Distinct from askAIWithTools's buildSystemPrompt: that one frames the model
+// as a customer-facing WhatsApp assistant, which is the wrong persona for this
+// internal owner-only chat. This system prompt is intentionally small and
+// direct — the owner is teaching, not being sold to.
+export async function askTeachAI(
+  message: string,
+  history: ChatHistoryMessage[],
+  tools: ToolDefinition[],
+  executeTool: ToolExecutor
+): Promise<AiCallResult> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+
+  const systemPrompt = `You are helping a small business owner update their WhatsApp AI assistant's knowledge, by chatting naturally with them in whatever mix of Bengali/English they use — reply in kind. They will tell you things like a price change, a new policy, or a general fact to remember.
+
+When they correct an existing product (price or description), use update_product_info. When they tell you a new fact/policy that isn't about one specific existing product, use add_knowledge_note. If you're not confident what they mean, ask a short clarifying question instead of guessing or calling a tool.
+
+After a tool call succeeds, confirm briefly and plainly what you saved/updated — don't repeat the full content back at length, just enough for the owner to trust it was understood correctly. Keep replies short — this is a quick back-and-forth, not a report.`;
+
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemPrompt },
+    ...history,
+    { role: "user", content: message },
+  ];
+
+  const first = await callChat(apiKey, messages, tools);
+  let promptTokens = first.usage.promptTokens;
+  let completionTokens = first.usage.completionTokens;
+
+  const toolCalls = first.message.tool_calls as
+    | { id: string; function: { name: string; arguments: string } }[]
+    | undefined;
+
+  if (!toolCalls || toolCalls.length === 0) {
+    return { answer: (first.message.content as string) ?? "", usage: { promptTokens, completionTokens } };
+  }
+
+  messages.push(first.message);
+
+  for (const call of toolCalls) {
+    let args: Record<string, any> = {};
+    try {
+      args = JSON.parse(call.function.arguments || "{}");
+    } catch {
+      // malformed JSON from the model — leave args empty, executeTool can reject it
+    }
+
+    let resultText: string;
+    try {
+      resultText = await executeTool(call.function.name, args);
+    } catch (err) {
+      resultText = `Failed: ${(err as Error).message}`;
+    }
+
+    messages.push({ role: "tool", tool_call_id: call.id, content: resultText });
+  }
+
+  const second = await callChat(apiKey, messages, []);
+  promptTokens += second.usage.promptTokens;
+  completionTokens += second.usage.completionTokens;
+
+  return { answer: (second.message.content as string) ?? "", usage: { promptTokens, completionTokens } };
+}
 
 export type ToolExecutor = (name: string, args: Record<string, any>) => Promise<string>;
 
