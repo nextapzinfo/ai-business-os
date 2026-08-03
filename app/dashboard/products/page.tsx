@@ -289,6 +289,8 @@ async function updateProduct(formData: FormData) {
   const description = (formData.get("description") as string)?.trim();
   const retailerId = (formData.get("retailerId") as string)?.trim();
   const featured = formData.get("featured") === "on";
+  const featuredOrderRaw = (formData.get("featuredOrder") as string)?.trim();
+  const featuredOrder = featuredOrderRaw ? parseInt(featuredOrderRaw, 10) : null;
   const variantGroup = (formData.get("variantGroup") as string)?.trim();
   if (!productId || !name) return;
 
@@ -305,6 +307,7 @@ async function updateProduct(formData: FormData) {
       description: description || null,
       retailerId: retailerId || null,
       featured,
+      featuredOrder: featuredOrder !== null && !Number.isNaN(featuredOrder) ? featuredOrder : null,
       variantGroup: variantGroup || null,
     },
   });
@@ -472,7 +475,7 @@ export default async function ProductsPage() {
               {p.retailerId && <p className="text-[10px] text-gray-400">Catalog ID: {p.retailerId}</p>}
               {p.featured && (
                 <span className="w-fit rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-                  ★ Featured
+                  ★ Featured{p.featuredOrder != null ? ` #${p.featuredOrder}` : ""}
                 </span>
               )}
               {p.variantGroup && (
@@ -515,6 +518,13 @@ export default async function ProductsPage() {
                     <input type="checkbox" name="featured" defaultChecked={p.featured} className="h-3.5 w-3.5" />
                     ★ Featured (shown when a customer asks about products generally)
                   </label>
+                  <input
+                    name="featuredOrder"
+                    type="number"
+                    defaultValue={p.featuredOrder ?? ""}
+                    placeholder="Featured order (1 = shown first)"
+                    className="rounded border border-gray-300 px-2 py-1 text-xs"
+                  />
                   <button type="submit" className="mt-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-light">
                     Save Changes
                   </button>
