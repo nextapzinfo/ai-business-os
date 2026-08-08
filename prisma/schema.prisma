@@ -120,8 +120,10 @@ model Client {
   phone          String
   email          String?
   address        String? // saved by staff, or by the AI via function-calling when a customer shares it on WhatsApp
+  pinCode        String? // PIN / postal code, entered by staff on the Add Client form
   notes          String?
-  dateOfBirth    DateTime?
+  dateOfBirth    DateTime? // kept in the schema for existing data; no longer collected via the Clients UI
+  interestedIn   String? // free-text note from staff at signup time — separate from the AI-tracked productInterests relation below
   tags           String[]     @default([])
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
