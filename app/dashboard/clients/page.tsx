@@ -79,12 +79,11 @@ async function addClient(formData: FormData) {
   const phone = formData.get("phone") as string;
   const email = (formData.get("email") as string) || undefined;
   const address = (formData.get("address") as string)?.trim() || undefined;
-  const dobRaw = (formData.get("dateOfBirth") as string) || "";
+  const pinCode = (formData.get("pinCode") as string)?.trim() || undefined;
+  const interestedIn = (formData.get("interestedIn") as string)?.trim() || undefined;
   const tagsRaw = (formData.get("tags") as string) || "";
 
   if (!name || !phone) return;
-
-  const dob = dobRaw ? new Date(dobRaw) : undefined;
 
   const client = await prisma.client.create({
     data: {
@@ -93,7 +92,8 @@ async function addClient(formData: FormData) {
       phone,
       email,
       address,
-      dateOfBirth: dob && !isNaN(dob.getTime()) ? dob : undefined,
+      pinCode,
+      interestedIn,
       tags: parseTags(tagsRaw),
     },
   });
@@ -118,7 +118,8 @@ async function updateClient(formData: FormData) {
   const phone = (formData.get("phone") as string)?.trim();
   const email = (formData.get("email") as string)?.trim();
   const address = (formData.get("address") as string)?.trim();
-  const dobRaw = (formData.get("dateOfBirth") as string) || "";
+  const pinCode = (formData.get("pinCode") as string)?.trim();
+  const interestedIn = (formData.get("interestedIn") as string)?.trim();
   const tagsRaw = (formData.get("tags") as string) || "";
   if (!clientId || !name || !phone) return;
 
@@ -127,8 +128,6 @@ async function updateClient(formData: FormData) {
   });
   if (!existing) return;
 
-  const dob = dobRaw ? new Date(dobRaw) : undefined;
-
   await prisma.client.update({
     where: { id: clientId },
     data: {
@@ -136,7 +135,8 @@ async function updateClient(formData: FormData) {
       phone,
       email: email || null,
       address: address || null,
-      dateOfBirth: dob && !isNaN(dob.getTime()) ? dob : null,
+      pinCode: pinCode || null,
+      interestedIn: interestedIn || null,
       tags: parseTags(tagsRaw),
     },
   });
@@ -253,7 +253,8 @@ export default async function ClientsPage({
           <input name="phone" placeholder="Phone (with country code)" required className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
           <input name="email" placeholder="Email (optional)" className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
           <input name="address" placeholder="Address (optional)" className="flex-1 basis-48 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-          <input name="dateOfBirth" type="date" title="Date of birth (optional)" className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600" />
+          <input name="pinCode" placeholder="Pin Code (optional)" className="flex-1 basis-28 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+          <input name="interestedIn" placeholder="Interested In (optional)" className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
           <input name="tags" placeholder="Tags, comma separated (optional)" className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
           <button type="submit" className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
             Add Client
@@ -293,7 +294,7 @@ export default async function ClientsPage({
               <th className="px-4 py-3 font-medium">Name</th>
               <th className="px-4 py-3 font-medium">Phone</th>
               <th className="px-4 py-3 font-medium">Address</th>
-              <th className="px-4 py-3 font-medium">Date of Birth</th>
+              <th className="px-4 py-3 font-medium">Pin Code</th>
               <th className="px-4 py-3 font-medium">Tags</th>
               <th className="px-4 py-3 font-medium">Interested In</th>
               <th className="px-4 py-3 font-medium">Added</th>
@@ -315,7 +316,7 @@ export default async function ClientsPage({
                 <td className="max-w-[180px] truncate px-4 py-3 text-gray-600" title={c.address ?? ""}>
                   {c.address || "—"}
                 </td>
-                <td className="px-4 py-3 text-gray-600">{c.dateOfBirth ? formatDate(c.dateOfBirth) : "—"}</td>
+                <td className="px-4 py-3 text-gray-600">{c.pinCode || "—"}</td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-1">
                     {c.tags.length > 0
@@ -329,17 +330,24 @@ export default async function ClientsPage({
                 </td>
                 <td className="max-w-[200px] px-4 py-3">
                   <div className="flex flex-wrap gap-1">
-                    {c.productInterests.length > 0
-                      ? c.productInterests.map((pi) => (
-                          <span
-                            key={pi.id}
-                            title={pi.note ?? ""}
-                            className="rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-700"
-                          >
-                            {pi.product.name}
-                          </span>
-                        ))
-                      : <span className="text-gray-400">—</span>}
+                    {c.interestedIn && (
+                      <span
+                        title="Entered manually when the client was added"
+                        className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700"
+                      >
+                        {c.interestedIn}
+                      </span>
+                    )}
+                    {c.productInterests.map((pi) => (
+                      <span
+                        key={pi.id}
+                        title={pi.note ?? ""}
+                        className="rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-700"
+                      >
+                        {pi.product.name}
+                      </span>
+                    ))}
+                    {!c.interestedIn && c.productInterests.length === 0 && <span className="text-gray-400">—</span>}
                   </div>
                 </td>
                 <td className="px-4 py-3 text-gray-500">{formatDate(c.createdAt)}</td>
@@ -358,12 +366,8 @@ export default async function ClientsPage({
                         <input name="phone" defaultValue={c.phone} required placeholder="Phone" className="rounded border border-gray-300 px-2 py-1 text-xs" />
                         <input name="email" defaultValue={c.email ?? ""} placeholder="Email" className="rounded border border-gray-300 px-2 py-1 text-xs" />
                         <input name="address" defaultValue={c.address ?? ""} placeholder="Address" className="rounded border border-gray-300 px-2 py-1 text-xs" />
-                        <input
-                          name="dateOfBirth"
-                          type="date"
-                          defaultValue={c.dateOfBirth ? c.dateOfBirth.toISOString().slice(0, 10) : ""}
-                          className="rounded border border-gray-300 px-2 py-1 text-xs"
-                        />
+                        <input name="pinCode" defaultValue={c.pinCode ?? ""} placeholder="Pin Code" className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                        <input name="interestedIn" defaultValue={c.interestedIn ?? ""} placeholder="Interested In" className="rounded border border-gray-300 px-2 py-1 text-xs" />
                         <input name="tags" defaultValue={c.tags.join(", ")} placeholder="Tags, comma separated" className="rounded border border-gray-300 px-2 py-1 text-xs" />
                         <button type="submit" className="mt-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-light">
                           Save Changes
