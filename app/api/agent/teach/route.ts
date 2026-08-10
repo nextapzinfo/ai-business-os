@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { askTeachAI, UPDATE_PRODUCT_INFO_TOOL, ADD_KNOWLEDGE_NOTE_TOOL, type ChatHistoryMessage } from "@/lib/llm";
+import {
+  askTeachAI,
+  UPDATE_PRODUCT_INFO_TOOL,
+  ADD_KNOWLEDGE_NOTE_TOOL,
+  UPDATE_STYLE_RULE_TOOL,
+  type ChatHistoryMessage,
+} from "@/lib/llm";
 import { processKnowledgeContent } from "@/app/dashboard/agent/actions";
 import { logAudit } from "@/lib/audit";
 import { logAiUsage } from "@/lib/billing";
@@ -88,6 +94,32 @@ export async function POST(req: NextRequest) {
       return `Updated "${product.name}" successfully.${newPrice ? ` New price: ${newPrice}.` : ""}${newDescription ? " Description updated." : ""} Confirm this briefly to the owner.`;
     }
 
+    if (name === "update_style_rule") {
+      const rule = (args.rule as string)?.trim();
+      if (!rule) return "No rule text given — nothing saved.";
+
+      const existing = await prisma.agentProfile.findUnique({ where: { organizationId } });
+      const combined = existing?.customInstructions?.trim()
+        ? `${existing.customInstructions.trim()}\n- ${rule}`
+        : `- ${rule}`;
+
+      await prisma.agentProfile.upsert({
+        where: { organizationId },
+        update: { customInstructions: combined },
+        create: { organizationId, customInstructions: combined },
+      });
+
+      await logAudit({
+        organizationId,
+        userId: user?.id,
+        action: "AGENT_STYLE_RULE_ADDED",
+        metadata: { rule },
+      });
+
+      actionsTaken.push(`Added standing rule: "${rule}"`);
+      return `Saved as a standing rule — the AI will follow this on every future reply, not just when a related question is asked: "${rule}". Confirm this briefly to the owner.`;
+    }
+
     if (name === "add_knowledge_note") {
       const title = (args.title as string)?.trim();
       const content = (args.content as string)?.trim();
@@ -121,7 +153,7 @@ export async function POST(req: NextRequest) {
     const { answer, usage } = await askTeachAI(
       message,
       history,
-      [UPDATE_PRODUCT_INFO_TOOL, ADD_KNOWLEDGE_NOTE_TOOL],
+      [UPDATE_PRODUCT_INFO_TOOL, ADD_KNOWLEDGE_NOTE_TOOL, UPDATE_STYLE_RULE_TOOL],
       executeTool
     );
     await logAiUsage(organizationId, "teach_ai_chat", usage);
