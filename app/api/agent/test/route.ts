@@ -12,6 +12,7 @@ import {
   REQUEST_HANDOFF_TOOL,
   SEND_PRODUCT_PHOTO_TOOL,
   applyTerminologySwaps,
+  flattenAttributeBulletLines,
   type ToolDefinition,
   type ChatHistoryMessage,
 } from "@/lib/llm";
@@ -121,9 +122,10 @@ export async function POST(req: NextRequest) {
     // the tool side-effects are simulated) — log it so Billing reflects true spend.
     await logAiUsage(organizationId, "sandbox_test", usage);
 
-    // Same guaranteed brand-vocabulary enforcement as the live webhook — so
-    // the sandbox reply staff sees is exactly what a real customer would get.
-    const finalAnswer = applyTerminologySwaps(answer, body.brandLanguage);
+    // Same guaranteed brand-vocabulary + bullet-flattening enforcement as the
+    // live webhook — so the sandbox reply staff sees is exactly what a real
+    // customer would get.
+    const finalAnswer = flattenAttributeBulletLines(applyTerminologySwaps(answer, body.brandLanguage));
 
     return NextResponse.json({ answer: finalAnswer, sourcesUsed: results.length });
   } catch (err) {
