@@ -101,52 +101,86 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Baseline Bengali corrections that apply to EVERY business on this platform,
+// regardless of what the owner has configured in Brand Language — these fix
+// mistakes the underlying model tends to make on its own (literal English/
+// foreign-word translations, stiff "AI-translated"-sounding phrasing, a
+// stray Cyrillic word) rather than anything business-specific. Added after a
+// real incident: a Teach AI style note asking for natural Bengali was saved
+// as a Knowledge Base document, which only reaches the model if it's among
+// the top-5 RAG matches for that customer's specific question — a generic
+// writing-style note about "sorbhaja" rarely wins that similarity search
+// against the actual Sorbhaja product data, so the correction silently never
+// applied. These defaults don't depend on RAG retrieval at all — they run on
+// every single reply. Ordered with longer/more-specific phrases BEFORE the
+// single-word rules they contain, so e.g. "ক্রিম (সোর)" → "দুধের সর" fires
+// before the bare "সোর" → "সর" rule would otherwise partially consume it and
+// leave an awkward leftover like "ক্রিম (সর)".
+const DEFAULT_TERMINOLOGY: { from: string; to: string }[] = [
+  { from: "দুধের ক্রিম (সোর)", to: "দুধের সর" }, // must come before the shorter rule below, or "দুধের ক্রিম (সোর)" becomes "দুধের দুধের সর"
+  { from: "ক্রিম (সোর)", to: "দুধের সর" },
+  { from: "চিনির সিরাপ", to: "চিনির রস" },
+  { from: "বিস্কিটের মতো ক্রিস্পি", to: "হালকা খাস্তা" },
+  { from: "এর মিষ্টতা খুবই সঠিক", to: "পরিমিত মিষ্টি" },
+  { from: "упаковка", to: "প্যাকেজ" }, // stray Cyrillic word seen in a real reply
+  { from: "উপাকভা", to: "প্যাকেজ" }, // garbled Bengali transliteration of the above, also seen in a real reply
+  { from: "সোর", to: "সর" },
+  { from: "ক্রিমী", to: "ক্রিমি" },
+];
+
 // Prompt instructions ("never say X, always say Y") are a strong hint to the
 // model, not a guarantee — with several swap rules plus tone/language/custom
 // instructions all competing for the model's attention, an occasional miss is
 // normal, especially on a smaller model like gpt-4o-mini. This runs AFTER the
-// model replies, doing a real find-and-replace on the exact terminology pairs
-// from Brand Language — so a swap like "পণ্য" → "মিষ্টি" is 100% guaranteed in
-// what the customer actually receives, regardless of what the model wrote.
-// Case-insensitive, whole-string substring match (no stemming/pluralization —
-// "Products" won't match a "Product" rule); applied in the order the owner
-// listed the pairs, so a later rule can re-match an earlier rule's output.
+// model replies, doing a real find-and-replace — first the platform-wide
+// DEFAULT_TERMINOLOGY above, then this business's own Brand Language pairs —
+// so a swap like "পণ্য" → "মিষ্টি" is 100% guaranteed in what the customer
+// actually receives, regardless of what the model wrote. Case-insensitive,
+// whole-string substring match (no stemming/pluralization — "Products" won't
+// match a "Product" rule); applied in order, so a later rule can re-match an
+// earlier rule's output.
 export function applyTerminologySwaps(text: string, brandLanguageRaw: string | null | undefined): string {
-  if (!text || !brandLanguageRaw) return text;
-  try {
-    const parsed = JSON.parse(brandLanguageRaw) as { terminology?: { from: string; to: string }[] };
-    const pairs = (parsed.terminology ?? []).filter((t) => t?.from?.trim() && t?.to?.trim());
-    if (pairs.length === 0) return text;
+  if (!text) return text;
 
-    let result = text;
-    for (const { from, to } of pairs) {
-      const fromTrimmed = from.trim();
-      const toTrimmed = to.trim();
-      if (fromTrimmed.toLowerCase() === toTrimmed.toLowerCase()) continue; // no-op rule
-
-      // A rule like "kheer doi" → "laal kheer doi" must NOT turn an already-
-      // correct "Laal Kheer Doi" into "Laal laal kheer doi" — "kheer doi" is a
-      // real substring of the correct output too. Find every span where the
-      // TARGET text already occurs first, and skip any `from` match that
-      // falls inside one of those spans — only replace genuinely bare,
-      // not-yet-fixed occurrences.
-      const toRegex = new RegExp(escapeRegExp(toTrimmed), "gi");
-      const protectedRanges: [number, number][] = [];
-      let m: RegExpExecArray | null;
-      while ((m = toRegex.exec(result))) {
-        protectedRanges.push([m.index, m.index + m[0].length]);
-      }
-
-      const fromRegex = new RegExp(escapeRegExp(fromTrimmed), "gi");
-      result = result.replace(fromRegex, (match, offset) => {
-        const isAlreadyCorrect = protectedRanges.some(([start, end]) => offset >= start && offset < end);
-        return isAlreadyCorrect ? match : toTrimmed;
-      });
+  let ownerPairs: { from: string; to: string }[] = [];
+  if (brandLanguageRaw) {
+    try {
+      const parsed = JSON.parse(brandLanguageRaw) as { terminology?: { from: string; to: string }[] };
+      ownerPairs = (parsed.terminology ?? []).filter((t) => t?.from?.trim() && t?.to?.trim());
+    } catch {
+      // malformed JSON — ignore this business's own pairs, defaults below still apply
     }
-    return result;
-  } catch {
-    return text; // malformed JSON — leave the reply untouched rather than break it
   }
+
+  const pairs = [...DEFAULT_TERMINOLOGY, ...ownerPairs];
+  if (pairs.length === 0) return text;
+
+  let result = text;
+  for (const { from, to } of pairs) {
+    const fromTrimmed = from.trim();
+    const toTrimmed = to.trim();
+    if (fromTrimmed.toLowerCase() === toTrimmed.toLowerCase()) continue; // no-op rule
+
+    // A rule like "kheer doi" → "laal kheer doi" must NOT turn an already-
+    // correct "Laal Kheer Doi" into "Laal laal kheer doi" — "kheer doi" is a
+    // real substring of the correct output too. Find every span where the
+    // TARGET text already occurs first, and skip any `from` match that
+    // falls inside one of those spans — only replace genuinely bare,
+    // not-yet-fixed occurrences.
+    const toRegex = new RegExp(escapeRegExp(toTrimmed), "gi");
+    const protectedRanges: [number, number][] = [];
+    let m: RegExpExecArray | null;
+    while ((m = toRegex.exec(result))) {
+      protectedRanges.push([m.index, m.index + m[0].length]);
+    }
+
+    const fromRegex = new RegExp(escapeRegExp(fromTrimmed), "gi");
+    result = result.replace(fromRegex, (match, offset) => {
+      const isAlreadyCorrect = protectedRanges.some(([start, end]) => offset >= start && offset < end);
+      return isAlreadyCorrect ? match : toTrimmed;
+    });
+  }
+  return result;
 }
 
 function todayInIndia(): string {
@@ -195,11 +229,17 @@ function buildSystemPrompt(
 
 Tone: be ${tone}. ${language}
 
-Language quality matters a lot here — a wrong or made-up word, or an awkward/ungrammatical sentence, looks unprofessional to a real customer. Keep sentences short and simple rather than reaching for a fancier word or phrase you're unsure of. When writing in Bengali specifically, use natural verb conjugation and word order — never construct a sentence by translating English word-for-word; if a sentence would come out sounding unnatural or grammatically off, simplify it rather than sending it as-is.
+Language quality matters a lot here — a wrong or made-up word, or an awkward/ungrammatical sentence, looks unprofessional to a real customer. Keep sentences short and simple rather than reaching for a fancier word or phrase you're unsure of. When writing in Bengali specifically, use natural verb conjugation and word order — never construct a sentence by translating English word-for-word; if a sentence would come out sounding unnatural or grammatically off, simplify it rather than sending it as-is. Never invent or switch in a word from a language other than Bengali/English (no stray Cyrillic, Hindi, or anything else) — if you don't know the natural Bengali word for something, say it in English instead of guessing. Some concrete examples of the literal, "AI-translated" phrasing to avoid: "ক্রিম (সোর)" (say "দুধের সর"), "চিনির সিরাপ" (say "চিনির রস"), an unnecessary comparison like "বিস্কিটের মতো ক্রিস্পি" (just say "হালকা খাস্তা"), "এর মিষ্টতা খুবই সঠিক" (say "পরিমিত মিষ্টি"), and the misspelling "ক্রিমী" (correct spelling is "ক্রিমি").
 
 Write like a real, attentive member of the team — natural and warm, never stiff or robotic, and don't narrate that you're following instructions. If a customer directly and sincerely asks whether they're chatting with a bot/AI or a human, answer honestly — don't deny it or lie about it.
 
-Formatting rules — this is WhatsApp, not a document. WhatsApp does NOT render Markdown headers or list syntax — if you write "###" or "##" it shows up as literal hash symbols, and a leading "- " shows up as a literal dash. NEVER use "#", "##", "###", or a leading "-" or "*" for list items. For emphasis use single asterisks like *this* (WhatsApp renders that as bold) — never double asterisks. When listing multiple products or items, put each one on its own line and use the bullet character "•" (not a hyphen) if you need a marker, e.g.:
+Describing a SINGLE product is not the same as listing MULTIPLE products — don't turn one item's own attributes (what it is, how it tastes, pack size, price) into a bulleted spec sheet; that reads like a printed label, not a person answering a question. Write 2-4 short, connected sentences the way a staff member would actually describe it out loud, and only mention the pack size/price in that natural phrasing (e.g. "৫ পিস – ₹২৫০ প্যাকেজ" as sold, not a computed per-piece rate like "₹50 প্রতি পিস" unless the customer specifically asks for a per-piece price). Reserve the bulleted "one item per line" format below strictly for when you're actually listing several DIFFERENT products in the same reply.
+
+Never state how a product is physically made, layered, or assembled (e.g. "সরের স্তরের মাঝে মালাইয়ের পুর") unless that exact detail is literally present in the reference material below — this is exactly the kind of specific factual claim you must never invent, even if it sounds plausible.
+
+If it's natural to ask whether the customer wants to order or knows anything else, keep that as its own short, freshly-worded line — never glue a fixed template line like "আপনি কি অর্ডার দিতে চান বা আরও কিছু জানতে চান?" onto the end of every product description; vary it, and skip it entirely when it doesn't fit the flow of the conversation.
+
+Formatting rules — this is WhatsApp, not a document. WhatsApp does NOT render Markdown headers or list syntax — if you write "###" or "##" it shows up as literal hash symbols, and a leading "- " shows up as a literal dash. NEVER use "#", "##", "###", or a leading "-" or "*" for list items. For emphasis use single asterisks like *this* (WhatsApp renders that as bold) — never double asterisks. When listing multiple DIFFERENT products or items together, put each one on its own line and use the bullet character "•" (not a hyphen) if you need a marker, e.g.:
 *SORBHAJA* — 5 pcs — ₹250
 *Laal Kheer Doi* — 500 gm — ₹300
 Keep it looking like a real WhatsApp message a person would type, not a formatted report.
@@ -452,7 +492,7 @@ export const ADD_KNOWLEDGE_NOTE_TOOL: ToolDefinition = {
   function: {
     name: "add_knowledge_note",
     description:
-      "Save a new fact, policy, or piece of information the owner just told you, when it is NOT a correction to a specific existing product's price/description. This becomes permanent knowledge the AI uses when answering customers — e.g. store hours, delivery policy, a new offer, or an answer to a common question.",
+      "Save a new FACT, policy, or piece of information the owner just told you, when it is NOT a correction to a specific existing product's price/description AND NOT a rule about how the AI should write or behave (use update_style_rule for that instead). This becomes permanent knowledge the AI uses when answering customers — e.g. store hours, delivery policy, a new offer, or an answer to a common question. It's only reliably found when a customer's question closely matches this topic, so it's the wrong choice for a standing writing/behavior rule that should apply to every reply.",
     parameters: {
       type: "object",
       properties: {
@@ -470,6 +510,35 @@ export const ADD_KNOWLEDGE_NOTE_TOOL: ToolDefinition = {
   },
 };
 
+// Added after a real incident: an owner taught a Bengali writing-style
+// correction via Teach AI, and the model (reasonably, given the two tools
+// that existed at the time) filed it with add_knowledge_note — which only
+// resurfaces if a customer's question happens to closely match that note's
+// topic via RAG similarity search. A generic style rule almost never wins
+// that search against actual product content, so it silently never applied.
+// This tool writes to AgentProfile.customInstructions instead, which
+// buildSystemPrompt always injects into every single reply, regardless of
+// what the customer asked — the correct home for "always follow this" rules.
+export const UPDATE_STYLE_RULE_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "update_style_rule",
+    description:
+      "Save a standing rule about HOW the AI should write or behave — tone, word choice, translation/wording corrections, formatting, phrases to always use or always avoid, or any other instruction meant to apply to every future reply, not just answer one factual question. Use this instead of add_knowledge_note whenever the owner is correcting the AI's writing/behavior, even if they illustrate it with one specific example (e.g. correcting a mistranslation in a Sorbhaja description means the rule should apply to all future descriptions, not just Sorbhaja).",
+    parameters: {
+      type: "object",
+      properties: {
+        rule: {
+          type: "string",
+          description:
+            "The rule itself, rewritten as a clear, standalone, general instruction the AI should always follow — not tied to one specific past reply. E.g. 'Never translate \"cream\" as ক্রিম (সোর) — use দুধের সর. Use natural native Bengali, not literal English translations.'",
+        },
+      },
+      required: ["rule"],
+    },
+  },
+};
+
 // Distinct from askAIWithTools's buildSystemPrompt: that one frames the model
 // as a customer-facing WhatsApp assistant, which is the wrong persona for this
 // internal owner-only chat. This system prompt is intentionally small and
@@ -483,9 +552,14 @@ export async function askTeachAI(
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
-  const systemPrompt = `You are helping a small business owner update their WhatsApp AI assistant's knowledge, by chatting naturally with them in whatever mix of Bengali/English they use — reply in kind. They will tell you things like a price change, a new policy, or a general fact to remember.
+  const systemPrompt = `You are helping a small business owner update their WhatsApp AI assistant's knowledge, by chatting naturally with them in whatever mix of Bengali/English they use — reply in kind. They will tell you things like a price change, a new policy, a general fact to remember, or a correction to how the AI writes/behaves.
 
-When they correct an existing product (price or description), use update_product_info. When they tell you a new fact/policy that isn't about one specific existing product, use add_knowledge_note. If you're not confident what they mean, ask a short clarifying question instead of guessing or calling a tool.
+Three tools, pick carefully:
+- update_product_info — ONLY for correcting an existing product's price or description.
+- update_style_rule — for a standing rule about HOW the AI should write or behave: tone, word choice, translation/wording corrections, formatting, phrases to use or avoid. Use this even when the owner illustrates the rule with one specific example (e.g. pointing out a mistranslation in one product's description) — the underlying rule is general and should apply everywhere, not just to that one product. This is the most commonly missed case: a message that LOOKS like a product correction but is actually teaching a general writing rule (word choice, natural phrasing, tone, formatting) belongs here, not in update_product_info or add_knowledge_note — using the wrong tool means the rule silently never gets applied again.
+- add_knowledge_note — for a new FACT or policy that isn't about one specific existing product and isn't a writing/behavior rule (store hours, delivery policy, a new offer, an FAQ answer).
+
+If you're not confident which applies, ask a short clarifying question instead of guessing or calling a tool.
 
 After a tool call succeeds, confirm briefly and plainly what you saved/updated — don't repeat the full content back at length, just enough for the owner to trust it was understood correctly. Keep replies short — this is a quick back-and-forth, not a report.`;
 
