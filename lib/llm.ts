@@ -183,6 +183,74 @@ export function applyTerminologySwaps(text: string, brandLanguageRaw: string | n
   return result;
 }
 
+// Known single-product attribute labels the model tends to bullet out into a
+// spec sheet (স্বাদ/Taste, মূল্য/Price, etc.) — deliberately a curated list,
+// not "any bold word before a colon", so this never touches a legitimate
+// multi-DIFFERENT-product listing (those use em-dash separated lines with a
+// PRODUCT NAME in bold, not a generic attribute word before a colon).
+const ATTRIBUTE_BULLET_LABELS = new Set([
+  "বর্ণনা", "স্বাদ", "মিষ্টতা", "মিষ্টি", "প্যাকেজিং", "প্যাকেট", "মূল্য", "দাম",
+  "টেক্সচার", "বৈশিষ্ট্য", "উপকরণ", "সংরক্ষণ", "সাইজ", "পরিমাণ", "গুণমান", "কোয়ালিটি", "ওজন",
+  "description", "taste", "texture", "packaging", "price", "ingredients", "storage",
+  "features", "size", "quantity", "quality", "weight",
+]);
+
+const ATTRIBUTE_BULLET_LINE = /^[•\-]\s*\*([^*]{1,24})\*\s*[:：]\s*(.+)$/;
+
+// Second deterministic safety net, added after a real incident where an
+// owner explicitly taught (via update_style_rule, so it WAS in
+// customInstructions — always injected) "don't use bullet points, write in
+// normal paragraphs", and the very next live WhatsApp reply still bulleted a
+// single product's attributes anyway. Same lesson as applyTerminologySwaps
+// above: instructions — even standing, always-injected ones — are a strong
+// hint to the model, not a guarantee. This runs AFTER generation and merges
+// 2+ consecutive "• *KnownAttributeLabel*: content" lines into one flowing
+// paragraph, dropping the bullet/bold-label packaging entirely, so the
+// spec-sheet look is gone from what the customer actually receives no matter
+// what the model wrote.
+export function flattenAttributeBulletLines(text: string): string {
+  if (!text) return text;
+  const lines = text.split("\n");
+  const output: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const run: string[] = [];
+    let j = i;
+    while (j < lines.length) {
+      const m = lines[j].match(ATTRIBUTE_BULLET_LINE);
+      if (!m || !ATTRIBUTE_BULLET_LABELS.has(m[1].trim().toLowerCase())) break;
+      run.push(m[2].trim());
+      j++;
+    }
+    if (run.length >= 2) {
+      const paragraph = run.map((s) => (/[।.!?]$/.test(s) ? s : `${s}।`)).join(" ");
+
+      // Look back past any blank lines for a short "header:" line that only
+      // exists to introduce this bullet run (e.g. "এর বৈশিষ্ট্য:") — drop it
+      // too, since the flowing paragraph below now speaks for itself and a
+      // leftover "here are the details:" lead-in still looks like a
+      // formatted spec sheet.
+      let k = output.length - 1;
+      while (k >= 0 && output[k].trim() === "") k--;
+      if (
+        k >= 0 &&
+        /[:：]\s*$/.test(output[k]) &&
+        output[k].trim().length <= 40 &&
+        !ATTRIBUTE_BULLET_LINE.test(output[k])
+      ) {
+        output.length = k;
+      }
+
+      output.push(paragraph);
+      i = j;
+    } else {
+      output.push(lines[i]);
+      i++;
+    }
+  }
+  return output.join("\n");
+}
+
 function todayInIndia(): string {
   // en-CA locale formats as YYYY-MM-DD, which doubles as a clean ISO date string.
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
