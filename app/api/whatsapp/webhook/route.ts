@@ -10,6 +10,7 @@ import {
   REQUEST_HANDOFF_TOOL,
   SEND_PRODUCT_PHOTO_TOOL,
   applyTerminologySwaps,
+  flattenAttributeBulletLines,
   type ToolDefinition,
   type ChatHistoryMessage,
 } from "@/lib/llm";
@@ -878,8 +879,11 @@ export async function POST(req: NextRequest) {
     // Guaranteed brand-vocabulary swap (e.g. "পণ্য" → "মিষ্টি") — the system
     // prompt already asks the model to do this, but that's a hint, not a
     // promise; this is the actual enforcement so a saved Word Swap is never
-    // silently skipped in what the customer receives.
-    const finalAnswer = applyTerminologySwaps(answer, agentProfile?.brandLanguage);
+    // silently skipped in what the customer receives. Then flatten any
+    // single-product bullet/spec-sheet formatting the model produced despite
+    // being told (both in the system prompt and via any owner-taught standing
+    // rule) not to — same "instructions aren't a guarantee" reasoning.
+    const finalAnswer = flattenAttributeBulletLines(applyTerminologySwaps(answer, agentProfile?.brandLanguage));
 
     const noKnowledgeMatch = results.length === 0;
 
