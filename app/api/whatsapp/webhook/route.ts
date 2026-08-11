@@ -391,20 +391,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Full current catalog names — passed into the system prompt as a hard
-    // grounding list (buildSystemPrompt's catalogNote) and used again below
-    // by stripHallucinatedProductListings, so a customer never sees an
-    // invented product/price the model padded in from general knowledge
-    // (real incident: asked for "other sweets", the model listed real items
-    // alongside completely made-up ones like a plain "Rosogolla" and
-    // "Chhanar Payesh" that aren't in the catalog at all, with fabricated
-    // prices).
-    const catalogNames = (
-      await prisma.product.findMany({
-        where: { organizationId: organization.id },
-        select: { name: true },
-      })
-    ).map((p) => p.name);
+    // Full current catalog names AND real prices — passed into the system
+    // prompt as a hard grounding list (buildSystemPrompt's catalogNote) and
+    // used again below by stripHallucinatedProductListings, so a customer
+    // never sees an invented product, OR a real product paired with a wrong/
+    // made-up price (real incidents: asked for "other sweets", the model
+    // listed real items alongside completely made-up ones like a plain
+    // "Rosogolla" and "Chhanar Payesh" that aren't in the catalog at all;
+    // separately, it also once quoted the REAL "Baked Rosogolla" at ₹350/1kg
+    // — its actual price is ₹150, ₹350 belonged to a different product).
+    const catalogProducts = await prisma.product.findMany({
+      where: { organizationId: organization.id },
+      select: { name: true, price: true },
+    });
 
     const queryEmbedding = await embedText(text, "query");
     const vectorLiteral = toVectorLiteral(queryEmbedding);
@@ -898,7 +897,7 @@ export async function POST(req: NextRequest) {
       executeTool,
       history,
       photoNote,
-      catalogNames
+      catalogProducts
     );
     await logAiUsage(organization.id, "webhook_reply", usage);
 
@@ -931,11 +930,11 @@ export async function POST(req: NextRequest) {
     }
 
     // Guaranteed catalog-accuracy check FIRST — strip out any listed-product
-    // line that doesn't match a real product in this business's catalog (see
-    // stripHallucinatedProductListings) — then the existing guaranteed
-    // brand-vocabulary swap and bullet-flattening passes.
+    // line whose name OR price doesn't match a real product in this
+    // business's catalog (see stripHallucinatedProductListings) — then the
+    // existing guaranteed brand-vocabulary swap and bullet-flattening passes.
     const finalAnswer = flattenAttributeBulletLines(
-      applyTerminologySwaps(stripHallucinatedProductListings(answer, catalogNames), agentProfile?.brandLanguage)
+      applyTerminologySwaps(stripHallucinatedProductListings(answer, catalogProducts), agentProfile?.brandLanguage)
     );
 
     const noKnowledgeMatch = results.length === 0;
