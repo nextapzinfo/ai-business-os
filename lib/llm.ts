@@ -260,11 +260,28 @@ function normalizeProductName(s: string): string {
     .replace(/\s+/g, " ");
 }
 
+// Every number (as a plain float, commas stripped) found anywhere in a
+// product's raw price field — free-text, so it may read "150", "₹150",
+// "5 pcs - ৳250", or even "500gm - ₹150, 1kg - ₹280" for a product that
+// covers a couple of sizes in one field without separate variant rows.
+// Collecting ALL numbers (not just the first) means a genuinely multi-price
+// field still validates correctly against whichever figure the model quotes.
+function extractRealPriceNumbers(priceRaw: string | null | undefined): Set<number> {
+  if (!priceRaw) return new Set();
+  const matches = priceRaw.match(/[\d,]+(?:\.\d+)?/g) || [];
+  return new Set(
+    matches.map((m) => parseFloat(m.replace(/,/g, ""))).filter((n) => !Number.isNaN(n))
+  );
+}
+
+export type CatalogProduct = { name: string; price?: string | null };
+
 // Product-listing bullet line, e.g. "*SORBHAJA* — 5 pcs — ₹250" or
 // "* Baked Rosogolla — 1 kg — ₹350" — deliberately requires an actual price
 // figure, so ordinary bulleted text (FAQs, policy notes) is never touched by
 // this filter, only genuine "here's a list of products with prices" lines.
-const PRODUCT_LISTING_LINE = /^[•*\-]\s*\*?([^*\n—–-]{2,50}?)\*?\s*[—–-]\s*.*[₹৳]\s*[\d,]+/;
+// Capture group 2 is the quoted price digits, used for the price check below.
+const PRODUCT_LISTING_LINE = /^[•*\-]\s*\*?([^*\n—–-]{2,50}?)\*?\s*[—–-]\s*.*[₹৳]\s*([\d,]+(?:\.\d+)?)/;
 
 // Third deterministic safety net (same family as applyTerminologySwaps and
 // flattenAttributeBulletLines above) — added after a real incident where,
@@ -275,19 +292,31 @@ const PRODUCT_LISTING_LINE = /^[•*\-]\s*\*?([^*\n—–-]{2,50}?)\*?\s*[—–
 // as always: that instruction is a hint, not a guarantee. The hard catalog
 // list injected into the system prompt (see buildSystemPrompt's catalogNote)
 // is the first line of defense; this is the actual guarantee — any listed-
-// product line that doesn't match a REAL product in this organization's
-// catalog (by near-exact name, after normalizing) is removed from what the
-// customer actually receives, regardless of what the model wrote.
-// Deliberately strict (exact match only, never "contains") — a fuzzy/
-// substring match would let a fake "Rosogolla" line slip through just
-// because it's a substring of the real "Baked Rosogolla", which is exactly
-// the bug this exists to catch. Trade-off: a real product whose name the
-// model paraphrases slightly may get dropped too (a false negative, just a
-// missing line) — much safer than the alternative (a fake product/price
-// reaching a real customer).
-export function stripHallucinatedProductListings(text: string, catalogNames: string[]): string {
-  if (!text || catalogNames.length === 0) return text;
-  const realNames = new Set(catalogNames.map(normalizeProductName).filter(Boolean));
+// product line is checked TWICE: the name must match a REAL product in this
+// organization's catalog (by near-exact name, after normalizing), AND the
+// quoted price must match a real number found in that same product's price
+// field. A real product name paired with a WRONG or made-up price is exactly
+// as dangerous as an invented product — a real incident had the model write
+// "Baked Rosogolla — 1 kg — ₹350" (the real product's actual price is ₹150;
+// ₹350 belonged to a completely different product, 1kg Doi), which the old
+// name-only check would have let straight through since "Baked Rosogolla" is
+// a genuine catalog item. Any line failing either check is removed from what
+// the customer actually receives, regardless of what the model wrote.
+// Deliberately strict (name: exact match only, never "contains"; price: must
+// be a real number on file, never "close enough") — a fuzzy/substring name
+// match would let a fake "Rosogolla" line slip through just because it's a
+// substring of the real "Baked Rosogolla". Trade-off: a real product whose
+// name the model paraphrases slightly, or whose price field doesn't cleanly
+// contain the exact figure quoted, may get dropped too (a false negative,
+// just a missing line) — much safer than the alternative (a fake product or
+// price reaching a real customer).
+export function stripHallucinatedProductListings(text: string, catalogProducts: CatalogProduct[]): string {
+  if (!text || catalogProducts.length === 0) return text;
+  const realProductsByName = new Map<string, CatalogProduct>();
+  for (const p of catalogProducts) {
+    const key = normalizeProductName(p.name);
+    if (key) realProductsByName.set(key, p);
+  }
 
   const lines = text.split("\n");
   const output: string[] = [];
@@ -298,7 +327,17 @@ export function stripHallucinatedProductListings(text: string, catalogNames: str
     while (j < lines.length) {
       const m = lines[j].match(PRODUCT_LISTING_LINE);
       if (!m) break;
-      run.push({ line: lines[j], keep: realNames.has(normalizeProductName(m[1])) });
+      const real = realProductsByName.get(normalizeProductName(m[1]));
+      let keep = false;
+      if (real) {
+        const quoted = parseFloat(m[2].replace(/,/g, ""));
+        const realNumbers = extractRealPriceNumbers(real.price);
+        // No parseable price on file at all → the quoted number can't be
+        // verified either way, so don't trust it — same "drop rather than
+        // risk it" call as an unrecognized product name.
+        keep = realNumbers.size > 0 && realNumbers.has(quoted);
+      }
+      run.push({ line: lines[j], keep });
       j++;
     }
     if (run.length > 0) {
@@ -335,7 +374,7 @@ function buildSystemPrompt(
   contextBlock: string,
   hasTools: boolean,
   photoNote: string = "",
-  catalogNames: string[] = []
+  catalogProducts: CatalogProduct[] = []
 ): string {
   const businessName = profile?.businessName?.trim() || "the business";
   const description = profile?.businessDescription?.trim();
@@ -356,23 +395,28 @@ function buildSystemPrompt(
   const photoInstructionNote = photoNote ? `\n\n${photoNote}` : "";
 
   // Hard grounding list — a general "never invent facts" instruction already
-  // existed below and still wasn't enough on its own (real incident: asked
-  // for "other sweets", the model padded the list with well-known Bengali
-  // sweet names — plain Rosogolla, Chhanar Payesh — that this specific
-  // business doesn't actually sell, with made-up prices). Giving the model
-  // the exact, complete, closed list of real product names is a much
-  // stronger and more checkable constraint than an abstract instruction.
-  // Capped defensively — a catalog large enough to blow past this either way
-  // needs the deterministic stripHallucinatedProductListings backstop
-  // (see lib/llm.ts), not a longer and longer prompt.
+  // existed below and still wasn't enough on its own by itself (real
+  // incident #1: asked for "other sweets", the model padded the list with
+  // well-known Bengali sweet names — plain Rosogolla, Chhanar Payesh — that
+  // this specific business doesn't actually sell, with made-up prices; real
+  // incident #2: the model paired a REAL product's name with a price that
+  // actually belonged to a completely different real product — "Baked
+  // Rosogolla" at ₹350/1kg, when the real Baked Rosogolla is ₹150 and ₹350
+  // was a different item's 1kg Doi price). Giving the model the exact,
+  // complete, closed list of real product names AND their real prices is a
+  // much stronger and more checkable constraint than an abstract
+  // instruction. Capped defensively — a catalog large enough to blow past
+  // this either way needs the deterministic stripHallucinatedProductListings
+  // backstop (below in this file), not a longer and longer prompt.
   const CATALOG_NAME_CAP = 150;
   const catalogNote =
-    catalogNames.length > 0
-      ? `\n\nThe COMPLETE, EXACT list of every product this business actually sells — nothing else exists, even a well-known item you'd normally expect a shop like this to carry: ${catalogNames
+    catalogProducts.length > 0
+      ? `\n\nThe COMPLETE, EXACT list of every product this business actually sells, with its real price — nothing else exists, even a well-known item you'd normally expect a shop like this to carry, and no product's real price is ever anything other than what's listed here: ${catalogProducts
           .slice(0, CATALOG_NAME_CAP)
+          .map((p) => (p.price ? `${p.name} (${p.price})` : p.name))
           .join(", ")}${
-          catalogNames.length > CATALOG_NAME_CAP ? ", …" : ""
-        }. NEVER mention, list, suggest, or imply the existence of a product not in this exact list. If a customer asks about something not on it, say honestly that you don't carry it (or that you're not certain and will check) instead of guessing or padding out a list to sound more helpful.`
+          catalogProducts.length > CATALOG_NAME_CAP ? ", …" : ""
+        }. NEVER mention, list, suggest, or imply the existence of a product not in this exact list, and NEVER quote a price for a listed product other than its real price shown here — never borrow, average, or guess a price from a different product. If a customer asks about something not on this list, or a price you're not sure of, say honestly that you don't carry it or aren't certain and will check, instead of guessing or padding out an answer to sound more helpful.`
       : "";
 
   // Core AI Identity (set in Agent Studio → Profile, top of the page) is a
@@ -425,7 +469,7 @@ export async function askAI(
   profile?: AgentProfileInput,
   history: ChatHistoryMessage[] = [],
   photoNote: string = "",
-  catalogNames: string[] = []
+  catalogProducts: CatalogProduct[] = []
 ): Promise<AiCallResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
@@ -434,7 +478,7 @@ export async function askAI(
     .map((s, i) => `[Source ${i + 1}: ${s.title}]\n${s.content}`)
     .join("\n\n---\n\n");
 
-  const systemPrompt = buildSystemPrompt(profile, contextBlock, false, photoNote, catalogNames);
+  const systemPrompt = buildSystemPrompt(profile, contextBlock, false, photoNote, catalogProducts);
 
   const res = await fetch(OPENAI_CHAT_URL, {
     method: "POST",
@@ -818,20 +862,20 @@ export async function askAIWithTools(
   executeTool: ToolExecutor,
   history: ChatHistoryMessage[] = [],
   photoNote: string = "",
-  catalogNames: string[] = []
+  catalogProducts: CatalogProduct[] = []
 ): Promise<AiCallResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
   if (tools.length === 0) {
-    return askAI(question, sources, profile, history, photoNote, catalogNames);
+    return askAI(question, sources, profile, history, photoNote, catalogProducts);
   }
 
   const contextBlock = sources
     .map((s, i) => `[Source ${i + 1}: ${s.title}]\n${s.content}`)
     .join("\n\n---\n\n");
 
-  const systemPrompt = buildSystemPrompt(profile, contextBlock, true, photoNote, catalogNames);
+  const systemPrompt = buildSystemPrompt(profile, contextBlock, true, photoNote, catalogProducts);
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
