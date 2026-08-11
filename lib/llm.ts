@@ -251,6 +251,80 @@ export function flattenAttributeBulletLines(text: string): string {
   return output.join("\n");
 }
 
+function normalizeProductName(s: string): string {
+  return s
+    .replace(/\(.*?\)/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9ঀ-৿]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+// Product-listing bullet line, e.g. "*SORBHAJA* — 5 pcs — ₹250" or
+// "* Baked Rosogolla — 1 kg — ₹350" — deliberately requires an actual price
+// figure, so ordinary bulleted text (FAQs, policy notes) is never touched by
+// this filter, only genuine "here's a list of products with prices" lines.
+const PRODUCT_LISTING_LINE = /^[•*\-]\s*\*?([^*\n—–-]{2,50}?)\*?\s*[—–-]\s*.*[₹৳]\s*[\d,]+/;
+
+// Third deterministic safety net (same family as applyTerminologySwaps and
+// flattenAttributeBulletLines above) — added after a real incident where,
+// asked "any other best sweets you have?", the model listed real catalog
+// items alongside entirely invented ones (a plain "Rosogolla" and "Chhanar
+// Payesh" this business doesn't actually sell, at made-up prices), even
+// though the system prompt already said not to invent facts — same lesson
+// as always: that instruction is a hint, not a guarantee. The hard catalog
+// list injected into the system prompt (see buildSystemPrompt's catalogNote)
+// is the first line of defense; this is the actual guarantee — any listed-
+// product line that doesn't match a REAL product in this organization's
+// catalog (by near-exact name, after normalizing) is removed from what the
+// customer actually receives, regardless of what the model wrote.
+// Deliberately strict (exact match only, never "contains") — a fuzzy/
+// substring match would let a fake "Rosogolla" line slip through just
+// because it's a substring of the real "Baked Rosogolla", which is exactly
+// the bug this exists to catch. Trade-off: a real product whose name the
+// model paraphrases slightly may get dropped too (a false negative, just a
+// missing line) — much safer than the alternative (a fake product/price
+// reaching a real customer).
+export function stripHallucinatedProductListings(text: string, catalogNames: string[]): string {
+  if (!text || catalogNames.length === 0) return text;
+  const realNames = new Set(catalogNames.map(normalizeProductName).filter(Boolean));
+
+  const lines = text.split("\n");
+  const output: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const run: { line: string; keep: boolean }[] = [];
+    let j = i;
+    while (j < lines.length) {
+      const m = lines[j].match(PRODUCT_LISTING_LINE);
+      if (!m) break;
+      run.push({ line: lines[j], keep: realNames.has(normalizeProductName(m[1])) });
+      j++;
+    }
+    if (run.length > 0) {
+      const survivors = run.filter((r) => r.keep).map((r) => r.line);
+      if (survivors.length === 0) {
+        // Every line in this listing was fake — also drop a short preceding
+        // "here are some options:" header, same look-back idea as
+        // flattenAttributeBulletLines above, so nothing dangles with an
+        // empty list underneath it.
+        let k = output.length - 1;
+        while (k >= 0 && output[k].trim() === "") k--;
+        if (k >= 0 && /:\s*$/.test(output[k]) && output[k].trim().length <= 120) {
+          output.length = k;
+        }
+      } else {
+        output.push(...survivors);
+      }
+      i = j;
+    } else {
+      output.push(lines[i]);
+      i++;
+    }
+  }
+  return output.join("\n");
+}
+
 function todayInIndia(): string {
   // en-CA locale formats as YYYY-MM-DD, which doubles as a clean ISO date string.
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
@@ -260,7 +334,8 @@ function buildSystemPrompt(
   profile: AgentProfileInput | undefined,
   contextBlock: string,
   hasTools: boolean,
-  photoNote: string = ""
+  photoNote: string = "",
+  catalogNames: string[] = []
 ): string {
   const businessName = profile?.businessName?.trim() || "the business";
   const description = profile?.businessDescription?.trim();
@@ -279,6 +354,26 @@ function buildSystemPrompt(
     : "";
 
   const photoInstructionNote = photoNote ? `\n\n${photoNote}` : "";
+
+  // Hard grounding list — a general "never invent facts" instruction already
+  // existed below and still wasn't enough on its own (real incident: asked
+  // for "other sweets", the model padded the list with well-known Bengali
+  // sweet names — plain Rosogolla, Chhanar Payesh — that this specific
+  // business doesn't actually sell, with made-up prices). Giving the model
+  // the exact, complete, closed list of real product names is a much
+  // stronger and more checkable constraint than an abstract instruction.
+  // Capped defensively — a catalog large enough to blow past this either way
+  // needs the deterministic stripHallucinatedProductListings backstop
+  // (see lib/llm.ts), not a longer and longer prompt.
+  const CATALOG_NAME_CAP = 150;
+  const catalogNote =
+    catalogNames.length > 0
+      ? `\n\nThe COMPLETE, EXACT list of every product this business actually sells — nothing else exists, even a well-known item you'd normally expect a shop like this to carry: ${catalogNames
+          .slice(0, CATALOG_NAME_CAP)
+          .join(", ")}${
+          catalogNames.length > CATALOG_NAME_CAP ? ", …" : ""
+        }. NEVER mention, list, suggest, or imply the existence of a product not in this exact list. If a customer asks about something not on it, say honestly that you don't carry it (or that you're not certain and will check) instead of guessing or padding out a list to sound more helpful.`
+      : "";
 
   // Core AI Identity (set in Agent Studio → Profile, top of the page) is a
   // free-text persona/voice/judgment paragraph the owner writes themselves.
@@ -307,6 +402,8 @@ Never state how a product is physically made, layered, or assembled (e.g. "স�
 
 If it's natural to ask whether the customer wants to order or knows anything else, keep that as its own short, freshly-worded line — never glue a fixed template line like "আপনি কি অর্ডার দিতে চান বা আরও কিছু জানতে চান?" onto the end of every product description; vary it, and skip it entirely when it doesn't fit the flow of the conversation.
 
+Behave like a real, attentive salesperson working one sale at a time — if the customer is actively discussing, asking about, or in the middle of buying a specific product (its price, quantity, variant, or they've started giving delivery details), stay focused and help them finish that — don't proactively bring up, describe, or send a different product until this one is settled (an order confirmed, or the customer clearly moves on themselves). Only pivot to another product when the customer asks about something else, says they're done, or there's a natural pause with nothing left to settle on the current item.
+
 Formatting rules — this is WhatsApp, not a document. WhatsApp does NOT render Markdown headers or list syntax — if you write "###" or "##" it shows up as literal hash symbols, and a leading "- " shows up as a literal dash. NEVER use "#", "##", "###", or a leading "-" or "*" for list items. For emphasis use single asterisks like *this* (WhatsApp renders that as bold) — never double asterisks. When listing multiple DIFFERENT products or items together, put each one on its own line and use the bullet character "•" (not a hyphen) if you need a marker, e.g.:
 *SORBHAJA* — 5 pcs — ₹250
 *Laal Kheer Doi* — 500 gm — ₹300
@@ -314,7 +411,7 @@ Keep it looking like a real WhatsApp message a person would type, not a formatte
 
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
-Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions.${toolsNote}${customInstructionsNote}${brandLanguageNote}${photoInstructionNote}
+Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions.${toolsNote}${customInstructionsNote}${brandLanguageNote}${photoInstructionNote}${catalogNote}
 
 Reference material:
 ${contextBlock}`;
@@ -327,7 +424,8 @@ export async function askAI(
   sources: SourceChunk[],
   profile?: AgentProfileInput,
   history: ChatHistoryMessage[] = [],
-  photoNote: string = ""
+  photoNote: string = "",
+  catalogNames: string[] = []
 ): Promise<AiCallResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
@@ -336,7 +434,7 @@ export async function askAI(
     .map((s, i) => `[Source ${i + 1}: ${s.title}]\n${s.content}`)
     .join("\n\n---\n\n");
 
-  const systemPrompt = buildSystemPrompt(profile, contextBlock, false, photoNote);
+  const systemPrompt = buildSystemPrompt(profile, contextBlock, false, photoNote, catalogNames);
 
   const res = await fetch(OPENAI_CHAT_URL, {
     method: "POST",
@@ -719,20 +817,21 @@ export async function askAIWithTools(
   tools: ToolDefinition[],
   executeTool: ToolExecutor,
   history: ChatHistoryMessage[] = [],
-  photoNote: string = ""
+  photoNote: string = "",
+  catalogNames: string[] = []
 ): Promise<AiCallResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
   if (tools.length === 0) {
-    return askAI(question, sources, profile, history, photoNote);
+    return askAI(question, sources, profile, history, photoNote, catalogNames);
   }
 
   const contextBlock = sources
     .map((s, i) => `[Source ${i + 1}: ${s.title}]\n${s.content}`)
     .join("\n\n---\n\n");
 
-  const systemPrompt = buildSystemPrompt(profile, contextBlock, true, photoNote);
+  const systemPrompt = buildSystemPrompt(profile, contextBlock, true, photoNote, catalogNames);
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
