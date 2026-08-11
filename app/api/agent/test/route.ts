@@ -76,15 +76,13 @@ export async function POST(req: NextRequest) {
     .map((m: any) => ({ role: m.role, content: m.content }));
 
   try {
-    // Same hard-grounding + hallucination-filter catalog list as the live
-    // webhook (see lib/llm.ts) — so what staff sees in the sandbox matches
-    // what a real customer would actually get.
-    const catalogNames = (
-      await prisma.product.findMany({
-        where: { organizationId },
-        select: { name: true },
-      })
-    ).map((p) => p.name);
+    // Same hard-grounding + hallucination-filter catalog data (names AND
+    // real prices) as the live webhook (see lib/llm.ts) — so what staff sees
+    // in the sandbox matches what a real customer would actually get.
+    const catalogProducts = await prisma.product.findMany({
+      where: { organizationId },
+      select: { name: true, price: true },
+    });
 
     const queryEmbedding = await embedText(question, "query");
     const vectorLiteral = toVectorLiteral(queryEmbedding);
@@ -128,17 +126,17 @@ export async function POST(req: NextRequest) {
       simulateTool,
       history,
       sandboxPhotoNote,
-      catalogNames
+      catalogProducts
     );
     // Sandbox testing still burns real OpenAI tokens (the model call is real, only
     // the tool side-effects are simulated) — log it so Billing reflects true spend.
     await logAiUsage(organizationId, "sandbox_test", usage);
 
-    // Same guaranteed catalog-accuracy + brand-vocabulary + bullet-flattening
-    // enforcement as the live webhook — so the sandbox reply staff sees is
-    // exactly what a real customer would get.
+    // Same guaranteed catalog-accuracy (name AND price) + brand-vocabulary +
+    // bullet-flattening enforcement as the live webhook — so the sandbox
+    // reply staff sees is exactly what a real customer would get.
     const finalAnswer = flattenAttributeBulletLines(
-      applyTerminologySwaps(stripHallucinatedProductListings(answer, catalogNames), body.brandLanguage)
+      applyTerminologySwaps(stripHallucinatedProductListings(answer, catalogProducts), body.brandLanguage)
     );
 
     return NextResponse.json({ answer: finalAnswer, sourcesUsed: results.length });
