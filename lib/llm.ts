@@ -419,6 +419,28 @@ function buildSystemPrompt(
         }. NEVER mention, list, suggest, or imply the existence of a product not in this exact list, and NEVER quote a price for a listed product other than its real price shown here — never borrow, average, or guess a price from a different product. If a customer asks about something not on this list, or a price you're not sure of, say honestly that you don't carry it or aren't certain and will check, instead of guessing or padding out an answer to sound more helpful.`
       : "";
 
+  // Added after a real incident: "Baked Rosogolla" is priced as "৳30/pc (min
+  // order 5 pcs = ৳150)" — a customer asked to confirm "1 pc ৳150?" and the
+  // model answered "১ পিসের দাম ৳150" (the price of 1 piece is ৳150),
+  // treating the min-order BUNDLE total as if it were the single-piece rate.
+  // ৳150 is a real number that genuinely appears in this product's price
+  // field, so it isn't a hallucination in the usual sense (the number is
+  // real) — the mistake is pairing a real number with the WRONG quantity.
+  // This is a case the deterministic filters in this file structurally
+  // cannot catch: stripHallucinatedProductListings only checks that a
+  // quoted number appears somewhere in the price string, it has no idea
+  // which quantity that number is supposed to describe, and this specific
+  // reply was single-product prose anyway, a format that filter doesn't
+  // even scan. So unlike the name/price-existence checks above, correctness
+  // here rests entirely on the model reading and reasoning about the price
+  // string correctly — there is no code-level backstop for this one.
+  // Spelling the expected convention out explicitly, with a worked example,
+  // is the only lever available.
+  const priceFormatNote =
+    catalogProducts.length > 0
+      ? `\n\nSome prices above are written as "₹X/pc (min order N pcs = ₹Y)" — X is the price of ONE single piece, N is the minimum quantity that must be ordered, and Y is simply X multiplied by N (the total cost of ordering the minimum quantity), not a separate or different price. If a customer asks the price of a single piece, always answer with X, never Y. Only mention Y when you're stating the total cost of the minimum order (e.g. "৫ পিস অর্ডার করলে মোট ৳150"), and always make clear which quantity a price refers to — never state a multi-piece total as if it were a single piece's price. Example: for "₹30/pc (min order 5 pcs = ₹150)", "1 pc price?" → "৳30 প্রতি পিস (সর্বনিম্ন অর্ডার ৫ পিস, অর্থাৎ মোট ৳150)" — never "১ পিসের দাম ৳150".`
+      : "";
+
   // Core AI Identity (set in Agent Studio → Profile, top of the page) is a
   // free-text persona/voice/judgment paragraph the owner writes themselves.
   // When present it REPLACES this default one-liner as the opening frame —
@@ -455,7 +477,7 @@ Keep it looking like a real WhatsApp message a person would type, not a formatte
 
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
-Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions.${toolsNote}${customInstructionsNote}${brandLanguageNote}${photoInstructionNote}${catalogNote}
+Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions.${toolsNote}${customInstructionsNote}${brandLanguageNote}${photoInstructionNote}${catalogNote}${priceFormatNote}
 
 Reference material:
 ${contextBlock}`;
