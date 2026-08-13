@@ -10,8 +10,10 @@ import {
   REQUEST_HANDOFF_TOOL,
   SEND_PRODUCT_PHOTO_TOOL,
   applyTerminologySwaps,
+  stripHallucinatedProductListings,
   type ToolDefinition,
   type ChatHistoryMessage,
+  type CatalogProduct,
 } from "@/lib/llm";
 import {
   sendWhatsAppMessage,
@@ -894,6 +896,19 @@ export async function POST(req: NextRequest) {
       return "Unknown tool.";
     }
 
+    // Full catalog (name, price, description) for this org — this is what
+    // powers buildSystemPrompt's catalogNote (the closed "these are literally
+    // the only products/prices that exist" list, including a [min order: N
+    // pcs] tag extracted from each description) and priceFormatNote's
+    // minimum-order enforcement rule. This was previously defined in lib/llm.ts
+    // but never actually fetched/passed from this webhook, meaning that whole
+    // safety layer was silently inactive on real WhatsApp traffic the entire
+    // time — this is what actually turns it on.
+    const catalogProducts: CatalogProduct[] = await prisma.product.findMany({
+      where: { organizationId: organization.id },
+      select: { name: true, price: true, description: true },
+    });
+
     // REQUEST_HANDOFF_TOOL is always in `tools` now (see above), so this always
     // goes through the real model — including zero-RAG-match questions, which
     // now get an honest "I don't know, let me get someone" instead of the old
@@ -909,7 +924,8 @@ export async function POST(req: NextRequest) {
       tools,
       executeTool,
       history,
-      photoNote
+      photoNote,
+      catalogProducts
     );
     await logAiUsage(organization.id, "webhook_reply", usage);
 
@@ -941,11 +957,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Deterministic backstop: strip out any bulleted product-listing line
+    // naming a product that isn't real, or quoting a price that doesn't
+    // actually belong to that product — a hard code-level check, not just a
+    // prompt instruction, for the exact "real name + wrong price" and
+    // "invented product" incidents this was built for (see comment above
+    // stripHallucinatedProductListings in lib/llm.ts).
+    const hallucinationChecked = stripHallucinatedProductListings(answer, catalogProducts);
+
     // Guaranteed brand-vocabulary swap (e.g. "পণ্য" → "মিষ্টি") — the system
     // prompt already asks the model to do this, but that's a hint, not a
     // promise; this is the actual enforcement so a saved Word Swap is never
     // silently skipped in what the customer receives.
-    const finalAnswer = applyTerminologySwaps(answer, agentProfile?.brandLanguage);
+    const finalAnswer = applyTerminologySwaps(hallucinationChecked, agentProfile?.brandLanguage);
 
     const noKnowledgeMatch = results.length === 0;
 
