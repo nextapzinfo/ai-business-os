@@ -12,10 +12,10 @@ import {
   REQUEST_HANDOFF_TOOL,
   SEND_PRODUCT_PHOTO_TOOL,
   applyTerminologySwaps,
-  flattenAttributeBulletLines,
   stripHallucinatedProductListings,
   type ToolDefinition,
   type ChatHistoryMessage,
+  type CatalogProduct,
 } from "@/lib/llm";
 import { logAiUsage } from "@/lib/billing";
 
@@ -76,14 +76,6 @@ export async function POST(req: NextRequest) {
     .map((m: any) => ({ role: m.role, content: m.content }));
 
   try {
-    // Same hard-grounding + hallucination-filter catalog data (names AND
-    // real prices) as the live webhook (see lib/llm.ts) — so what staff sees
-    // in the sandbox matches what a real customer would actually get.
-    const catalogProducts = await prisma.product.findMany({
-      where: { organizationId },
-      select: { name: true, price: true },
-    });
-
     const queryEmbedding = await embedText(question, "query");
     const vectorLiteral = toVectorLiteral(queryEmbedding);
 
@@ -95,6 +87,15 @@ export async function POST(req: NextRequest) {
       ORDER BY dc.embedding <=> ${vectorLiteral}::vector ASC
       LIMIT 5
     `) as { content: string; documentTitle: string }[];
+
+    // Same catalog list the live webhook now sends — without this, the sandbox
+    // can't actually preview minimum-order enforcement or hallucination
+    // stripping, since both depend on this being populated (see webhook
+    // route.ts for the full explanation of why this matters).
+    const catalogProducts: CatalogProduct[] = await prisma.product.findMany({
+      where: { organizationId },
+      select: { name: true, price: true, description: true },
+    });
 
     const tools: ToolDefinition[] = [REQUEST_HANDOFF_TOOL, SEND_PRODUCT_PHOTO_TOOL];
     if (body.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);
@@ -132,12 +133,11 @@ export async function POST(req: NextRequest) {
     // the tool side-effects are simulated) — log it so Billing reflects true spend.
     await logAiUsage(organizationId, "sandbox_test", usage);
 
-    // Same guaranteed catalog-accuracy (name AND price) + brand-vocabulary +
-    // bullet-flattening enforcement as the live webhook — so the sandbox
-    // reply staff sees is exactly what a real customer would get.
-    const finalAnswer = flattenAttributeBulletLines(
-      applyTerminologySwaps(stripHallucinatedProductListings(answer, catalogProducts), body.brandLanguage)
-    );
+    // Same deterministic hallucination backstop + guaranteed brand-vocabulary
+    // enforcement as the live webhook — so the sandbox reply staff sees is
+    // exactly what a real customer would get, not a rosier preview.
+    const hallucinationChecked = stripHallucinatedProductListings(answer, catalogProducts);
+    const finalAnswer = applyTerminologySwaps(hallucinationChecked, body.brandLanguage);
 
     return NextResponse.json({ answer: finalAnswer, sourcesUsed: results.length });
   } catch (err) {
