@@ -274,7 +274,20 @@ function extractRealPriceNumbers(priceRaw: string | null | undefined): Set<numbe
   );
 }
 
-export type CatalogProduct = { name: string; price?: string | null };
+export type CatalogProduct = { name: string; price?: string | null; description?: string | null };
+
+// Pulls a "Minimum Order: N piece(s)" style line out of a product's
+// description, if present, so it can be surfaced in the compact catalog list
+// below WITHOUT depending on RAG chunk retrieval picking the right product's
+// full description text for a given message — that retrieval is inherently
+// fuzzy, and this is exactly the kind of hard constraint (customer typed a
+// quantity below the real minimum) that must never be missed. Matches
+// "Minimum Order: 5 pieces", "Minimum Order: 5 pcs", "min order 5 pcs", etc.
+function extractMinOrder(description?: string | null): string | null {
+  if (!description) return null;
+  const m = description.match(/minimum\s*order\s*[:\-]?\s*(\d+)\s*(pieces?|pcs?)/i);
+  return m ? m[1] : null;
+}
 
 // Product-listing bullet line, e.g. "*SORBHAJA* — 5 pcs — ₹250" or
 // "* Baked Rosogolla — 1 kg — ₹350" — deliberately requires an actual price
@@ -411,9 +424,12 @@ function buildSystemPrompt(
   const CATALOG_NAME_CAP = 150;
   const catalogNote =
     catalogProducts.length > 0
-      ? `\n\nThe COMPLETE, EXACT list of every product this business actually sells, with its real price — nothing else exists, even a well-known item you'd normally expect a shop like this to carry, and no product's real price is ever anything other than what's listed here: ${catalogProducts
+      ? `\n\nThe COMPLETE, EXACT list of every product this business actually sells, with its real price and (where set) its real minimum order quantity — nothing else exists, even a well-known item you'd normally expect a shop like this to carry, and no product's real price or minimum is ever anything other than what's listed here: ${catalogProducts
           .slice(0, CATALOG_NAME_CAP)
-          .map((p) => (p.price ? `${p.name} (${p.price})` : p.name))
+          .map((p) => {
+            const minOrder = extractMinOrder(p.description);
+            return `${p.name}${p.price ? ` (${p.price})` : ""}${minOrder ? ` [min order: ${minOrder} pcs]` : ""}`;
+          })
           .join(", ")}${
           catalogProducts.length > CATALOG_NAME_CAP ? ", …" : ""
         }. NEVER mention, list, suggest, or imply the existence of a product not in this exact list, and NEVER quote a price for a listed product other than its real price shown here — never borrow, average, or guess a price from a different product. If a customer asks about something not on this list, or a price you're not sure of, say honestly that you don't carry it or aren't certain and will check, instead of guessing or padding out an answer to sound more helpful.`
@@ -438,7 +454,9 @@ function buildSystemPrompt(
   // is the only lever available.
   const priceFormatNote =
     catalogProducts.length > 0
-      ? `\n\nSome prices above are written as "₹X/pc (min order N pcs = ₹Y)" — X is the price of ONE single piece, N is the minimum quantity that must be ordered, and Y is simply X multiplied by N (the total cost of ordering the minimum quantity), not a separate or different price. If a customer asks the price of a single piece, always answer with X, never Y. Only mention Y when you're stating the total cost of the minimum order (e.g. "৫ পিস অর্ডার করলে মোট ৳150"), and always make clear which quantity a price refers to — never state a multi-piece total as if it were a single piece's price. Example: for "₹30/pc (min order 5 pcs = ₹150)", "1 pc price?" → "৳30 প্রতি পিস (সর্বনিম্ন অর্ডার ৫ পিস, অর্থাৎ মোট ৳150)" — never "১ পিসের দাম ৳150".`
+      ? `\n\nSome prices above are written as "₹X/pc (min order N pcs = ₹Y)" — X is the price of ONE single piece, N is the minimum quantity that must be ordered, and Y is simply X multiplied by N (the total cost of ordering the minimum quantity), not a separate or different price. If a customer asks the price of a single piece, always answer with X, never Y. Only mention Y when you're stating the total cost of the minimum order (e.g. "৫ পিস অর্ডার করলে মোট ৳150"), and always make clear which quantity a price refers to — never state a multi-piece total as if it were a single piece's price. Example: for "₹30/pc (min order 5 pcs = ₹150)", "1 pc price?" → "৳30 প্রতি পিস (সর্বনিম্ন অর্ডার ৫ পিস, অর্থাৎ মোট ৳150)" — never "১ পিসের দাম ৳150". Some products instead show this as two separate lines, e.g. "Price: ₹30 per piece" and "Minimum Order: 5 pieces" — treat that exactly the same way, computing the total yourself as price × minimum when needed.
+
+MINIMUM ORDER IS A HARD RULE, ALWAYS CHECK IT — this applies to every single reply about a quantity, not just when finalizing an order. Whenever a customer states or implies a quantity for a specific product (even in a first "here's what I'd like" message, before anything is confirmed), check that product's info for a "Minimum Order" line FIRST, before calculating or quoting any total. If their quantity is below that minimum: do NOT calculate a total for it, do NOT treat it as accepted, and do NOT proceed toward confirming an address/order — instead, tell them the minimum plainly and ask if they'd like to order that many instead. Only calculate a total and move toward confirming once the quantity meets or exceeds the minimum.`
       : "";
 
   // Core AI Identity (set in Agent Studio → Profile, top of the page) is a
