@@ -612,7 +612,7 @@ export const PLACE_ORDER_TOOL: ToolDefinition = {
   function: {
     name: "record_order",
     description:
-      "Record a new order for the customer. Only use this AFTER you've read the items/quantities back to the customer and they've confirmed it's correct — don't call this on the first mention of wanting to buy something, and don't call it more than once for the same order.",
+      "Record a new order for the customer. Only use this AFTER you've read the items/quantities back to the customer and they've confirmed it's correct — don't call this on the first mention of wanting to buy something, and don't call it more than once for the same order. IMPORTANT: before confirming, check the reference material for that product for any minimum order quantity or minimum pack size (e.g. 'min order 5 pcs'). If the customer's requested quantity is below that minimum, do NOT call this tool yet — tell them the minimum first and ask if they'd like to adjust the quantity.",
     parameters: {
       type: "object",
       properties: {
@@ -707,7 +707,8 @@ export const UPDATE_PRODUCT_INFO_TOOL: ToolDefinition = {
         },
         newPrice: {
           type: "string",
-          description: "The corrected price, only if the owner mentioned a price change.",
+          description:
+            "The corrected price, only if the owner mentioned a price change. CRITICAL: capture the FULL pricing detail the owner gave, not just one number — if they mention a per-unit price AND a minimum order quantity or bulk price (e.g. '₹30/pc, min order 5 pcs = ₹150'), put ALL of that in this one string exactly as they said it. Never trim it down to a bare number — losing the minimum-order detail means the AI will later accept orders below the real minimum.",
         },
         newDescription: {
           type: "string",
