@@ -474,13 +474,53 @@ export async function POST(req: NextRequest) {
       });
       return bestScore > 0 ? bestMatch : null;
     }
+    // Same distinctive-word scoring as findBestProductMatch, but returns EVERY
+    // product with a confident match instead of only the single best one —
+    // needed for order messages that name several products in one line (e.g.
+    // "baked kheer malai 1 pcs, sorbhaja 2 pcs"), where relying on fuzzy RAG
+    // retrieval alone had already caused a real mix-up: the AI quoted the
+    // wrong minimum-order number for Kheer Gulab Jamun (said 5, actual is 10)
+    // because a similar-sounding sweet's RAG chunk got pulled in instead.
+    // This fetches EXACT price/description straight from the Product table
+    // for every product actually named in the message, so the model has
+    // ground truth for minimum-order/price checks instead of a guess.
+    function findAllProductMatches(words: string[], products: ProductForMatch[]): ProductForMatch[] {
+      const productNameWords = products.map((p) => extractWords(p.name));
+      const wordProductCount = new Map<string, number>();
+      for (const nameWords of productNameWords) {
+        for (const w of new Set(nameWords)) {
+          wordProductCount.set(w, (wordProductCount.get(w) ?? 0) + 1);
+        }
+      }
+      const matches: ProductForMatch[] = [];
+      products.forEach((p, i) => {
+        const nameWords = productNameWords[i];
+        const distinctiveMatches = words.filter((w) => nameWords.includes(w) && wordProductCount.get(w) === 1);
+        if (distinctiveMatches.length > 0) matches.push(p);
+      });
+      return matches;
+    }
+
     const textWords = extractWords(text);
+    let exactProductInfoBlocks: { title: string; content: string }[] = [];
     if (textWords.length > 0) {
       const orgProducts = await prisma.product.findMany({
         where: { organizationId: organization.id },
         select: { id: true, name: true, imageUrl: true, retailerId: true },
       });
       matchedProduct = findBestProductMatch(textWords, orgProducts);
+
+      const allMentioned = findAllProductMatches(textWords, orgProducts);
+      if (allMentioned.length > 0) {
+        const withFullInfo = await prisma.product.findMany({
+          where: { id: { in: allMentioned.map((p) => p.id) } },
+          select: { name: true, price: true, description: true },
+        });
+        exactProductInfoBlocks = withFullInfo.map((p) => ({
+          title: `EXACT CURRENT INFO — ${p.name}`,
+          content: `${p.name}. ${p.price ? `Price: ${p.price}. ` : ""}${p.description ?? ""}`.trim(),
+        }));
+      }
     }
 
     if (!matchedProduct && results.length > 0 && results[0].distance <= PRODUCT_PHOTO_DISTANCE_THRESHOLD) {
@@ -836,9 +876,13 @@ export async function POST(req: NextRequest) {
     // goes through the real model — including zero-RAG-match questions, which
     // now get an honest "I don't know, let me get someone" instead of the old
     // hardcoded canned line, and the AI can genuinely escalate when it means it.
+    // Exact product info blocks go FIRST — ground truth for any product
+    // actually named in this message, ahead of fuzzy RAG chunks that can pull
+    // in a similar-sounding product's numbers by mistake (see comment above
+    // findAllProductMatches).
     const { answer, usage } = await askAIWithTools(
       text,
-      results.map((r) => ({ title: r.documentTitle, content: r.content })),
+      [...exactProductInfoBlocks, ...results.map((r) => ({ title: r.documentTitle, content: r.content }))],
       agentProfile ?? undefined,
       tools,
       executeTool,
