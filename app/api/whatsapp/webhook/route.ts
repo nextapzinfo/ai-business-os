@@ -523,6 +523,28 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Name-less follow-up (e.g. "min kota", "koto ta minimum lagbe") — the
+    // current message doesn't repeat the product name, so the match above
+    // found nothing. Without this fallback, the model has no fresh ground
+    // truth for this turn and just repeats whatever it said earlier in
+    // conversation history — including a wrong number it already stated
+    // once. Fall back to the product this conversation was last actually
+    // about (conversation.lastProductId, same memory used for "pic ache?").
+    if (exactProductInfoBlocks.length === 0 && conversation.lastProductId) {
+      const lastProduct = await prisma.product.findUnique({
+        where: { id: conversation.lastProductId },
+        select: { name: true, price: true, description: true },
+      });
+      if (lastProduct) {
+        exactProductInfoBlocks = [
+          {
+            title: `EXACT CURRENT INFO — ${lastProduct.name}`,
+            content: `${lastProduct.name}. ${lastProduct.price ? `Price: ${lastProduct.price}. ` : ""}${lastProduct.description ?? ""}`.trim(),
+          },
+        ];
+      }
+    }
+
     if (!matchedProduct && results.length > 0 && results[0].distance <= PRODUCT_PHOTO_DISTANCE_THRESHOLD) {
       matchedProduct = await prisma.product.findUnique({
         where: { documentId: results[0].documentId },
