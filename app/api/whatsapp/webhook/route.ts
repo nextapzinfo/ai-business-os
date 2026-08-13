@@ -10,8 +10,6 @@ import {
   REQUEST_HANDOFF_TOOL,
   SEND_PRODUCT_PHOTO_TOOL,
   applyTerminologySwaps,
-  flattenAttributeBulletLines,
-  stripHallucinatedProductListings,
   type ToolDefinition,
   type ChatHistoryMessage,
 } from "@/lib/llm";
@@ -391,20 +389,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Full current catalog names AND real prices — passed into the system
-    // prompt as a hard grounding list (buildSystemPrompt's catalogNote) and
-    // used again below by stripHallucinatedProductListings, so a customer
-    // never sees an invented product, OR a real product paired with a wrong/
-    // made-up price (real incidents: asked for "other sweets", the model
-    // listed real items alongside completely made-up ones like a plain
-    // "Rosogolla" and "Chhanar Payesh" that aren't in the catalog at all;
-    // separately, it also once quoted the REAL "Baked Rosogolla" at ₹350/1kg
-    // — its actual price is ₹150, ₹350 belonged to a different product).
-    const catalogProducts = await prisma.product.findMany({
-      where: { organizationId: organization.id },
-      select: { name: true, price: true },
-    });
-
     const queryEmbedding = await embedText(text, "query");
     const vectorLiteral = toVectorLiteral(queryEmbedding);
 
@@ -499,43 +483,6 @@ export async function POST(req: NextRequest) {
       matchedProduct = findBestProductMatch(textWords, orgProducts);
     }
 
-    // Moved up from further below (still reused there for the featured-
-    // products carousel) — needed here first so the context-continuity check
-    // right below can tell a genuine "show me everything" browse request
-    // apart from a normal follow-up question.
-    const BROWSE_REQUEST_REGEX =
-      /\b(products?|items?|menu|catalog|catalogue|shop|options?)\b|প্রোডাক্ট|প্রডাক্ট|মেনু|কি কি আছে|কি আছে|সব দেখা|লিস্ট/i;
-
-    // A generic follow-up about price/quantity/availability/order — with no
-    // product name repeated — almost always means "the item we were just
-    // discussing", not a new product. Checked BEFORE the RAG-embedding guess
-    // below: that guess only looks at THIS one isolated message, so on a
-    // content-free question like "what's the price?" it can easily latch
-    // onto a totally different, wrong product purely by embedding proximity.
-    // Real incident: mid-conversation about "Sorbhaja", a bare "wt is the
-    // price?" landed on "Ghee"'s document instead, and its variant carousel
-    // got auto-sent right after the AI's own text correctly answered about
-    // Sorbhaja — confusing for the customer, and exactly the kind of thing a
-    // real salesperson mid-sale would never do. Skipped for genuine
-    // "show me everything" browsing requests, where pivoting away from the
-    // last product is exactly the point.
-    const FOLLOWUP_CONTEXT_REGEX =
-      /\b(price|cost|rate|how much|qty|quantity|pcs|pieces|order|confirm|available|avail|stock|discount|offer|min|minimum)\b|দাম|কত|কতো|কয়টা|কয়\s*টাকা|অর্ডার|কনফার্ম|আছে\s*কি|স্টক|ছাড়|অফার/i;
-    if (
-      !matchedProduct &&
-      !BROWSE_REQUEST_REGEX.test(text) &&
-      FOLLOWUP_CONTEXT_REGEX.test(text) &&
-      conversation.lastProductId
-    ) {
-      const contextProduct = await prisma.product.findUnique({
-        where: { id: conversation.lastProductId },
-        select: { id: true, name: true, imageUrl: true, retailerId: true },
-      });
-      if (contextProduct?.imageUrl || contextProduct?.retailerId) {
-        matchedProduct = contextProduct;
-      }
-    }
-
     if (!matchedProduct && results.length > 0 && results[0].distance <= PRODUCT_PHOTO_DISTANCE_THRESHOLD) {
       matchedProduct = await prisma.product.findUnique({
         where: { documentId: results[0].documentId },
@@ -587,9 +534,9 @@ export async function POST(req: NextRequest) {
     // Sends a native swipeable carousel of a few featured/bestseller
     // products (marked on the Products page) instead of the AI guessing at
     // one product to push, matching how a customer expects to browse when
-    // they haven't named anything specific yet. (BROWSE_REQUEST_REGEX itself
-    // is now declared earlier, above — reused there for the context-
-    // continuity check.)
+    // they haven't named anything specific yet.
+    const BROWSE_REQUEST_REGEX =
+      /\b(products?|items?|menu|catalog|catalogue|shop|options?)\b|প্রোডাক্ট|প্রডাক্ট|মেনু|কি কি আছে|কি আছে|সব দেখা|লিস্ট/i;
     let featuredCarousel: { id: string; name: string; retailerId: string | null; imageUrl: string | null }[] = [];
     if (
       !matchedProduct?.imageUrl &&
@@ -896,8 +843,7 @@ export async function POST(req: NextRequest) {
       tools,
       executeTool,
       history,
-      photoNote,
-      catalogProducts
+      photoNote
     );
     await logAiUsage(organization.id, "webhook_reply", usage);
 
@@ -929,13 +875,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Guaranteed catalog-accuracy check FIRST — strip out any listed-product
-    // line whose name OR price doesn't match a real product in this
-    // business's catalog (see stripHallucinatedProductListings) — then the
-    // existing guaranteed brand-vocabulary swap and bullet-flattening passes.
-    const finalAnswer = flattenAttributeBulletLines(
-      applyTerminologySwaps(stripHallucinatedProductListings(answer, catalogProducts), agentProfile?.brandLanguage)
-    );
+    // Guaranteed brand-vocabulary swap (e.g. "পণ্য" → "মিষ্টি") — the system
+    // prompt already asks the model to do this, but that's a hint, not a
+    // promise; this is the actual enforcement so a saved Word Swap is never
+    // silently skipped in what the customer receives.
+    const finalAnswer = applyTerminologySwaps(answer, agentProfile?.brandLanguage);
 
     const noKnowledgeMatch = results.length === 0;
 
@@ -963,7 +907,29 @@ export async function POST(req: NextRequest) {
     // guess (e.g. a stale conversation.lastProductId from several turns
     // back) — sending both means the customer gets one right photo and one
     // wrong/extra one.
+    // Extra guard: even when matchedProduct resolves to something real, don't
+    // auto-resend its photo/card if we already sent one for this exact
+    // product earlier in this SAME conversation recently (e.g. during an
+    // ongoing order flow — "2 pcs" → "here's your address?" → "confirmed" —
+    // where the product name keeps getting mentioned every turn but the
+    // customer never asked to see the photo again). An explicit re-request
+    // still works fine, since that goes through the send_product_photo TOOL
+    // path (toolSentPhotoForProductId), which this check doesn't touch.
+    let recentDuplicateSend = false;
     if ((matchedProduct?.imageUrl || matchedProduct?.retailerId) && !toolSentPhotoForProductId) {
+      const recentSend = await prisma.message.findFirst({
+        where: {
+          conversationId: conversation.id,
+          sender: "AI",
+          content: { contains: matchedProduct.name },
+          createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      recentDuplicateSend = !!recentSend && recentSend.content.startsWith("[Sent");
+    }
+
+    if ((matchedProduct?.imageUrl || matchedProduct?.retailerId) && !toolSentPhotoForProductId && !recentDuplicateSend) {
       try {
         const { sentWithCard, sentAsCarousel, sentNames } = await sendProductCardOrVariants(
           from,
