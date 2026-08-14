@@ -424,27 +424,41 @@ export async function createMetaMessageTemplate(params: {
 
   const components: Record<string, unknown>[] = [];
 
-  if (params.headerType === "TEXT" && params.headerText?.trim()) {
-    components.push({ type: "HEADER", format: "TEXT", text: params.headerText.trim().slice(0, 60) });
-  } else if (params.headerType === "IMAGE" && params.headerImageUrl) {
-    const handle = await uploadMediaHandleForTemplate(params.headerImageUrl);
-    components.push({ type: "HEADER", format: "IMAGE", example: { header_handle: [handle] } });
-  }
+  if (params.category === "AUTHENTICATION") {
+    // Meta's Authentication category has a fixed, Meta-written body ("<code>
+    // is your verification code.") — it does NOT accept custom header/body/
+    // footer text at all; submitting one (as this form used to, for every
+    // category) gets silently rejected on review. The only things a
+    // business can configure here are the two toggles below and an optional
+    // OTP button, so any header/body/footer text typed into the form is
+    // intentionally ignored for this one category and Meta's required shape
+    // is built directly instead.
+    components.push({ type: "BODY", add_security_recommendation: true });
+    components.push({ type: "FOOTER", code_expiration_minutes: 10 });
+    components.push({ type: "BUTTONS", buttons: [{ type: "OTP", otp_type: "COPY_CODE" }] });
+  } else {
+    if (params.headerType === "TEXT" && params.headerText?.trim()) {
+      components.push({ type: "HEADER", format: "TEXT", text: params.headerText.trim().slice(0, 60) });
+    } else if (params.headerType === "IMAGE" && params.headerImageUrl) {
+      const handle = await uploadMediaHandleForTemplate(params.headerImageUrl);
+      components.push({ type: "HEADER", format: "IMAGE", example: { header_handle: [handle] } });
+    }
 
-  const example = buildBodyExample(params.bodyText);
-  const bodyComponent: Record<string, unknown> = { type: "BODY", text: params.bodyText };
-  if (example) {
-    bodyComponent.example = { body_text: [example] };
-  }
-  components.push(bodyComponent);
+    const example = buildBodyExample(params.bodyText);
+    const bodyComponent: Record<string, unknown> = { type: "BODY", text: params.bodyText };
+    if (example) {
+      bodyComponent.example = { body_text: [example] };
+    }
+    components.push(bodyComponent);
 
-  if (params.footerText?.trim()) {
-    components.push({ type: "FOOTER", text: params.footerText.trim().slice(0, 60) });
-  }
+    if (params.footerText?.trim()) {
+      components.push({ type: "FOOTER", text: params.footerText.trim().slice(0, 60) });
+    }
 
-  const buttonsComponent = buildButtonsComponent(params.buttons);
-  if (buttonsComponent) {
-    components.push(buttonsComponent);
+    const buttonsComponent = buildButtonsComponent(params.buttons);
+    if (buttonsComponent) {
+      components.push(buttonsComponent);
+    }
   }
 
   const res = await fetch(`${WHATSAPP_API_BASE}/${wabaId}/message_templates`, {
