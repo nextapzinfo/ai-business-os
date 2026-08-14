@@ -9,6 +9,8 @@ import {
   PLACE_ORDER_TOOL,
   REQUEST_HANDOFF_TOOL,
   SEND_PRODUCT_PHOTO_TOOL,
+  CHECK_ORDER_STATUS_TOOL,
+  CHECK_PRODUCT_STOCK_TOOL,
   applyTerminologySwaps,
   stripHallucinatedProductListings,
   type ToolDefinition,
@@ -22,6 +24,11 @@ import {
   sendWhatsAppProductListMessage,
   downloadWhatsAppMedia,
 } from "@/lib/whatsapp";
+import {
+  isBanglarDoiIntegrationEnabled,
+  fetchBanglarDoiOrderStatus,
+  fetchBanglarDoiProductStock,
+} from "@/lib/banglardoi";
 import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
 import { logAiUsage } from "@/lib/billing";
@@ -657,6 +664,11 @@ export async function POST(req: NextRequest) {
     if (agentProfile?.skillReminders) tools.push(SET_REMINDER_TOOL);
     if (agentProfile?.skillTrackInterest) tools.push(RECORD_INTEREST_TOOL);
     if (agentProfile?.skillTakeOrders) tools.push(PLACE_ORDER_TOOL);
+    // Phase 9 — real Banglar Doi order/stock lookups, not a Skills toggle
+    // (see CHECK_ORDER_STATUS_TOOL's comment in lib/llm.ts for why).
+    if (organization.vertical === "RETAIL" && isBanglarDoiIntegrationEnabled()) {
+      tools.push(CHECK_ORDER_STATUS_TOOL, CHECK_PRODUCT_STOCK_TOOL);
+    }
 
     // Tracks a product photo already sent via the send_product_photo tool this
     // reply, so the automatic RAG-matched send below doesn't fire a duplicate
@@ -892,6 +904,55 @@ export async function POST(req: NextRequest) {
           metadata: { clientId: client!.id, orderId: order.id, items, deliveryAddress },
         });
         return `Order recorded: ${items}. Our team will confirm shortly.`;
+      }
+      if (name === "check_order_status") {
+        try {
+          const orders = await fetchBanglarDoiOrderStatus(client!.phone);
+          if (orders.length === 0) {
+            return "No orders were found for this customer's WhatsApp number — tell them honestly you don't see any orders on file for this number, and ask if they ordered using a different phone number.";
+          }
+          const summary = orders
+            .map((o) => {
+              const lastUpdate = o.lastUpdate
+                ? `, last update: ${o.lastUpdate.status.replace(/_/g, " ").toLowerCase()}${
+                    o.lastUpdate.note ? ` (${o.lastUpdate.note})` : ""
+                  } at ${o.lastUpdate.at}`
+                : "";
+              return `Order ${o.orderNumber}: ${o.status.replace(/_/g, " ").toLowerCase()}, placed ${o.placedAt}, total ${o.total}, items: ${o.items.join(", ")}${lastUpdate}`;
+            })
+            .join("\n");
+          return `Here are this customer's real recent orders, most recent first — answer using only this data, don't invent anything beyond it:\n${summary}`;
+        } catch (err) {
+          console.error("check_order_status tool failed:", err);
+          return "Order lookup failed due to a technical issue — apologize briefly and say you'll check and follow up shortly, don't guess a status.";
+        }
+      }
+      if (name === "check_product_stock") {
+        const productName = (args.productName as string)?.trim();
+        if (!productName) return "No product specified — nothing looked up.";
+        try {
+          const products = await fetchBanglarDoiProductStock(productName);
+          if (products.length === 0) {
+            return `No matching product found for "${productName}" in the live catalog — tell the customer honestly, don't guess a price or availability.`;
+          }
+          const summary = products
+            .map(
+              (p) =>
+                `${p.name}: ${p.variants
+                  .map(
+                    (v) =>
+                      `${v.label} — ${v.price}${v.minOrderQty > 1 ? ` (min order ${v.minOrderQty})` : ""} — ${
+                        v.inStock ? "in stock" : "OUT OF STOCK"
+                      }`
+                  )
+                  .join("; ")}`
+            )
+            .join("\n");
+          return `Live catalog data for "${productName}" — this may be more current than what you were taught, prefer it if it conflicts:\n${summary}`;
+        } catch (err) {
+          console.error("check_product_stock tool failed:", err);
+          return "Stock lookup failed due to a technical issue — answer from what you already know, but mention you'll confirm exact availability.";
+        }
       }
       return "Unknown tool.";
     }

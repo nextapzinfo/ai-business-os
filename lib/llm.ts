@@ -705,6 +705,44 @@ export const SEND_PRODUCT_PHOTO_TOOL: ToolDefinition = {
   },
 };
 
+// Phase 9 — Banglar Doi-specific live-data lookups (see lib/banglardoi.ts).
+// Not gated by a Skills toggle in Agent Studio like the others — included
+// only when isBanglarDoiIntegrationEnabled() and organization.vertical ===
+// "RETAIL" (see webhook route.ts), since real order/stock lookups only make
+// sense for the one retail business this is wired up for today.
+export const CHECK_ORDER_STATUS_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "check_order_status",
+    description:
+      "Look up the customer's own real recent orders — status, items, total, and the latest update — using live store data. Use this whenever the customer asks about an order they placed, e.g. 'where is my order', 'order ekhono ashini', 'ordar ta ki holo', or asks for a delivery update/tracking. Never guess or invent a status — always call this tool first and answer only from what it returns. Takes no input; the lookup uses the customer's own WhatsApp number automatically.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+};
+
+export const CHECK_PRODUCT_STOCK_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "check_product_stock",
+    description:
+      "Check a specific product's real, live price and stock availability before confidently answering a price or 'is it available' / 'stock ache?' question. This may be more current than what you were taught during onboarding — prefer this tool's answer over your own memory whenever they conflict.",
+    parameters: {
+      type: "object",
+      properties: {
+        productName: {
+          type: "string",
+          description: "The product name being asked about, as close as possible to how it's listed in the catalog.",
+        },
+      },
+      required: ["productName"],
+    },
+  },
+};
+
 // ---- Teach AI chat (Agent Studio / Training page) ----
 // Lets the business owner update the AI's knowledge conversationally instead
 // of filling out forms — "Sorbhaja er dam ekhon 260" should just work, the
