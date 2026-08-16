@@ -523,8 +523,13 @@ export async function debugLookupMetaTemplate(name: string): Promise<Array<Recor
     throw new Error("WHATSAPP_ACCESS_TOKEN or WHATSAPP_BUSINESS_ACCOUNT_ID is not set");
   }
 
+  // Meta's docs only officially support ?name= as a filter on DELETE, not
+  // GET — an earlier version of this filtered the GET by name directly and
+  // it silently came back empty even for templates confirmed to exist (by
+  // ID lookup). Fetching the full list and filtering client-side avoids
+  // relying on that undocumented behavior.
   const res = await fetch(
-    `${WHATSAPP_API_BASE}/${wabaId}/message_templates?name=${encodeURIComponent(name)}&fields=name,language,status,category,id,rejected_reason`,
+    `${WHATSAPP_API_BASE}/${wabaId}/message_templates?fields=name,language,status,category,id,rejected_reason&limit=200`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
   const data = await res.json();
@@ -532,7 +537,9 @@ export async function debugLookupMetaTemplate(name: string): Promise<Array<Recor
     const errMessage = data?.error?.message || JSON.stringify(data);
     throw new Error(`Meta template lookup failed: ${res.status} ${errMessage}`);
   }
-  return (data.data as Array<Record<string, unknown>>) || [];
+  const all = (data.data as Array<Record<string, unknown>>) || [];
+  const target = name.trim().toLowerCase();
+  return all.filter((t) => String(t.name ?? "").trim().toLowerCase() === target);
 }
 
 // Deletes a template from Meta by name (removes all language variants of that
