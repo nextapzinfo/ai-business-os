@@ -7,6 +7,7 @@ import {
   createMetaMessageTemplate,
   getMetaTemplateStatus,
   deleteMetaMessageTemplate,
+  debugLookupMetaTemplate,
   type TemplateButtonInput,
 } from "@/lib/whatsapp";
 import { revalidatePath } from "next/cache";
@@ -128,6 +129,45 @@ export async function refreshStatus(formData: FormData) {
     });
   } catch (err) {
     console.error("Template status refresh failed:", err);
+  }
+
+  revalidatePath("/dashboard/templates");
+}
+
+// Debug tool: fetches what Meta's sending infrastructure actually has on
+// file for this template name (every language variant it knows about) and
+// writes it into the same rejectionReason field the preview popup already
+// displays — reusing that instead of a new field/UI so this shows up
+// immediately without any schema change. Meant for troubleshooting a send
+// failure ("template name does not exist in <language>") by comparing
+// against what's shown here vs. what our own dashboard was created with.
+export async function debugMetaTemplate(formData: FormData) {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const templateId = formData.get("templateId") as string;
+  const template = await prisma.messageTemplate.findFirst({
+    where: { id: templateId, organizationId: user.organizationId },
+  });
+  if (!template) return;
+
+  try {
+    const results = await debugLookupMetaTemplate(template.metaTemplateName);
+    const summary =
+      results.length === 0
+        ? `[Live Meta check] No template named "${template.metaTemplateName}" found on Meta's side at all.`
+        : `[Live Meta check] ${results
+            .map((r) => `language=${r.language} status=${r.status} category=${r.category} id=${r.id}`)
+            .join(" | ")}`;
+    await prisma.messageTemplate.update({
+      where: { id: template.id },
+      data: { rejectionReason: summary },
+    });
+  } catch (err) {
+    await prisma.messageTemplate.update({
+      where: { id: template.id },
+      data: { rejectionReason: `[Live Meta check failed] ${String(err)}` },
+    });
   }
 
   revalidatePath("/dashboard/templates");

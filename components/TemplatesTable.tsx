@@ -5,7 +5,7 @@ import { X } from "lucide-react";
 import { formatDate } from "@/lib/formatDate";
 import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
 import WhatsAppTemplatePreview, { type PreviewButton } from "@/components/WhatsAppTemplatePreview";
-import { refreshStatus, deleteTemplate } from "@/app/dashboard/templates/actions";
+import { refreshStatus, deleteTemplate, debugMetaTemplate } from "@/app/dashboard/templates/actions";
 
 export type TemplateRow = {
   id: string;
@@ -108,6 +108,18 @@ export default function TemplatesTable({ templates }: { templates: TemplateRow[]
                         </button>
                       </form>
                     )}
+                    {t.metaTemplateId && (
+                      <form action={debugMetaTemplate}>
+                        <input type="hidden" name="templateId" value={t.id} />
+                        <button
+                          type="submit"
+                          title="See exactly what Meta has on file for this template name/language — useful when a send fails"
+                          className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                        >
+                          Check on Meta
+                        </button>
+                      </form>
+                    )}
                     {t.broadcastCount === 0 ? (
                       <form action={deleteTemplate}>
                         <input type="hidden" name="templateId" value={t.id} />
@@ -161,8 +173,10 @@ export default function TemplatesTable({ templates }: { templates: TemplateRow[]
               <span>{previewing.category}</span>
               <span>{previewing.language}</span>
             </div>
-            {previewing.status === "REJECTED" && previewing.rejectionReason && (
-              <p className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-700">{previewing.rejectionReason}</p>
+            {previewing.rejectionReason && (
+              <p className="mt-2 whitespace-pre-wrap rounded-lg bg-red-50 p-2 text-xs text-red-700">
+                {previewing.rejectionReason}
+              </p>
             )}
             <div className="mt-3">
               <WhatsAppTemplatePreview
