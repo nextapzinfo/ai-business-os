@@ -491,7 +491,7 @@ Behave like a real, attentive salesperson working one sale at a time — if the 
 Formatting rules — this is WhatsApp, not a document. WhatsApp does NOT render Markdown headers or list syntax — if you write "###" or "##" it shows up as literal hash symbols, and a leading "- " shows up as a literal dash. NEVER use "#", "##", "###", or a leading "-" or "*" for list items. For emphasis use single asterisks like *this* (WhatsApp renders that as bold) — never double asterisks. When listing multiple DIFFERENT products or items together, put each one on its own line and use the bullet character "•" (not a hyphen) if you need a marker, e.g.:
 *SORBHAJA* — 5 pcs — ₹250
 *Laal Kheer Doi* — 500 gm — ₹300
-Keep it looking like a real WhatsApp message a person would type, not a formatted report.
+Keep it looking like a real WhatsApp message a person would type, not a formatted report. The price is NOT optional in that line, even for a general "what do you have" / "ki ki product ache" question where the customer didn't ask about price specifically — a listing reply that shows only the pack size/quantity (e.g. "SORBHAJA - 5 pcs") without a ₹ price for each item is wrong and incomplete. Always pull the real price for each item from the catalog list below and put it on the same line.
 
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
@@ -571,11 +571,11 @@ export const SAVE_ADDRESS_TOOL: ToolDefinition = {
   function: {
     name: "save_customer_address",
     description:
-      "Save or update the customer's delivery/home address on file. Use this whenever the customer shares their address, even a partial one.",
+      "Save or update the customer's delivery/home address on file. Use this whenever the customer shares their address, even a partial one — but a delivery address isn't complete until it has a house/street/flat detail AND a 6-digit PIN code (delivery fee, COD availability, and delivery time all depend on the PIN code). If the customer only gives an area/locality name (e.g. 'Sonarpur') with no PIN code and no street-level detail, still call this tool to save what they gave, but your reply must explicitly ask for the missing PIN code (and street/house detail if that's also missing) before treating the address as ready to deliver to or confirming any order against it.",
     parameters: {
       type: "object",
       properties: {
-        address: { type: "string", description: "The customer's full address, as they gave it." },
+        address: { type: "string", description: "The customer's full address, as they gave it — even if incomplete." },
       },
       required: ["address"],
     },
@@ -630,7 +630,7 @@ export const PLACE_ORDER_TOOL: ToolDefinition = {
   function: {
     name: "record_order",
     description:
-      "Record a new order for the customer. Only use this AFTER you've read the items/quantities back to the customer and they've confirmed it's correct — don't call this on the first mention of wanting to buy something, and don't call it more than once for the same order. IMPORTANT: before confirming, check the reference material for that product for any minimum order quantity or minimum pack size (e.g. 'min order 5 pcs'). If the customer's requested quantity is below that minimum, do NOT call this tool yet — tell them the minimum first and ask if they'd like to adjust the quantity, and never silently change their requested quantity without saying so out loud. ALSO IMPORTANT: only include items the customer is asking about in THIS current, still-open, not-yet-confirmed request. If an earlier message in this conversation already resulted in a separate confirmed/recorded order, do NOT pull those old items back into a new order's total — that double-counts them. Only merge multiple items into one order when the customer is clearly still building the same single unconfirmed cart across consecutive messages (e.g. 'I want X' then 'also add Y' before either was confirmed).",
+      "Record a new order for the customer. Only use this AFTER you've read the items/quantities back to the customer and they've confirmed it's correct — don't call this on the first mention of wanting to buy something, and don't call it more than once for the same order. IMPORTANT: before confirming, check the reference material for that product for any minimum order quantity or minimum pack size (e.g. 'min order 5 pcs'). If the customer's requested quantity is below that minimum, do NOT call this tool yet — tell them the minimum first and ask if they'd like to adjust the quantity, and never silently change their requested quantity without saying so out loud. ALSO IMPORTANT, if this is a delivery order (not in-store pickup): do NOT call this tool until the delivery address includes a house/street/flat-level detail AND a 6-digit PIN code — an area/locality name alone (e.g. just 'Sonarpur') is not a complete address. If the PIN code or street detail is still missing, ask for it and wait for the answer before recording the order; do not confirm or finalize an order against an incomplete address. FINALLY: only include items the customer is asking about in THIS current, still-open, not-yet-confirmed request. If an earlier message in this conversation already resulted in a separate confirmed/recorded order, do NOT pull those old items back into a new order's total — that double-counts them. Only merge multiple items into one order when the customer is clearly still building the same single unconfirmed cart across consecutive messages (e.g. 'I want X' then 'also add Y' before either was confirmed).",
     parameters: {
       type: "object",
       properties: {
@@ -640,7 +640,8 @@ export const PLACE_ORDER_TOOL: ToolDefinition = {
         },
         deliveryAddress: {
           type: "string",
-          description: "Delivery address, only if the customer wants delivery. Leave out if they're picking up in-store.",
+          description:
+            "Full delivery address, only if the customer wants delivery — must include house/street/flat detail AND a 6-digit PIN code, not just an area/locality name. Leave out entirely if they're picking up in-store.",
         },
         note: {
           type: "string",
@@ -813,14 +814,14 @@ export const UPDATE_STYLE_RULE_TOOL: ToolDefinition = {
   function: {
     name: "update_style_rule",
     description:
-      "Save a standing rule about HOW the AI should write or behave — tone, word choice, translation/wording corrections, formatting, phrases to always use or always avoid, or any other instruction meant to apply to every future reply, not just answer one factual question. Use this instead of add_knowledge_note whenever the owner is correcting the AI's writing/behavior, even if they illustrate it with one specific example (e.g. correcting a mistranslation in a Sorbhaja description means the rule should apply to all future descriptions, not just Sorbhaja).",
+      "Save a standing rule the AI should ALWAYS follow on every future reply — not just an answer to one factual question. This covers two kinds of rules: (1) HOW the AI should write or behave — tone, word choice, translation/wording corrections, formatting, phrases to always use or avoid; and (2) general operating/business POLICIES that apply broadly rather than to one specific existing product — e.g. 'minimum order is 5 pieces per product', 'always ask for the PIN code before confirming a delivery order', 'we don't deliver on Sundays'. Use this instead of add_knowledge_note whenever the instruction is meant to apply universally going forward, even if the owner illustrates it with one specific example or product (e.g. correcting a mistranslation in a Sorbhaja description, or saying 'ekhon theke shob product e minimum order 5 pcs' — both are general rules, not a fact about one product). The test: if a customer's question or order could come up for ANY product and this rule should still apply, it belongs here, not in update_product_info (which only touches one named existing product's own price/description) and not in add_knowledge_note (which is only reliably found by a closely-matching question, not enforced on every reply).",
     parameters: {
       type: "object",
       properties: {
         rule: {
           type: "string",
           description:
-            "The rule itself, rewritten as a clear, standalone, general instruction the AI should always follow — not tied to one specific past reply. E.g. 'Never translate \"cream\" as ক্রিম (সোর) — use দুধের সর. Use natural native Bengali, not literal English translations.'",
+            "The rule itself, rewritten as a clear, standalone, general instruction the AI should always follow — not tied to one specific past reply or single product. E.g. 'Never translate \"cream\" as ক্রিম (সোর) — use দুধের সর. Use natural native Bengali, not literal English translations.' or 'Minimum order is 5 pieces per product unless a product's own listing says otherwise — never accept or confirm a smaller quantity without first telling the customer the minimum.'",
         },
       },
       required: ["rule"],
@@ -844,9 +845,9 @@ export async function askTeachAI(
   const systemPrompt = `You are helping a small business owner update their WhatsApp AI assistant's knowledge, by chatting naturally with them in whatever mix of Bengali/English they use — reply in kind. They will tell you things like a price change, a new policy, a general fact to remember, or a correction to how the AI writes/behaves.
 
 Three tools, pick carefully:
-- update_product_info — ONLY for correcting an existing product's price or description.
-- update_style_rule — for a standing rule about HOW the AI should write or behave: tone, word choice, translation/wording corrections, formatting, phrases to use or avoid. Use this even when the owner illustrates the rule with one specific example (e.g. pointing out a mistranslation in one product's description) — the underlying rule is general and should apply everywhere, not just to that one product. This is the most commonly missed case: a message that LOOKS like a product correction but is actually teaching a general writing rule (word choice, natural phrasing, tone, formatting) belongs here, not in update_product_info or add_knowledge_note — using the wrong tool means the rule silently never gets applied again.
-- add_knowledge_note — for a new FACT or policy that isn't about one specific existing product and isn't a writing/behavior rule (store hours, delivery policy, a new offer, an FAQ answer).
+- update_product_info — ONLY for correcting a NAMED, existing product's own price or description (the rule only ever applies to that one specific product).
+- update_style_rule — for a standing rule that should apply on EVERY future reply, going forward, no matter what's being discussed. Two common shapes: (a) HOW the AI should write or behave — tone, word choice, translation/wording corrections, formatting, phrases to use or avoid; (b) a general operating/business POLICY that isn't scoped to one product — e.g. "minimum order is 5 pieces per product from now on", "always ask for the PIN code before confirming a delivery order", "no deliveries on Sundays". Use this even when the owner illustrates the rule with one specific example or product (e.g. pointing out a mistranslation in one product's description, or setting a minimum-order rule while mentioning one product) — the underlying rule is general and should apply everywhere, not just to that one instance. This is the most commonly missed case: a message that LOOKS like it's about one product but is actually teaching a general rule belongs here, not in update_product_info or add_knowledge_note — using the wrong tool means the rule silently never gets applied consistently again.
+- add_knowledge_note — for a new FACT that answers a specific question when asked, but does NOT need to be actively applied/enforced on every reply (store hours, a new offer, an FAQ-style answer). If in doubt between this and update_style_rule, ask: "should this change how the AI behaves on every reply, or just be available if someone asks about this exact topic?" — the former is update_style_rule.
 
 If you're not confident which applies, ask a short clarifying question instead of guessing or calling a tool.
 

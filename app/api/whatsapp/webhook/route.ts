@@ -1066,18 +1066,30 @@ export async function POST(req: NextRequest) {
     // customer never asked to see the photo again). An explicit re-request
     // still works fine, since that goes through the send_product_photo TOOL
     // path (toolSentPhotoForProductId), which this check doesn't touch.
+    // BUG FIX (real incident: same product card resent on every single reply
+    // for the rest of a conversation, e.g. during an order flow where the
+    // running order recap keeps repeating the product name every turn): this
+    // used to fetch the MOST RECENT AI message merely CONTAINING the product
+    // name, then separately check whether that one happened to start with
+    // "[Sent". Since the AI's own plain-text replies (order recaps, "your
+    // address has been saved", etc.) legitimately mention the product name
+    // too and are always more recent than the last actual photo-send log
+    // entry, `findFirst` kept returning that plain-text message — which
+    // never starts with "[Sent" — so the guard evaluated to false and never
+    // engaged. Fix: filter for a "[Sent...]" log entry AND the product name
+    // in the SAME query, so only an actual prior photo/card send counts.
     let recentDuplicateSend = false;
     if ((matchedProduct?.imageUrl || matchedProduct?.retailerId) && !toolSentPhotoForProductId) {
       const recentSend = await prisma.message.findFirst({
         where: {
           conversationId: conversation.id,
           sender: "AI",
-          content: { contains: matchedProduct.name },
+          AND: [{ content: { startsWith: "[Sent" } }, { content: { contains: matchedProduct.name } }],
           createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
         },
         orderBy: { createdAt: "desc" },
       });
-      recentDuplicateSend = !!recentSend && recentSend.content.startsWith("[Sent");
+      recentDuplicateSend = !!recentSend;
     }
 
     if ((matchedProduct?.imageUrl || matchedProduct?.retailerId) && !toolSentPhotoForProductId && !recentDuplicateSend) {
