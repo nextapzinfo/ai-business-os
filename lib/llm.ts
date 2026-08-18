@@ -387,7 +387,8 @@ function buildSystemPrompt(
   contextBlock: string,
   hasTools: boolean,
   photoNote: string = "",
-  catalogProducts: CatalogProduct[] = []
+  catalogProducts: CatalogProduct[] = [],
+  businessRulesNote: string | null = null
 ): string {
   const businessName = profile?.businessName?.trim() || "the business";
   const description = profile?.businessDescription?.trim();
@@ -406,6 +407,16 @@ function buildSystemPrompt(
     : "";
 
   const photoInstructionNote = photoNote ? `\n\n${photoNote}` : "";
+
+  // Business Rule Engine note (lib/business-rules.ts) — the ONLY source of
+  // truth for delivery fee/minimum order/campaign numbers. Placed ahead of
+  // catalogNote and brandLanguageNote to match the stated priority
+  // hierarchy: Hard Business Rules + Live/current data + Active campaign
+  // rules come before Product knowledge and Brand language/style. Computed
+  // by the caller (route.ts) via buildBusinessRulesNote() and passed in here
+  // — buildSystemPrompt itself stays synchronous, same pattern already used
+  // for photoNote/catalogProducts below.
+  const businessRulesNoteText = businessRulesNote ? `\n\n${businessRulesNote}` : "";
 
   // Hard grounding list — a general "never invent facts" instruction already
   // existed below and still wasn't enough on its own by itself (real
@@ -495,7 +506,7 @@ Keep it looking like a real WhatsApp message a person would type, not a formatte
 
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
-Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions. If a source titled "EXACT CURRENT INFO — [product name]" is present, that is the ground-truth, freshly-fetched record for the product this conversation is currently about — trust it over any other source AND over anything you yourself said earlier in this same conversation, for that product's price, description, or minimum order quantity. If you notice you stated a different number for this product earlier in the conversation, this fresh record is correct and your earlier statement was wrong — correct yourself plainly rather than repeating the old number for consistency. Other similar-sounding products' details must never be substituted in its place.${toolsNote}${customInstructionsNote}${brandLanguageNote}${photoInstructionNote}${catalogNote}${priceFormatNote}
+Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions. If a source titled "EXACT CURRENT INFO — [product name]" is present, that is the ground-truth, freshly-fetched record for the product this conversation is currently about — trust it over any other source AND over anything you yourself said earlier in this same conversation, for that product's price, description, or minimum order quantity. If you notice you stated a different number for this product earlier in the conversation, this fresh record is correct and your earlier statement was wrong — correct yourself plainly rather than repeating the old number for consistency. Other similar-sounding products' details must never be substituted in its place.${toolsNote}${customInstructionsNote}${businessRulesNoteText}${brandLanguageNote}${photoInstructionNote}${catalogNote}${priceFormatNote}
 
 Reference material:
 ${contextBlock}`;
@@ -509,7 +520,8 @@ export async function askAI(
   profile?: AgentProfileInput,
   history: ChatHistoryMessage[] = [],
   photoNote: string = "",
-  catalogProducts: CatalogProduct[] = []
+  catalogProducts: CatalogProduct[] = [],
+  businessRulesNote: string | null = null
 ): Promise<AiCallResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
@@ -518,7 +530,7 @@ export async function askAI(
     .map((s, i) => `[Source ${i + 1}: ${s.title}]\n${s.content}`)
     .join("\n\n---\n\n");
 
-  const systemPrompt = buildSystemPrompt(profile, contextBlock, false, photoNote, catalogProducts);
+  const systemPrompt = buildSystemPrompt(profile, contextBlock, false, photoNote, catalogProducts, businessRulesNote);
 
   const res = await fetch(OPENAI_CHAT_URL, {
     method: "POST",
@@ -576,6 +588,11 @@ export const SAVE_ADDRESS_TOOL: ToolDefinition = {
       type: "object",
       properties: {
         address: { type: "string", description: "The customer's full address, as they gave it — even if incomplete." },
+        pincode: {
+          type: "string",
+          description:
+            "The customer's 6-digit PIN code, if they gave one (even if the rest of the address is on file already or still incomplete) — extract it separately here even though it also appears inside `address`, so it can be used to look up delivery fee/minimum order for their area.",
+        },
       },
       required: ["address"],
     },
@@ -646,6 +663,11 @@ export const PLACE_ORDER_TOOL: ToolDefinition = {
         note: {
           type: "string",
           description: "Any other instruction from the customer, e.g. preferred delivery time.",
+        },
+        estimatedTotal: {
+          type: "number",
+          description:
+            "Your best-effort total ₹ amount for this order, computed from the real catalog prices/quantities you already have (e.g. 2 × ₹180 + 1 × ₹110 = ₹470). Used only to check delivery-zone minimum-order and delivery-fee rules — not treated as the final bill, which staff confirm separately. Always include this when you can compute it; if you genuinely can't (e.g. price wasn't confirmed), omit it rather than guessing.",
         },
       },
       required: ["items"],
@@ -942,20 +964,21 @@ export async function askAIWithTools(
   executeTool: ToolExecutor,
   history: ChatHistoryMessage[] = [],
   photoNote: string = "",
-  catalogProducts: CatalogProduct[] = []
+  catalogProducts: CatalogProduct[] = [],
+  businessRulesNote: string | null = null
 ): Promise<AiCallResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
   if (tools.length === 0) {
-    return askAI(question, sources, profile, history, photoNote, catalogProducts);
+    return askAI(question, sources, profile, history, photoNote, catalogProducts, businessRulesNote);
   }
 
   const contextBlock = sources
     .map((s, i) => `[Source ${i + 1}: ${s.title}]\n${s.content}`)
     .join("\n\n---\n\n");
 
-  const systemPrompt = buildSystemPrompt(profile, contextBlock, true, photoNote, catalogProducts);
+  const systemPrompt = buildSystemPrompt(profile, contextBlock, true, photoNote, catalogProducts, businessRulesNote);
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },

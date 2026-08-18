@@ -29,6 +29,13 @@ import {
   fetchBanglarDoiOrderStatus,
   fetchBanglarDoiProductStock,
 } from "@/lib/banglardoi";
+import {
+  resolveDeliveryZone,
+  buildBusinessRulesNote,
+  validateOrderState,
+  validateBusinessClaims,
+  resolveActiveCampaign,
+} from "@/lib/business-rules";
 import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
 import { logAiUsage } from "@/lib/billing";
@@ -395,6 +402,27 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         console.error("QR send failed:", err);
         // fall through to the normal RAG answer if sending the QR fails
+      }
+    }
+
+    // Deterministic PIN code detection — Intent/Entity layer, no LLM call
+    // needed for this: a 6-digit PIN code is 100% regex-identifiable. Feeds
+    // conversation.pincode (survives even when the customer doesn't repeat
+    // it every message, same "current message first, then conversation
+    // memory" pattern already used below for lastProductId) and is what
+    // buildBusinessRulesNote() uses to compute the one authoritative
+    // delivery-fee/minimum-order/campaign block injected into this reply.
+    const PINCODE_REGEX = /\b[1-9][0-9]{5}\b/;
+    const pincodeMatch = text.match(PINCODE_REGEX);
+    const effectivePincode: string | null = pincodeMatch ? pincodeMatch[0] : conversation.pincode;
+    if (pincodeMatch && conversation.pincode !== pincodeMatch[0]) {
+      try {
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { pincode: pincodeMatch[0] },
+        });
+      } catch (err) {
+        console.error("Failed to update conversation.pincode:", err);
       }
     }
 
@@ -828,13 +856,33 @@ export async function POST(req: NextRequest) {
       if (name === "save_customer_address") {
         const address = (args.address as string)?.trim();
         if (!address) return "No address was given — nothing saved.";
-        await prisma.client.update({ where: { id: client!.id }, data: { address } });
+
+        // Pincode capture — prefer what the model explicitly extracted, fall
+        // back to pulling a 6-digit PIN straight out of the address text
+        // itself (same deterministic regex used at message-intake time).
+        // Written to both Client.pinCode (staff-facing record) and
+        // Conversation.pincode (what lib/business-rules.ts actually reads
+        // for delivery-fee/minimum-order/campaign lookups) so a pincode
+        // given here is usable immediately, not only after a staff edit.
+        const pincodeArg = (args.pincode as string)?.trim();
+        const pincodeFromAddress = address.match(/\b[1-9][0-9]{5}\b/)?.[0];
+        const pincode = pincodeArg && /^[1-9][0-9]{5}$/.test(pincodeArg) ? pincodeArg : pincodeFromAddress;
+
+        await prisma.client.update({
+          where: { id: client!.id },
+          data: { address, ...(pincode ? { pinCode: pincode } : {}) },
+        });
+        if (pincode && conversation!.pincode !== pincode) {
+          await prisma.conversation
+            .update({ where: { id: conversation!.id }, data: { pincode } })
+            .catch((err: unknown) => console.error("Failed to update conversation.pincode:", err));
+        }
         await logAudit({
           organizationId: organization!.id,
           action: "CLIENT_ADDRESS_SAVED_BY_AI",
-          metadata: { clientId: client!.id, address },
+          metadata: { clientId: client!.id, address, pincode },
         });
-        return `Saved address: ${address}`;
+        return `Saved address: ${address}${pincode ? ` (PIN ${pincode})` : ""}`;
       }
       if (name === "set_reminder") {
         const title = (args.title as string)?.trim();
@@ -887,6 +935,39 @@ export async function POST(req: NextRequest) {
 
         const deliveryAddress = (args.deliveryAddress as string)?.trim() || undefined;
         const note = (args.note as string)?.trim() || undefined;
+        const estimatedTotalRaw = args.estimatedTotal;
+        const estimatedTotal =
+          typeof estimatedTotalRaw === "number" && isFinite(estimatedTotalRaw) ? estimatedTotalRaw : null;
+
+        // Tool Safety backstop (lib/business-rules.ts validateOrderState) —
+        // the hard code-level check behind PLACE_ORDER_TOOL's prompt
+        // instructions. Runs for RETAIL orgs whenever a delivery address was
+        // given; in-store pickup (no deliveryAddress) skips all of this.
+        // Blocked here means the Order row is NEVER created and the model is
+        // told exactly why, so it asks the customer for what's missing on
+        // its next reply instead of confirming an order that isn't actually
+        // deliverable yet.
+        if (organization!.vertical === "RETAIL" && deliveryAddress) {
+          const pincodeFromArg = deliveryAddress.match(/\b[1-9][0-9]{5}\b/)?.[0] ?? null;
+          const pincode = pincodeFromArg ?? conversation!.pincode ?? null;
+          const validation = await validateOrderState({
+            organizationId: organization!.id,
+            orderAmount: estimatedTotal ?? 0,
+            pincode,
+            addressLine: deliveryAddress,
+            isDelivery: true,
+          });
+          // A zero/unknown estimatedTotal would otherwise fail every
+          // minimum-order check by default — only enforce that specific
+          // blocker when we actually have a real amount to check; address/
+          // PIN-code completeness is still always enforced either way.
+          const blockers = validation.blockers.filter(
+            (b) => estimatedTotal !== null || !b.startsWith("Order total")
+          );
+          if (blockers.length > 0) {
+            return `ORDER_BLOCKED: ${blockers.join(" ")} Do not tell the customer the order is confirmed — ask for what's missing instead.`;
+          }
+        }
 
         const order = await prisma.order.create({
           data: {
@@ -896,12 +977,13 @@ export async function POST(req: NextRequest) {
             deliveryAddress,
             note,
             status: "PENDING",
+            ...(estimatedTotal !== null ? { totalAmount: estimatedTotal } : {}),
           },
         });
         await logAudit({
           organizationId: organization!.id,
           action: "ORDER_RECORDED_BY_AI",
-          metadata: { clientId: client!.id, orderId: order.id, items, deliveryAddress },
+          metadata: { clientId: client!.id, orderId: order.id, items, deliveryAddress, estimatedTotal },
         });
         return `Order recorded: ${items}. Our team will confirm shortly.`;
       }
@@ -970,6 +1052,16 @@ export async function POST(req: NextRequest) {
       select: { name: true, price: true, description: true },
     });
 
+    // Business Rule Engine note (lib/business-rules.ts) — the authoritative
+    // delivery-fee/minimum-order/active-campaign facts for this customer's
+    // known PIN code, computed fresh from DeliveryZone/Campaign every reply
+    // (never cached, never guessed). null when no PIN code is known yet —
+    // buildSystemPrompt simply omits the block in that case rather than
+    // stating a number that isn't backed by a real configured zone. RETAIL-
+    // vertical only, same gating already used for the Banglar Doi tools.
+    const businessRulesNote =
+      organization.vertical === "RETAIL" ? await buildBusinessRulesNote(organization.id, effectivePincode) : null;
+
     // REQUEST_HANDOFF_TOOL is always in `tools` now (see above), so this always
     // goes through the real model — including zero-RAG-match questions, which
     // now get an honest "I don't know, let me get someone" instead of the old
@@ -986,7 +1078,8 @@ export async function POST(req: NextRequest) {
       executeTool,
       history,
       photoNote,
-      catalogProducts
+      catalogProducts,
+      businessRulesNote
     );
     await logAiUsage(organization.id, "webhook_reply", usage);
 
@@ -1026,11 +1119,33 @@ export async function POST(req: NextRequest) {
     // stripHallucinatedProductListings in lib/llm.ts).
     const hallucinationChecked = stripHallucinatedProductListings(answer, catalogProducts);
 
+    // Business Claim Validation backstop — the code-level check behind the
+    // businessRulesNote prompt text above. Re-resolves the same zone/
+    // campaign fresh (not reused from the note step, so this checks against
+    // the current live truth right before sending) and strips any sentence
+    // in the AI's reply that quotes a ₹ delivery/minimum-order/campaign
+    // number not backed by a real configured value. Only runs when a PIN
+    // code is actually known — with none known, there's nothing authoritative
+    // to check against, so the reply is left alone (same conservative, only-
+    // check-what-we-can-verify approach as the hallucination filter above).
+    let claimChecked = hallucinationChecked;
+    if (organization.vertical === "RETAIL" && effectivePincode) {
+      const zoneForCheck = await resolveDeliveryZone(effectivePincode, organization.id);
+      if (zoneForCheck) {
+        const campaignForCheck = await resolveActiveCampaign(organization.id, zoneForCheck.id, new Date());
+        claimChecked = validateBusinessClaims(hallucinationChecked, {
+          zone: zoneForCheck,
+          campaign: campaignForCheck,
+          orderAmount: null,
+        });
+      }
+    }
+
     // Guaranteed brand-vocabulary swap (e.g. "পণ্য" → "মিষ্টি") — the system
     // prompt already asks the model to do this, but that's a hint, not a
     // promise; this is the actual enforcement so a saved Word Swap is never
     // silently skipped in what the customer receives.
-    const finalAnswer = applyTerminologySwaps(hallucinationChecked, agentProfile?.brandLanguage);
+    const finalAnswer = applyTerminologySwaps(claimChecked, agentProfile?.brandLanguage);
 
     const noKnowledgeMatch = results.length === 0;
 

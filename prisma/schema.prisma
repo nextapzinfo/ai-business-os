@@ -65,6 +65,8 @@ model Organization {
   conversationInsights ConversationInsight[]
   aiUsageLogs      AiUsageLog[]
   whatsAppCostLogs WhatsAppCostLog[]
+  deliveryZones    DeliveryZone[]
+  campaigns        Campaign[]
 }
 
 // Configures how the WhatsApp AI presents itself and behaves — replaces the
@@ -184,6 +186,20 @@ model Conversation {
   handoffReason  String?      // set by the AI itself (request_human_handoff tool) when it escalates — cleared when staff replies or resumes AI; distinguishes an AI-initiated escalation from a staff manually pausing
   lastFollowUpAt DateTime?    // set when the AI Follow-up cron sends a nudge template — prevents sending more than once
   lastProductId  String?      // last Product this conversation clearly resolved to (RAG match or send_product_photo tool) — lets a context-only "pic ache?" follow-up (no product name repeated) still find the right product. Loose reference, not a hard FK, so a deleted product doesn't break the conversation.
+
+  // Lightweight persisted conversation state (business-rules architecture,
+  // Aug 2026) — deliberately a handful of typed fields, not a formal state
+  // machine. Updated after each turn; used to (a) let the AI carry forward
+  // what it already knows without re-deriving it from raw message history
+  // every time, and (b) let lib/business-rules.ts resolve delivery/campaign
+  // facts without waiting on the customer to repeat their PIN code. None of
+  // these are trusted blindly for a business decision — record_order always
+  // re-validates against live DeliveryZone/Campaign rows via validateOrderState().
+  pincode            String?   // last 6-digit PIN code the customer gave in this conversation (deterministic regex match, or the save_customer_address tool) — kept separate from Client.pinCode (staff-entered on the Add Client form) since this is customer-stated and should be usable immediately, before any staff edit
+  deliveryZoneId     String?   // resolved from pincode via resolveDeliveryZone() — loose reference, not a hard FK, so a deleted/renamed zone doesn't break the conversation
+  conversationStage  String?   // informational label only, not an enforced transition graph: browsing, collecting_address, order_pending, confirmed — set by simple rules in the webhook, never itself used to gate a business rule
+  cartState          Json?     // small in-progress snapshot the model last confirmed: [{ productId, name, qty }] — helps the model stay consistent turn-to-turn; NEVER the source of truth for an order total, which record_order always computes fresh from its own tool-call arguments
+
   createdAt      DateTime     @default(now())
 
   messages Message[]
@@ -393,6 +409,87 @@ model Order {
 
   @@index([organizationId])
   @@index([clientId])
+}
+
+// ---------------------------------------------------------------------------
+// Business Rule Engine data (Aug 2026) — the authoritative source for every
+// delivery fee, minimum order, and campaign offer the AI is allowed to quote.
+// lib/business-rules.ts reads only from these tables (plus Organization); the
+// AI itself never computes or invents a delivery number — see
+// docs/ai-business-os-architecture-assessment.md for the full rationale.
+// RETAIL-vertical only; unused/empty for other verticals with zero effect.
+// ---------------------------------------------------------------------------
+
+// A named delivery area (e.g. "Kolkata & Covered Areas", "Hooghly"), matched
+// to a customer's PIN code via ZonePincode. Tiered fees live on DeliveryTier;
+// a time-boxed promotional override lives on Campaign.
+model DeliveryZone {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String // e.g. "Kolkata & Covered Areas", "Hooghly"
+  minOrderAmount Float        @default(0) // ₹ — orders below this can't be delivered to this zone at all (0 = no minimum)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  pincodes  ZonePincode[]
+  tiers     DeliveryTier[]
+  campaigns Campaign[]
+
+  @@index([organizationId])
+}
+
+// One delivery-fee tier within a zone, e.g. "₹350–599 → ₹100 delivery".
+// Tiers within a zone should not overlap. maxAmount = null means "and above"
+// (typically the free-delivery tier, feeAmount 0).
+model DeliveryTier {
+  id             String       @id @default(cuid())
+  deliveryZoneId String
+  deliveryZone   DeliveryZone @relation(fields: [deliveryZoneId], references: [id], onDelete: Cascade)
+  minAmount      Float // ₹ inclusive lower bound
+  maxAmount      Float? // ₹ inclusive upper bound; null = no upper bound
+  feeAmount      Float // ₹ delivery charge for orders in this range (0 = free)
+
+  @@index([deliveryZoneId])
+}
+
+// One PIN code → one DeliveryZone. A PIN code with no row here has no
+// resolvable zone: resolveDeliveryZone() returns null rather than guessing,
+// so the AI must ask which area the customer is in rather than quote a number.
+model ZonePincode {
+  id             String       @id @default(cuid())
+  deliveryZoneId String
+  deliveryZone   DeliveryZone @relation(fields: [deliveryZoneId], references: [id], onDelete: Cascade)
+  pincode        String
+
+  @@unique([deliveryZoneId, pincode])
+  @@index([pincode])
+}
+
+// A time-boxed promotional override on top of a zone's normal delivery tiers
+// — e.g. "Janmashtami: ₹1,500+ orders in Kolkata/New Town get FREE delivery +
+// 500g Laal Kheer Doi free". A campaign only overrides a zone's own rules for
+// orders that meet its own minOrderAmount within its own date range and zone
+// restriction; if nothing matches, the zone's normal tiers apply unchanged.
+model Campaign {
+  id                  String        @id @default(cuid())
+  organizationId      String
+  organization        Organization  @relation(fields: [organizationId], references: [id])
+  deliveryZoneId      String? // null = applies across all of this org's zones; set = restricted to one zone (e.g. Kolkata only)
+  deliveryZone        DeliveryZone? @relation(fields: [deliveryZoneId], references: [id])
+  name                String // e.g. "Janmashtami 2026"
+  isActive            Boolean       @default(true)
+  startsAt            DateTime
+  endsAt              DateTime
+  minOrderAmount      Float         @default(0) // ₹ — order must be at least this to qualify for the campaign offer
+  freeDelivery        Boolean       @default(false)
+  freeGiftDescription String? // e.g. "500g Laal Kheer Doi" — shown to the customer as-is
+  freeGiftProductId   String? // loose reference to Product (same convention as Conversation.lastProductId), not a hard FK
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@index([organizationId])
 }
 
 // One row per CLOSED conversation, written once by the nightly self-analysis
