@@ -15,6 +15,7 @@ import {
   BarChart3,
   GraduationCap,
   Receipt,
+  Truck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -27,6 +28,7 @@ const ICONS: Record<string, LucideIcon> = {
   "/dashboard/templates": FileText,
   "/dashboard/broadcasts": Megaphone,
   "/dashboard/products": Package,
+  "/dashboard/delivery-rules": Truck,
   "/dashboard/events": PartyPopper,
   "/dashboard/orders": ShoppingBag,
   "/dashboard/analytics": BarChart3,
