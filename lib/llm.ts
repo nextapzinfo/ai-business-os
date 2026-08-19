@@ -377,6 +377,93 @@ export function stripHallucinatedProductListings(text: string, catalogProducts: 
   return output.join("\n");
 }
 
+// Word-splitter local to this check — deliberately separate from
+// stripHallucinatedProductListings' normalizeProductName above (that one is
+// for exact-name lookup in a Map; this one is for "does this text contain
+// these words at all", so it keeps every word rather than normalizing to a
+// single key). Same Bengali-aware character class already proven correct in
+// the webhook's own extractWords (route.ts) — split on anything that isn't
+// a-z/0-9/Bengali script, lowercase first so case never matters.
+function extractWordsForClaimCheck(s: string): string[] {
+  return s.toLowerCase().split(/[^a-z0-9ঀ-৿]+/i).filter((w) => w.length > 0);
+}
+
+// True when every word of `needle` appears as a whole word somewhere in
+// `haystack` — word-based rather than a raw substring check, so a short
+// name like "Doi" doesn't false-positive-match as a substring of an
+// unrelated longer word. Requires ALL of needle's words to be present
+// (order/adjacency not required) since product and Event names are usually
+// short enough that this is a reliable enough signal without being overly
+// strict.
+function textContainsAsWords(haystack: string, needle: string): boolean {
+  const needleWords = extractWordsForClaimCheck(needle).filter((w) => w.length >= 2);
+  if (needleWords.length === 0) return false;
+  const haystackWords = new Set(extractWordsForClaimCheck(haystack));
+  return needleWords.every((w) => haystackWords.has(w));
+}
+
+// Fourth deterministic safety net (same family as stripHallucinatedProductListings
+// above and validateBusinessClaims in lib/business-rules.ts) — added after a
+// real incident where the AI, asked "etaiki janmastami r special?" about a
+// product photo (Kheer Gulab Jamun) just sent, confirmed it as a Janmashtami
+// special even though that product is never mentioned anywhere in the real
+// Janmashtami Event's own text (Taal Bora, Dudh Puli, Malpoa, Patisapta are
+// the actual specials). A product↔campaign/event ASSOCIATION claim was being
+// trusted on the model's own say-so, with nothing checking it — unlike a ₹
+// number (validateBusinessClaims) or a catalog listing (the check above).
+//
+// Deliberately blunt, same "drop rather than risk it" trade-off already
+// accepted above: ANY sentence naming both a real catalog product and a real
+// Event/campaign title is treated as an association claim, regardless of the
+// exact linking wording used (English "special for", Bengali "জন্য বিশেষ",
+// or no explicit linking word at all) — reliably parsing the specific claim
+// verb across Bengali/English/Banglish is far less certain than just
+// checking whether the two are named in the same sentence. If the named
+// product isn't literally named anywhere in that Event's own text, the
+// sentence is dropped rather than risk a false association reaching the
+// customer. Trade-off: a sentence that legitimately mentions both a product
+// and an unrelated event in passing, with no real claim intended, can get
+// dropped too — a missing sentence, not a wrong fact, the safer direction to
+// err in (same call already made for the checks above).
+export function validateEntityAssociationClaims(
+  text: string,
+  catalogProducts: CatalogProduct[],
+  events: { title: string; fullText: string }[]
+): string {
+  if (!text || catalogProducts.length === 0 || events.length === 0) return text;
+
+  const productNames = catalogProducts.map((p) => p.name).filter(Boolean);
+
+  // Split into sentences on Bengali/English sentence-enders, KEEPING the
+  // separators (odd indices) so the rejoin reproduces the original text
+  // byte-for-byte except for whatever sentence got dropped.
+  const sentenceParts = text.split(/([।.!?\n]+)/);
+
+  const output: string[] = [];
+  for (let i = 0; i < sentenceParts.length; i += 2) {
+    const sentence = sentenceParts[i] ?? "";
+    const trailing = sentenceParts[i + 1] ?? "";
+    if (!sentence.trim()) {
+      output.push(sentence + trailing);
+      continue;
+    }
+
+    const mentionedProduct = productNames.find((name) => textContainsAsWords(sentence, name));
+    const mentionedEvent = mentionedProduct
+      ? events.find((e) => textContainsAsWords(sentence, e.title))
+      : undefined;
+
+    if (mentionedProduct && mentionedEvent) {
+      const associated = textContainsAsWords(mentionedEvent.fullText, mentionedProduct);
+      if (!associated) {
+        continue; // drop this sentence only — keep the rest of the reply intact
+      }
+    }
+    output.push(sentence + trailing);
+  }
+  return output.join("");
+}
+
 function todayInIndia(): string {
   // en-CA locale formats as YYYY-MM-DD, which doubles as a clean ISO date string.
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });

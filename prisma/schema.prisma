@@ -186,6 +186,7 @@ model Conversation {
   handoffReason  String?      // set by the AI itself (request_human_handoff tool) when it escalates — cleared when staff replies or resumes AI; distinguishes an AI-initiated escalation from a staff manually pausing
   lastFollowUpAt DateTime?    // set when the AI Follow-up cron sends a nudge template — prevents sending more than once
   lastProductId  String?      // last Product this conversation clearly resolved to (RAG match or send_product_photo tool) — lets a context-only "pic ache?" follow-up (no product name repeated) still find the right product. Loose reference, not a hard FK, so a deleted product doesn't break the conversation.
+  lastTopicDocumentId String? // last Document (knowledge doc / Event) this conversation clearly resolved to — same loose-reference, "current message first, then memory" pattern as lastProductId above, but for topic/document-level continuity instead of a single product (topic-continuity fix, Aug 2026). Lets a generic follow-up like "kiki ache?" or "ar ki ki pabo?" that repeats no distinctive word still anchor to the document/Event just discussed, instead of falling through to whatever RAG's fuzzy top-5 search happens to guess. Loose reference, not a hard FK, so a deleted document doesn't break the conversation.
 
   // Lightweight persisted conversation state (business-rules architecture,
   // Aug 2026) — deliberately a handful of typed fields, not a formal state

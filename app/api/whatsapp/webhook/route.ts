@@ -13,6 +13,7 @@ import {
   CHECK_PRODUCT_STOCK_TOOL,
   applyTerminologySwaps,
   stripHallucinatedProductListings,
+  validateEntityAssociationClaims,
   type ToolDefinition,
   type ChatHistoryMessage,
   type CatalogProduct,
@@ -538,8 +539,40 @@ export async function POST(req: NextRequest) {
       return matches;
     }
 
+    // Topic continuity (Aug 2026 — see topic-continuity-assessment.md).
+    // Same distinctive-word scoring as findBestProductMatch, run against
+    // Document titles instead of product names, so a conversation can also
+    // remember "which knowledge document/Event this is about" and not just
+    // "which product" — needed because a generic follow-up like "kiki ache?"
+    // or "ar ki ki pabo?" often repeats no distinctive word at all, so RAG's
+    // fuzzy top-5 semantic search can drift onto unrelated content instead
+    // of staying anchored to the document just discussed.
+    type DocumentForMatch = { id: string; title: string };
+    function findBestTopicMatch(words: string[], documents: DocumentForMatch[]): DocumentForMatch | null {
+      const titleWords = documents.map((d) => extractWords(d.title));
+      const wordDocCount = new Map<string, number>();
+      for (const tWords of titleWords) {
+        for (const w of new Set(tWords)) {
+          wordDocCount.set(w, (wordDocCount.get(w) ?? 0) + 1);
+        }
+      }
+      let bestMatch: DocumentForMatch | null = null;
+      let bestScore = 0;
+      documents.forEach((d, i) => {
+        const tWords = titleWords[i];
+        const distinctiveMatches = words.filter((w) => tWords.includes(w) && wordDocCount.get(w) === 1);
+        const score = distinctiveMatches.length;
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = d;
+        }
+      });
+      return bestScore > 0 ? bestMatch : null;
+    }
+
     const textWords = extractWords(text);
     let exactProductInfoBlocks: { title: string; content: string }[] = [];
+    let messageNamedProduct = false;
     if (textWords.length > 0) {
       const orgProducts = await prisma.product.findMany({
         where: { organizationId: organization.id },
@@ -548,6 +581,7 @@ export async function POST(req: NextRequest) {
       matchedProduct = findBestProductMatch(textWords, orgProducts);
 
       const allMentioned = findAllProductMatches(textWords, orgProducts);
+      messageNamedProduct = allMentioned.length > 0;
       if (allMentioned.length > 0) {
         const withFullInfo = await prisma.product.findMany({
           where: { id: { in: allMentioned.map((p) => p.id) } },
@@ -557,6 +591,62 @@ export async function POST(req: NextRequest) {
           title: `EXACT CURRENT INFO — ${p.name}`,
           content: `${p.name}. ${p.price ? `Price: ${p.price}. ` : ""}${p.description ?? ""}`.trim(),
         }));
+      }
+    }
+
+    // Topic match against this message's own text — scoped to Documents that
+    // AREN'T a Product's own sheet (product-level continuity is already
+    // covered by lastProductId/exactProductInfoBlocks above; this is
+    // deliberately narrowed to knowledge docs/Events only, so a message that
+    // names a product doesn't also get treated as "changing the topic").
+    let freshTopicMatch: DocumentForMatch | null = null;
+    if (textWords.length > 0) {
+      const orgDocuments = await prisma.document.findMany({
+        where: { organizationId: organization.id, product: null },
+        select: { id: true, title: true },
+      });
+      freshTopicMatch = findBestTopicMatch(textWords, orgDocuments);
+    }
+    // Persist immediately, same "current message first" pattern as pincode
+    // above — a later fallback read of conversation.lastTopicDocumentId this
+    // same reply should never see a stale value once this message itself
+    // resolved to something fresher.
+    if (freshTopicMatch && conversation.lastTopicDocumentId !== freshTopicMatch.id) {
+      try {
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { lastTopicDocumentId: freshTopicMatch.id },
+        });
+      } catch (err) {
+        console.error("Failed to update conversation.lastTopicDocumentId:", err);
+      }
+    }
+
+    // Topic fallback for a generic/referential follow-up that names no
+    // product AND doesn't itself repeat a distinctive topic word (turn 2's
+    // "kiki ache?" in the Janmashtami transcript) — inject the last resolved
+    // topic document's full content as a trusted block, same "EXACT CURRENT
+    // INFO, trust this over fuzzy retrieval" pattern already used for
+    // products above. Deliberately does NOT fire when the message named a
+    // product (that continuity is handled by exactProductInfoBlocks/
+    // lastProductId instead) or when it already resolved a fresh topic match
+    // this turn (nothing stale to fall back to).
+    let topicInfoBlocks: { title: string; content: string }[] = [];
+    if (!messageNamedProduct && !freshTopicMatch && conversation.lastTopicDocumentId) {
+      const topicDoc = await prisma.document.findUnique({
+        where: { id: conversation.lastTopicDocumentId },
+        select: { id: true, title: true },
+      });
+      if (topicDoc) {
+        const topicChunks = await prisma.documentChunk.findMany({
+          where: { documentId: topicDoc.id },
+          orderBy: { chunkIndex: "asc" },
+          select: { content: true },
+        });
+        const fullText = topicChunks.map((c: { content: string }) => c.content).join(" ").trim();
+        if (fullText) {
+          topicInfoBlocks = [{ title: `EXACT CURRENT INFO — ${topicDoc.title}`, content: fullText }];
+        }
       }
     }
 
@@ -1072,7 +1162,11 @@ export async function POST(req: NextRequest) {
     // findAllProductMatches).
     const { answer, usage } = await askAIWithTools(
       text,
-      [...exactProductInfoBlocks, ...results.map((r) => ({ title: r.documentTitle, content: r.content }))],
+      [
+        ...exactProductInfoBlocks,
+        ...topicInfoBlocks,
+        ...results.map((r) => ({ title: r.documentTitle, content: r.content })),
+      ],
       agentProfile ?? undefined,
       tools,
       executeTool,
@@ -1119,6 +1213,43 @@ export async function POST(req: NextRequest) {
     // stripHallucinatedProductListings in lib/llm.ts).
     const hallucinationChecked = stripHallucinatedProductListings(answer, catalogProducts);
 
+    // Product ↔ Event/Campaign association backstop (topic-continuity work,
+    // Aug 2026 — see topic-continuity-assessment.md). Real incident: asked
+    // "etaiki janmastami r special?" about a product photo (Kheer Gulab
+    // Jamun) just sent, the AI confirmed it as a Janmashtami special even
+    // though that product is never mentioned anywhere in the real
+    // Janmashtami Event's own text. Fetches every Event's full text fresh
+    // (same "check against current live truth" pattern as the business-claim
+    // check below) and strips any sentence naming both a real product and a
+    // real Event unless that product is actually named in that Event's own
+    // content — see validateEntityAssociationClaims in lib/llm.ts for why
+    // this is deliberately blunt (same "drop rather than risk it" trade-off
+    // as stripHallucinatedProductListings above).
+    const orgEventsForClaimCheck =
+      catalogProducts.length > 0
+        ? await (async () => {
+            const events: { title: string; documentId: string }[] = await prisma.event.findMany({
+              where: { organizationId: organization.id },
+              select: { title: true, documentId: true },
+            });
+            if (events.length === 0) return [];
+            const chunks: { documentId: string; content: string }[] = await prisma.documentChunk.findMany({
+              where: { documentId: { in: events.map((e: { documentId: string }) => e.documentId) } },
+              orderBy: { chunkIndex: "asc" },
+              select: { documentId: true, content: true },
+            });
+            const textByDoc = new Map<string, string>();
+            for (const c of chunks) {
+              textByDoc.set(c.documentId, `${textByDoc.get(c.documentId) ?? ""} ${c.content}`);
+            }
+            return events.map((e: { title: string; documentId: string }) => ({
+              title: e.title,
+              fullText: textByDoc.get(e.documentId) ?? "",
+            }));
+          })()
+        : [];
+    const entityChecked = validateEntityAssociationClaims(hallucinationChecked, catalogProducts, orgEventsForClaimCheck);
+
     // Business Claim Validation backstop — the code-level check behind the
     // businessRulesNote prompt text above. Re-resolves the same zone/
     // campaign fresh (not reused from the note step, so this checks against
@@ -1128,12 +1259,12 @@ export async function POST(req: NextRequest) {
     // code is actually known — with none known, there's nothing authoritative
     // to check against, so the reply is left alone (same conservative, only-
     // check-what-we-can-verify approach as the hallucination filter above).
-    let claimChecked = hallucinationChecked;
+    let claimChecked = entityChecked;
     if (organization.vertical === "RETAIL" && effectivePincode) {
       const zoneForCheck = await resolveDeliveryZone(effectivePincode, organization.id);
       if (zoneForCheck) {
         const campaignForCheck = await resolveActiveCampaign(organization.id, zoneForCheck.id, new Date());
-        claimChecked = validateBusinessClaims(hallucinationChecked, {
+        claimChecked = validateBusinessClaims(entityChecked, {
           zone: zoneForCheck,
           campaign: campaignForCheck,
           orderAmount: null,
