@@ -1203,6 +1203,74 @@ export async function POST(req: NextRequest) {
     const businessRulesNote =
       organization.vertical === "RETAIL" ? await buildBusinessRulesNote(organization.id, effectivePincode) : null;
 
+    // Real incident (2026-08-20, owner's own report): asked "ki ki product
+    // ache" (general browse), a 7-item featured carousel was sent, but the
+    // AI's own TEXT reply only named ONE of the 7 (a Ghee). Root cause: the
+    // featuredCarousel photoNote above (built before catalogProducts existed
+    // yet) only gave the model each product's NAME, not its real price —
+    // left to guess a price from memory, a wrong guess for 6 of 7 products
+    // got silently dropped by stripHallucinatedProductListings() further
+    // down in this same request (a real name paired with a WRONG price is
+    // treated the same as an invented product — see that function's own
+    // comment in lib/llm.ts). Re-building photoNote here, now that
+    // catalogProducts is known, with each product's REAL price included,
+    // means the model has no reason to guess — and whatever it echoes will
+    // match catalogProducts exactly, so it survives that later check.
+    if (featuredCarousel.length > 0) {
+      const priceByName = new Map(catalogProducts.map((p) => [p.name.trim().toLowerCase(), p.price]));
+      const orderedNames = featuredCarousel
+        .map((p, i) => {
+          const price = priceByName.get(p.name.trim().toLowerCase());
+          return `${i + 1}. ${p.name}${price ? ` — ${price}` : ""}`;
+        })
+        .join("\n");
+      photoNote = `A carousel of these exact products (with photos), in this exact order, will be sent automatically right after this text reply:\n${orderedNames}\n\nYour text reply must list these SAME products, with these SAME real prices shown above, in this SAME order (a short numbered or bulleted list is fine) — do not substitute different products, invent or guess a different price, add extra ones, or change the order.`;
+    }
+
+    // Category-aware retrieval — real incident (2026-08-20, owner's own
+    // report): a customer asking about "combo" or "pithe" (a CATEGORY, e.g.
+    // "Pithe-Puli"/"Combo" on banglardoi.com — see the categories in
+    // catalogProducts above) got either nothing found, or a wrong, unrelated
+    // product (asking about pithe returned Ghee). The exact-product-name
+    // matching above (findBestProductMatch/RAG) has nothing to anchor to for
+    // a category word — there's no single product literally named "Combo" or
+    // "Pithe" — so it either finds nothing or a loose fuzzy match. This fixes
+    // that specific gap: when the customer's message contains a real category
+    // NAME (from the live catalog), inject the real, complete list of
+    // products actually in that category as trusted reference material, the
+    // same "ground truth ahead of fuzzy RAG" pattern as exactProductInfoBlocks
+    // below. Only engages once live category data exists (catalogProducts
+    // sourced from banglardoi.com, not the local-DB fallback, which has no
+    // category concept) — a no-op otherwise, never blocks a reply.
+    const categoryInfoBlocks: { title: string; content: string }[] = [];
+    const categoriesPresent = Array.from(
+      new Set(catalogProducts.map((p) => p.category).filter((c): c is string => Boolean(c && c.trim())))
+    );
+    if (categoriesPresent.length > 0) {
+      const customerCategoryWords = new Set(
+        text
+          .toLowerCase()
+          .split(/[^a-z0-9ঀ-৿]+/i)
+          .filter((w) => w.length >= 3)
+      );
+      const matchedCategory = categoriesPresent.find((cat) =>
+        cat
+          .toLowerCase()
+          .split(/[^a-z0-9ঀ-৿]+/i)
+          .some((catWord) => catWord.length >= 3 && customerCategoryWords.has(catWord))
+      );
+      if (matchedCategory) {
+        const productsInCategory = catalogProducts.filter((p) => p.category === matchedCategory);
+        if (productsInCategory.length > 0) {
+          const listing = productsInCategory.map((p) => `${p.name}${p.price ? ` — ${p.price}` : ""}`).join("\n");
+          categoryInfoBlocks.push({
+            title: `Real products in category "${matchedCategory}"`,
+            content: `The customer's message seems to be asking about the "${matchedCategory}" category. Here is the REAL, COMPLETE list of products actually in this category:\n${listing}\n\nAnswer using ONLY these real items for this category — never substitute, invent, or pull in a product from a different category.`,
+          });
+        }
+      }
+    }
+
     // REQUEST_HANDOFF_TOOL is always in `tools` now (see above), so this always
     // goes through the real model — including zero-RAG-match questions, which
     // now get an honest "I don't know, let me get someone" instead of the old
@@ -1215,6 +1283,7 @@ export async function POST(req: NextRequest) {
       text,
       [
         ...exactProductInfoBlocks,
+        ...categoryInfoBlocks,
         ...topicInfoBlocks,
         ...results.map((r) => ({ title: r.documentTitle, content: r.content })),
       ],
