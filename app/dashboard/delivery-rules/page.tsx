@@ -7,11 +7,22 @@ import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
 
 // ---------------------------------------------------------------------------
 // Delivery Rules — the admin UI for lib/business-rules.ts's DeliveryZone/
-// DeliveryTier/ZonePincode/Campaign tables. This is the ONLY source of truth
-// the WhatsApp AI is allowed to quote a delivery fee, minimum order, or
-// campaign offer from (see ai-business-os-architecture-assessment.md) — a
-// zone or campaign added here is live for the AI immediately, no redeploy or
-// script needed. Replaces having to hand-edit prisma/seed-delivery-rules.ts.
+// DeliveryTier/ZonePincode/Campaign tables.
+//
+// 2026-08-20 UPDATE — the Zones section below (name/min-order/PIN
+// codes/fee tiers) is now LEGACY. Delivery fee, minimum order, COD
+// availability, and free-delivery threshold the AI actually quotes come
+// live from banglardoi.com's own Admin → Delivery instead (owner's own
+// instruction — two separately-edited copies of the same zones was a real
+// risk of the AI getting confused, not just staleness). Edits here to a
+// zone's fee tiers or minimum order no longer affect anything the AI says.
+// Kept (not deleted) only because Campaigns below can still optionally be
+// scoped to one of these zones by PIN code.
+//
+// The Campaigns section below is NOT legacy — campaigns/offers you train
+// here keep working exactly as before; banglardoi.com has no equivalent
+// concept. See lib/business-rules.ts's file-header comment for the full
+// rationale.
 // ---------------------------------------------------------------------------
 
 // Bulk-entry format for tiers, one per line: "minAmount-maxAmount:fee", or
@@ -304,13 +315,22 @@ export default async function DeliveryRulesPage() {
     <div>
       <h1 className="text-xl font-semibold text-gray-900">Delivery Rules</h1>
       <p className="mt-1 max-w-2xl text-sm text-gray-500">
-        The AI only ever quotes a delivery fee, minimum order, or campaign offer that's configured here — it can
-        never invent a number that isn't listed below. Add a zone for each delivery area, list every PIN code that
-        belongs to it, and set the fee tiers. Changes here are live for the AI immediately.
+        The AI only ever quotes a campaign offer that's configured here, or a delivery fee/minimum order/COD
+        availability read live from banglardoi.com — it can never invent a number. See the notice below before
+        editing zones.
       </p>
 
       {/* -------------------------- Delivery Zones -------------------------- */}
-      <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
+      <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <p className="font-semibold">Legacy — banglardoi.com Admin → Delivery use koro</p>
+        <p className="mt-1 text-amber-800">
+          Delivery fee, minimum order, free-delivery threshold, and Cash on Delivery availability are now read live
+          from banglardoi.com every time the AI replies. Editing a zone&apos;s fee tiers or minimum order below no
+          longer changes what the AI quotes — go to banglardoi.com&apos;s own Admin → Delivery for that. Zones below
+          are kept only so a Campaign further down this page can optionally be restricted to one area.
+        </p>
+      </div>
+      <div className="mt-3 rounded-xl border border-gray-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-gray-900">Add a delivery zone</h3>
         <form action={addZone} className="mt-3 flex flex-col gap-2">
           <div className="flex flex-wrap gap-2">

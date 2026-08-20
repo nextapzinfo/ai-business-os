@@ -1,24 +1,64 @@
 // ---------------------------------------------------------------------------
-// Business Rule Engine (Aug 2026) — the ONLY place delivery fees, minimum
-// orders, and campaign offers are computed for a RETAIL organization. Every
-// exported function here is either a pure calculation over data already
-// fetched from the DB, or a direct DB read of DeliveryZone/DeliveryTier/
-// ZonePincode/Campaign — nothing here calls the LLM, and nothing in
-// lib/llm.ts or the WhatsApp webhook is allowed to compute these numbers
-// itself. See ai-business-os-architecture-assessment.md (project docs) for
-// the full rationale and the Kolkata/Hooghly/Janmashtami worked example this
-// was built against.
+// Business Rule Engine (Aug 2026, re-architected 2026-08-20) — the ONLY place
+// delivery fees, minimum orders, and campaign offers are computed for a
+// RETAIL organization. See ai-business-os-architecture-assessment.md
+// (project docs) for the original rationale and the
+// Kolkata/Hooghly/Janmashtami worked example this was built against.
 //
-// Priority hierarchy this file implements, as actual call order (not just a
-// comment): Hard Business Rules (zone minimum order) → Live/current data
-// (resolveDeliveryZone reads the DB fresh every call, no caching) → Active
-// campaign rules (only applied on top of the above, and only when it
-// genuinely validates). Conversation state / product knowledge / brand style
-// are NOT this file's concern — those are applied only in lib/llm.ts, after
-// these numbers are already final and non-negotiable.
+// 2026-08-20 change — owner's own instruction, once the ecommerce site's own
+// Delivery Zone admin (banglardoi.com/admin/delivery) was finished and
+// actually being used for real: "delivery ta ekhon theke website follow
+// korbe... 2ta thakle AI confused hoye jabe" (delivery should now follow the
+// website — two copies would confuse the AI). Two independently-edited
+// copies of the same zone/PIN-code/fee data was the real risk (not just
+// staleness) — an owner updating a fee on the website would have no reason
+// to remember there's a second, separate delivery-rules admin page in THIS
+// app that also needed the same edit.
+//
+// So: DELIVERY FEE, MINIMUM ORDER, COD AVAILABILITY, AND FREE-DELIVERY
+// THRESHOLD now come live from banglardoi.com's own /api/delivery/check
+// (fetchBanglarDoiDeliveryCheck in lib/banglardoi.ts) every single time —
+// never cached, never computed from this app's own DeliveryZone/DeliveryTier
+// tables anymore. Those two tables/the admin UI for them still exist (kept
+// deliberately, not deleted — see app/dashboard/delivery-rules/page.tsx) but
+// are now legacy for fee purposes.
+//
+// PROMOTIONAL CAMPAIGNS (free delivery / free gift above some order value,
+// e.g. "Janmashtami: ₹1,500+ orders in Kolkata get free delivery + a free
+// gift") stay exactly as before, unaffected — the owner's own explicit
+// instruction: "offer AI-business-os e ja train korbo seta korbe" (offers
+// trained here in AI Business OS keep working). banglardoi.com has no
+// equivalent "Campaign" concept (it has its own separate Coupon/promo-code
+// system for the storefront, which is a different thing — see the note on
+// PROMO CODES below) so campaigns remain entirely this app's own domain,
+// still configured on the same Delivery Rules admin page, still computed by
+// resolveActiveCampaign/validateCampaignOffer below. A campaign only ever
+// IMPROVES on the live website fee (free delivery / a free gift on top of
+// it) — it never overrides the base fee number itself, which always comes
+// from the website.
+//
+// PROMO / COUPON CODES (a literal redeemable code a customer types, e.g.
+// "SAVE10") are explicitly OUT OF SCOPE for this file and for this app's own
+// data — owner's instruction: "Promo code only from website only." There is
+// no coupon-code concept modelled anywhere in this app; if a customer asks
+// about a discount code, the AI should not invent or validate one itself —
+// that's the ecommerce site's own Coupon system to answer, not this app's.
+//
+// The local DeliveryZone/ZonePincode tables (resolveDeliveryZone below) are
+// kept ALIVE for exactly one remaining purpose: scoping a Campaign to a
+// specific area (e.g. "Kolkata only") via Campaign.deliveryZoneId. They are
+// never consulted for a fee number, a minimum order, or whether a PIN is
+// deliverable at all — those questions always go to the live website now.
+//
+// Every exported function here is either a pure calculation, a direct DB
+// read (Campaign/DeliveryZone, for the campaign-scoping purpose above), or a
+// live call to banglardoi.com (fetchLiveDeliveryQuote) — nothing here calls
+// the LLM, and nothing in lib/llm.ts or the WhatsApp webhook is allowed to
+// compute these numbers itself.
 // ---------------------------------------------------------------------------
 
 import { prisma } from "@/lib/prisma";
+import { fetchBanglarDoiDeliveryCheck, type BanglarDoiDeliveryQuote } from "@/lib/banglardoi";
 
 export interface DeliveryTierInput {
   minAmount: number;
@@ -53,13 +93,47 @@ export interface DeliveryChargeResult {
   appliedCampaign?: { name: string; freeGiftDescription: string | null };
 }
 
+// Alias, not a re-export — keeps this file's own naming/vocabulary (it talks
+// about "the live quote" throughout) decoupled from lib/banglardoi.ts's
+// naming, which is about the HTTP client, not the business-rules concept.
+export type LiveDeliveryQuote = BanglarDoiDeliveryQuote;
+
 /**
- * resolveDeliveryZone — Hard Business Rules + Live data layer. Looks up
- * which DeliveryZone (if any) a PIN code belongs to for this organization,
- * reading straight from the DB every call (no caching — always current).
- * Returns null (never a guess) when the PIN code isn't configured yet; the
- * caller must then treat delivery as "not yet confirmable for this PIN",
- * never fall back to a default or an invented number.
+ * fetchLiveDeliveryQuote — Hard Business Rules + Live data layer, now backed
+ * by banglardoi.com itself (2026-08-20) rather than a second, locally
+ * configured copy of the same zones. Calls the exact same
+ * /api/delivery/check endpoint the checkout page's own pincode preview uses
+ * and createOrderAction re-validates against, so the AI can never quote a
+ * number that disagrees with what the live site would actually charge.
+ * Returns null (never a guess) only when the live check genuinely couldn't
+ * be reached — the endpoint itself always returns a real quote for any
+ * 6-digit PIN (falling back to the site's own flat rate when no specific
+ * zone is configured for it), so null here means "try again shortly", not
+ * "not deliverable".
+ */
+export async function fetchLiveDeliveryQuote(
+  pincode: string,
+  orderAmountInPaise: number
+): Promise<LiveDeliveryQuote | null> {
+  try {
+    return await fetchBanglarDoiDeliveryCheck(pincode, orderAmountInPaise);
+  } catch (err) {
+    console.error("fetchLiveDeliveryQuote (banglardoi.com /api/delivery/check) failed:", err);
+    return null;
+  }
+}
+
+/**
+ * resolveDeliveryZone — looks up which of THIS APP'S OWN (legacy)
+ * DeliveryZone rows a PIN code falls into. As of 2026-08-20 this is used for
+ * exactly one thing: scoping a Campaign to a specific area via
+ * Campaign.deliveryZoneId (see resolveActiveCampaign below). It is NOT used
+ * to decide whether a PIN is deliverable, and its zone.tiers/minOrderAmount
+ * are NOT the delivery fee or minimum order the AI quotes anymore — that
+ * always comes from fetchLiveDeliveryQuote (banglardoi.com) instead. Returns
+ * null when the PIN isn't in any locally-configured zone, which simply means
+ * "no zone-restricted campaign can apply here" — org-wide campaigns are
+ * unaffected.
  */
 export async function resolveDeliveryZone(
   pincode: string,
@@ -125,16 +199,20 @@ export async function resolveActiveCampaign(
 }
 
 /**
- * validateMinimumOrder — Hard Business Rule. A zone's minOrderAmount is a
- * hard floor: below it, the order can't be delivered to that zone at all,
- * campaign or no campaign (a campaign can only add a better offer on top of
- * an order that already clears this floor, never waive the floor itself).
+ * validateMinimumOrder — Hard Business Rule. The live quote's minOrderInPaise
+ * is a hard floor: below it, the order can't be delivered to that PIN at
+ * all, campaign or no campaign (a campaign can only add a better offer on
+ * top of an order that already clears this floor, never waive the floor
+ * itself). Takes/returns plain rupees (this file's existing convention),
+ * converting the quote's paise once here so every caller downstream stays in
+ * rupees like before.
  */
 export function validateMinimumOrder(
-  zone: DeliveryZoneInput,
+  quote: LiveDeliveryQuote,
   orderAmount: number
 ): { valid: boolean; minRequired: number } {
-  return { valid: orderAmount >= zone.minOrderAmount, minRequired: zone.minOrderAmount };
+  const minRequired = quote.minOrderInPaise / 100;
+  return { valid: orderAmount >= minRequired, minRequired };
 }
 
 /**
@@ -165,45 +243,35 @@ export function validateCampaignOffer(
 }
 
 /**
- * calculateDeliveryCharge — the single function that produces the delivery
- * fee number the AI is allowed to quote. Zone tiers are computed first; an
- * active, validated campaign is then applied ONLY if validateCampaignOffer
- * says it genuinely qualifies — a campaign can only ever improve on the
- * zone's own tiers (free delivery + an optional gift), never raise a fee.
+ * deliveryChargeFromLiveQuote — the single function that produces the
+ * delivery fee number the AI is allowed to quote. The base fee always comes
+ * from the live banglardoi.com quote; an active, validated campaign is then
+ * applied ONLY if validateCampaignOffer says it genuinely qualifies — a
+ * campaign can only ever improve on the live fee (free delivery + an
+ * optional gift), never raise it or replace it with an invented number.
+ * zoneIdForCampaign comes from resolveDeliveryZone (this app's own legacy
+ * zone table) purely to check a zone-restricted campaign's scope — it plays
+ * no part in the fee itself.
  */
-export function calculateDeliveryCharge(
-  zone: DeliveryZoneInput,
-  orderAmount: number,
+export function deliveryChargeFromLiveQuote(
+  quote: LiveDeliveryQuote,
+  orderAmountInPaise: number,
+  zoneIdForCampaign: string | null,
   campaign: CampaignInput | null,
   now: Date
 ): DeliveryChargeResult {
-  const sortedTiers = [...zone.tiers].sort((a, b) => a.minAmount - b.minAmount);
-  const tier = sortedTiers.find(
-    (t) => orderAmount >= t.minAmount && (t.maxAmount === null || orderAmount <= t.maxAmount)
-  );
-  // No tier matched (e.g. order amount above every configured range) — fall
-  // back to the highest configured tier rather than silently charging ₹0.
-  const fallbackTier = sortedTiers[sortedTiers.length - 1];
-  const effectiveTier = tier ?? fallbackTier ?? null;
-
-  const base: DeliveryChargeResult = effectiveTier
-    ? {
-        charge: effectiveTier.feeAmount,
-        freeDelivery: effectiveTier.feeAmount === 0,
-        reason: tier
-          ? `${zone.name}: order ₹${orderAmount} falls in the ₹${tier.minAmount}${
-              tier.maxAmount !== null ? `–${tier.maxAmount}` : "+"
-            } band → ${tier.feeAmount === 0 ? "FREE delivery" : `₹${tier.feeAmount} delivery`}.`
-          : `${zone.name}: ₹${orderAmount} is above every configured tier; used the highest configured tier (₹${effectiveTier.feeAmount}) rather than guessing.`,
-      }
-    : {
-        charge: 0,
-        freeDelivery: false,
-        reason: `${zone.name}: no delivery tiers are configured yet — delivery fee cannot be quoted.`,
-      };
+  const orderAmount = orderAmountInPaise / 100;
+  const base: DeliveryChargeResult = {
+    charge: quote.feeInPaise / 100,
+    freeDelivery: quote.feeInPaise === 0,
+    reason:
+      quote.feeInPaise === 0
+        ? `banglardoi.com: order ₹${orderAmount} qualifies for FREE delivery to this PIN.`
+        : `banglardoi.com: ₹${quote.feeInPaise / 100} delivery fee for this PIN at order value ₹${orderAmount}.`,
+  };
 
   if (!campaign) return base;
-  const campaignCheck = validateCampaignOffer(campaign, zone.id, orderAmount, now);
+  const campaignCheck = validateCampaignOffer(campaign, zoneIdForCampaign, orderAmount, now);
   if (!campaignCheck.applicable || !campaign.freeDelivery) return base;
 
   return {
@@ -270,23 +338,19 @@ export async function validateOrderState(input: OrderStateInput): Promise<OrderV
     };
   }
 
-  const zone = await resolveDeliveryZone(input.pincode as string, input.organizationId);
-  if (!zone) {
+  const quote = await fetchLiveDeliveryQuote(input.pincode as string, Math.round(input.orderAmount * 100));
+  if (!quote) {
     return {
       valid: false,
-      blockers: [
-        `PIN code ${input.pincode} is not in a configured delivery zone yet — delivery can't be confirmed for this order.`,
-      ],
+      blockers: [`Couldn't confirm delivery for PIN ${input.pincode} right now (a live check failed) — try again in a moment.`],
     };
   }
 
-  const minCheck = validateMinimumOrder(zone, input.orderAmount);
+  const minCheck = validateMinimumOrder(quote, input.orderAmount);
   if (!minCheck.valid) {
     return {
       valid: false,
-      blockers: [
-        `Order total ₹${input.orderAmount} is below the ₹${minCheck.minRequired} minimum order for ${zone.name}.`,
-      ],
+      blockers: [`Order total ₹${input.orderAmount} is below the ₹${minCheck.minRequired} minimum order for this PIN.`],
     };
   }
 
@@ -300,7 +364,15 @@ export async function validateOrderState(input: OrderStateInput): Promise<OrderV
  * exactProductInfoBlocks in the webhook (see lib/llm.ts buildSystemPrompt).
  * Returns null when no PIN code is known yet — deliberately omits the block
  * rather than guessing, so the prompt never states a number that isn't
- * backed by a real configured zone.
+ * backed by real data.
+ *
+ * The delivery fee/minimum-order/COD/free-threshold numbers come live from
+ * banglardoi.com every call (fetchLiveDeliveryQuote) — never this app's own
+ * DeliveryZone/DeliveryTier tables. Called with orderAmountInPaise=0 (no
+ * cart total known yet at prompt-build time), which still returns a fully
+ * valid quote — the website's feeTiers schedule is shown in full below so
+ * the AI can answer "what will delivery cost for my order" without needing
+ * to already know the customer's subtotal.
  */
 export async function buildBusinessRulesNote(
   organizationId: string,
@@ -308,31 +380,42 @@ export async function buildBusinessRulesNote(
 ): Promise<string | null> {
   if (!pincode) return null;
 
-  const zone = await resolveDeliveryZone(pincode, organizationId);
-  if (!zone) {
-    return `AUTHORITATIVE DELIVERY INFO for PIN ${pincode}: this PIN code is not yet in a configured delivery zone. Do NOT state a delivery fee or minimum order for this PIN — tell the customer you'll confirm delivery for their area, or offer to connect them with a real person. Never guess or reuse a number from a different area.`;
+  const quote = await fetchLiveDeliveryQuote(pincode, 0);
+  if (!quote) {
+    return `AUTHORITATIVE DELIVERY INFO for PIN ${pincode}: couldn't reach banglardoi.com's live delivery check just now. Do NOT state a delivery fee or minimum order for this PIN — tell the customer you'll confirm and follow up, or offer to connect them with a real person. Never guess or reuse a number from a different area.`;
   }
 
-  const campaign = await resolveActiveCampaign(organizationId, zone.id, new Date());
-  const sortedTiers = [...zone.tiers].sort((a, b) => a.minAmount - b.minAmount);
+  // Local zone lookup is now ONLY used to scope a Campaign to a specific
+  // area — the numbers below always come from the live quote above, never
+  // from this local zone's own (legacy) tiers/minOrderAmount.
+  const zone = await resolveDeliveryZone(pincode, organizationId);
+  const campaign = await resolveActiveCampaign(organizationId, zone?.id ?? null, new Date());
+
+  const sortedTiers = [...quote.feeTiers].sort((a, b) => a.uptoInPaise - b.uptoInPaise);
+  let prevFloor = 0;
   const tierLines = sortedTiers
-    .map(
-      (t) =>
-        `  ₹${t.minAmount}${t.maxAmount !== null ? `–${t.maxAmount}` : "+"} → ${
-          t.feeAmount === 0 ? "FREE delivery" : `₹${t.feeAmount} delivery`
-        }`
-    )
+    .map((t) => {
+      const line = `  ₹${prevFloor}–₹${t.uptoInPaise / 100} → ${t.feeInPaise === 0 ? "FREE delivery" : `₹${t.feeInPaise / 100} delivery`}`;
+      prevFloor = t.uptoInPaise / 100 + 1;
+      return line;
+    })
     .join("\n");
 
-  let note = `AUTHORITATIVE DELIVERY RULES for PIN ${pincode} (${zone.name}) — these are the ONLY numbers you may quote for delivery fee or minimum order for this customer. Never state a different number, and never invent a threshold that isn't listed here:\n`;
-  note += `  Minimum order for this zone: ${zone.minOrderAmount > 0 ? `₹${zone.minOrderAmount}` : "no minimum"}\n`;
-  note += tierLines.length > 0 ? tierLines + "\n" : "  (no delivery tiers configured yet — do not guess a fee, say you'll confirm)\n";
+  let note = `AUTHORITATIVE DELIVERY RULES for PIN ${pincode} — sourced live from banglardoi.com just now; these are the ONLY numbers you may quote for delivery fee, minimum order, or COD availability for this customer. Never state a different number, and never invent a threshold that isn't listed here:\n`;
+  note += `  Minimum order for this PIN: ${quote.minOrderInPaise > 0 ? `₹${quote.minOrderInPaise / 100}` : "no minimum"}\n`;
+  note +=
+    tierLines.length > 0
+      ? tierLines + `\n  Above every bracket above → ${quote.feeInPaise === 0 ? "FREE delivery" : `₹${quote.feeInPaise / 100} delivery`}\n`
+      : `  Delivery fee: ${quote.feeInPaise === 0 ? "FREE delivery" : `₹${quote.feeInPaise / 100}`}${
+          quote.freeDeliveryThresholdInPaise ? ` (FREE above ₹${quote.freeDeliveryThresholdInPaise / 100})` : ""
+        }\n`;
+  note += `  Cash on Delivery: ${quote.codAllowed ? "available" : "NOT available — prepaid/online payment only"} for this PIN\n`;
 
   if (campaign) {
     const endDate = campaign.endsAt.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
     note += `  ACTIVE CAMPAIGN "${campaign.name}" (through ${endDate}): orders of ₹${campaign.minOrderAmount}+ get ${
       campaign.freeDelivery ? "FREE delivery" : "a special offer"
-    }${campaign.freeGiftDescription ? ` + ${campaign.freeGiftDescription} FREE` : ""}. This OVERRIDES the tiers above ONLY when the order meets ₹${campaign.minOrderAmount} — below that, the normal tiers above apply.\n`;
+    }${campaign.freeGiftDescription ? ` + ${campaign.freeGiftDescription} FREE` : ""}. This OVERRIDES the delivery fee above ONLY when the order meets ₹${campaign.minOrderAmount} — below that, the fee above applies as normal.\n`;
   }
 
   return note;
@@ -353,16 +436,20 @@ const RUPEE_AMOUNT = /₹\s?[\d,]+/g;
 
 export function validateBusinessClaims(
   replyText: string,
-  authoritative: { zone: DeliveryZoneInput; campaign: CampaignInput | null; orderAmount: number | null } | null
+  authoritative: { quote: LiveDeliveryQuote; campaign: CampaignInput | null } | null
 ): string {
-  if (!authoritative) return replyText; // no known PIN/zone yet — nothing to check against, leave the reply alone
+  if (!authoritative) return replyText; // no known PIN/live quote yet — nothing to check against, leave the reply alone
 
+  const { quote } = authoritative;
   const knownAmounts = new Set<number>();
-  authoritative.zone.tiers.forEach((t) => knownAmounts.add(Math.round(t.feeAmount)));
-  knownAmounts.add(Math.round(authoritative.zone.minOrderAmount));
-  authoritative.zone.tiers.forEach((t) => {
-    knownAmounts.add(Math.round(t.minAmount));
-    if (t.maxAmount !== null) knownAmounts.add(Math.round(t.maxAmount));
+  knownAmounts.add(Math.round(quote.feeInPaise / 100));
+  knownAmounts.add(Math.round(quote.minOrderInPaise / 100));
+  if (quote.freeDeliveryThresholdInPaise != null) {
+    knownAmounts.add(Math.round(quote.freeDeliveryThresholdInPaise / 100));
+  }
+  quote.feeTiers.forEach((t) => {
+    knownAmounts.add(Math.round(t.uptoInPaise / 100));
+    knownAmounts.add(Math.round(t.feeInPaise / 100));
   });
   if (authoritative.campaign) {
     knownAmounts.add(Math.round(authoritative.campaign.minOrderAmount));

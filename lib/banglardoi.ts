@@ -37,6 +37,17 @@ export type BanglarDoiProduct = {
   variants: BanglarDoiProductVariant[];
 };
 
+export type BanglarDoiDeliveryFeeTier = { uptoInPaise: number; feeInPaise: number };
+
+export type BanglarDoiDeliveryQuote = {
+  feeInPaise: number;
+  codAllowed: boolean;
+  minOrderInPaise: number;
+  meetsMinOrder: boolean;
+  freeDeliveryThresholdInPaise: number | null;
+  feeTiers: BanglarDoiDeliveryFeeTier[];
+};
+
 async function banglarDoiFetch(path: string): Promise<any> {
   const baseUrl = process.env.BANGLARDOI_API_BASE_URL;
   const secret = process.env.BANGLARDOI_INTEGRATION_SECRET;
@@ -66,4 +77,74 @@ export async function fetchBanglarDoiOrderStatus(phone: string): Promise<Banglar
 export async function fetchBanglarDoiProductStock(query: string): Promise<BanglarDoiProduct[]> {
   const data = await banglarDoiFetch(`/api/integrations/product-stock?q=${encodeURIComponent(query)}`);
   return (data.products ?? []) as BanglarDoiProduct[];
+}
+
+// Finds a confident live-price match for `name` in banglardoi.com's real
+// catalog and formats it as a short fragment ready to drop into a product
+// info block — or returns null if there's nothing confident to say, so the
+// caller falls back to its own locally-taught price text instead of
+// guessing. Added 2026-08-20, owner's own instruction: "product r price o AI
+// website ta follow korle aro bhalo hobe" (product price should follow the
+// website too, for the same reason as delivery). "Confident" deliberately
+// means an exact case-insensitive name match, or — when nothing matched
+// exactly — the single result IF it's the only one returned; never picks
+// among several ambiguous candidates (same "don't guess" philosophy as
+// check_product_stock's own tool description).
+export async function fetchLiveProductPriceText(name: string): Promise<string | null> {
+  try {
+    const products = await fetchBanglarDoiProductStock(name);
+    if (products.length === 0) return null;
+    const norm = name.trim().toLowerCase();
+    const exact = products.find((p) => p.name.trim().toLowerCase() === norm);
+    const best = exact ?? (products.length === 1 ? products[0] : null);
+    if (!best || best.variants.length === 0) return null;
+    return best.variants
+      .map(
+        (v) =>
+          `${v.label} — ${v.price}${v.minOrderQty > 1 ? ` (min order ${v.minOrderQty})` : ""} — ${
+            v.inStock ? "in stock" : "OUT OF STOCK"
+          }`
+      )
+      .join("; ");
+  } catch (err) {
+    console.error("fetchLiveProductPriceText failed:", err);
+    return null;
+  }
+}
+
+// Live delivery fee/minimum-order/COD-availability for a PIN code, straight
+// from banglardoi.com's own /api/delivery/check — the SAME endpoint the
+// checkout page's own pincode preview calls, and the same calculateDelivery()
+// logic createOrderAction re-validates against server-side. Added Aug 2026 so
+// AI Business OS's own, separately-configured DeliveryZone/DeliveryTier
+// tables could be retired as the thing the AI actually quotes from (owner's
+// own instruction: "delivery ta ekhon theke website follow korbe, 2ta thakle
+// AI confused hoye jabe" — two sources of delivery truth was the risk, not
+// just staleness). See lib/business-rules.ts for how this is used.
+//
+// This endpoint is intentionally public (no shared secret) on the
+// banglardoi-app side, same as the browser's own checkout preview — nothing
+// sensitive in a delivery-fee quote — so this call doesn't need the
+// INTEGRATION_SHARED_SECRET banglarDoiFetch() always attaches; the extra
+// header is simply ignored server-side.
+//
+// subtotalInPaise only affects which bracket the single `feeInPaise` number
+// reflects — pass 0 when the customer's cart total isn't known yet (still
+// returns a fully valid quote, e.g. the top/most-expensive bracket) and use
+// the returned `feeTiers` schedule to show the full ladder instead.
+export async function fetchBanglarDoiDeliveryCheck(
+  pincode: string,
+  subtotalInPaise: number
+): Promise<BanglarDoiDeliveryQuote> {
+  const data = await banglarDoiFetch(
+    `/api/delivery/check?pincode=${encodeURIComponent(pincode)}&subtotal=${Math.max(0, Math.round(subtotalInPaise))}`
+  );
+  return {
+    feeInPaise: data.feeInPaise,
+    codAllowed: data.codAllowed,
+    minOrderInPaise: data.minOrderInPaise,
+    meetsMinOrder: data.meetsMinOrder,
+    freeDeliveryThresholdInPaise: data.freeDeliveryThresholdInPaise ?? null,
+    feeTiers: Array.isArray(data.feeTiers) ? data.feeTiers : [],
+  };
 }

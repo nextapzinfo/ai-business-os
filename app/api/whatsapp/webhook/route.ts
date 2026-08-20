@@ -29,6 +29,7 @@ import {
   isBanglarDoiIntegrationEnabled,
   fetchBanglarDoiOrderStatus,
   fetchBanglarDoiProductStock,
+  fetchLiveProductPriceText,
 } from "@/lib/banglardoi";
 import {
   resolveDeliveryZone,
@@ -36,6 +37,7 @@ import {
   validateOrderState,
   validateBusinessClaims,
   resolveActiveCampaign,
+  fetchLiveDeliveryQuote,
 } from "@/lib/business-rules";
 import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
@@ -587,10 +589,25 @@ export async function POST(req: NextRequest) {
           where: { id: { in: allMentioned.map((p) => p.id) } },
           select: { name: true, price: true, description: true },
         });
-        exactProductInfoBlocks = withFullInfo.map((p) => ({
-          title: `EXACT CURRENT INFO — ${p.name}`,
-          content: `${p.name}. ${p.price ? `Price: ${p.price}. ` : ""}${p.description ?? ""}`.trim(),
-        }));
+        // Live price from banglardoi.com first (2026-08-20 — "product r
+        // price o AI website ta follow korle aro bhalo hobe"), falling back
+        // to this app's own locally-taught Product.price only when the
+        // integration is off, the live lookup errors, or there's no
+        // confident name match on the website (never guess).
+        exactProductInfoBlocks = await Promise.all(
+          withFullInfo.map(async (p) => {
+            const livePrice = isBanglarDoiIntegrationEnabled() ? await fetchLiveProductPriceText(p.name) : null;
+            const priceText = livePrice
+              ? `Live price/stock (from banglardoi.com): ${livePrice}. `
+              : p.price
+                ? `Price: ${p.price}. `
+                : "";
+            return {
+              title: `EXACT CURRENT INFO — ${p.name}`,
+              content: `${p.name}. ${priceText}${p.description ?? ""}`.trim(),
+            };
+          })
+        );
       }
     }
 
@@ -663,10 +680,16 @@ export async function POST(req: NextRequest) {
         select: { name: true, price: true, description: true },
       });
       if (lastProduct) {
+        const livePrice = isBanglarDoiIntegrationEnabled() ? await fetchLiveProductPriceText(lastProduct.name) : null;
+        const priceText = livePrice
+          ? `Live price/stock (from banglardoi.com): ${livePrice}. `
+          : lastProduct.price
+            ? `Price: ${lastProduct.price}. `
+            : "";
         exactProductInfoBlocks = [
           {
             title: `EXACT CURRENT INFO — ${lastProduct.name}`,
-            content: `${lastProduct.name}. ${lastProduct.price ? `Price: ${lastProduct.price}. ` : ""}${lastProduct.description ?? ""}`.trim(),
+            content: `${lastProduct.name}. ${priceText}${lastProduct.description ?? ""}`.trim(),
           },
         ];
       }
@@ -1261,13 +1284,18 @@ export async function POST(req: NextRequest) {
     // check-what-we-can-verify approach as the hallucination filter above).
     let claimChecked = entityChecked;
     if (organization.vertical === "RETAIL" && effectivePincode) {
-      const zoneForCheck = await resolveDeliveryZone(effectivePincode, organization.id);
-      if (zoneForCheck) {
-        const campaignForCheck = await resolveActiveCampaign(organization.id, zoneForCheck.id, new Date());
+      // Live quote, not this app's own (legacy) DeliveryZone table — see
+      // lib/business-rules.ts's 2026-08-20 header note. resolveDeliveryZone
+      // is still consulted here, but only to find a zone-restricted
+      // campaign; a null zone just means no zone-scoped campaign can apply,
+      // it does NOT mean the claim check is skipped.
+      const liveQuote = await fetchLiveDeliveryQuote(effectivePincode, 0);
+      if (liveQuote) {
+        const zoneForCheck = await resolveDeliveryZone(effectivePincode, organization.id);
+        const campaignForCheck = await resolveActiveCampaign(organization.id, zoneForCheck?.id ?? null, new Date());
         claimChecked = validateBusinessClaims(entityChecked, {
-          zone: zoneForCheck,
+          quote: liveQuote,
           campaign: campaignForCheck,
-          orderAmount: null,
         });
       }
     }
