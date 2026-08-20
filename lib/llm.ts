@@ -136,9 +136,30 @@ const DEFAULT_TERMINOLOGY: { from: string; to: string }[] = [
 // DEFAULT_TERMINOLOGY above, then this business's own Brand Language pairs —
 // so a swap like "পণ্য" → "মিষ্টি" is 100% guaranteed in what the customer
 // actually receives, regardless of what the model wrote. Case-insensitive,
-// whole-string substring match (no stemming/pluralization — "Products" won't
+// whole-WORD substring match (no stemming/pluralization — "Products" won't
 // match a "Product" rule); applied in order, so a later rule can re-match an
 // earlier rule's output.
+//
+// WORD-BOUNDARY FIX (2026-08-20) — real incident: a short owner-taught rule
+// for a unit abbreviation (a "g"/"gm" → "গ্রাম" style pair, for weights like
+// "500g") was matching as a bare substring with no boundary check, so it
+// also fired INSIDE unrelated English words that happen to contain that
+// same letter sequence — "Ghee" came out as "গhee" (only the leading "G"
+// swapped) in a real customer-facing reply. Boundaries use \p{L}/\p{N}
+// (Unicode letter/number), not plain regex \b (which only understands
+// ASCII a-z0-9_ and would silently fail to protect Bengali text on either
+// side of a match) — this correctly stops a short rule from matching
+// mid-word in EITHER script. Trade-off, worth knowing: a `from` term that's
+// meant to match inside an inflected/agglutinated Bengali form (a suffix
+// glued on with no space) will now correctly NOT match there either — same
+// "only touch what's unambiguous" conservatism used elsewhere in this file
+// (e.g. stripHallucinatedProductListings), preferring a missed swap over a
+// corrupted word.
+const WORD_CHAR = "\\p{L}\\p{N}";
+function wholeWordRegex(term: string): RegExp {
+  return new RegExp(`(?<![${WORD_CHAR}])${escapeRegExp(term)}(?![${WORD_CHAR}])`, "giu");
+}
+
 export function applyTerminologySwaps(text: string, brandLanguageRaw: string | null | undefined): string {
   if (!text) return text;
 
@@ -167,14 +188,14 @@ export function applyTerminologySwaps(text: string, brandLanguageRaw: string | n
     // TARGET text already occurs first, and skip any `from` match that
     // falls inside one of those spans — only replace genuinely bare,
     // not-yet-fixed occurrences.
-    const toRegex = new RegExp(escapeRegExp(toTrimmed), "gi");
+    const toRegex = wholeWordRegex(toTrimmed);
     const protectedRanges: [number, number][] = [];
     let m: RegExpExecArray | null;
     while ((m = toRegex.exec(result))) {
       protectedRanges.push([m.index, m.index + m[0].length]);
     }
 
-    const fromRegex = new RegExp(escapeRegExp(fromTrimmed), "gi");
+    const fromRegex = wholeWordRegex(fromTrimmed);
     result = result.replace(fromRegex, (match, offset) => {
       const isAlreadyCorrect = protectedRanges.some(([start, end]) => offset >= start && offset < end);
       return isAlreadyCorrect ? match : toTrimmed;
