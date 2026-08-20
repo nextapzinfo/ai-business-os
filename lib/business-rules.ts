@@ -199,6 +199,46 @@ export async function resolveActiveCampaign(
 }
 
 /**
+ * resolveAnyActiveCampaign — like resolveActiveCampaign, but doesn't require
+ * a zone to already be known: returns the single active, date-valid campaign
+ * for this org regardless of any zone restriction it may have. Added
+ * 2026-08-20 to fix a real incident: a customer asked "apnader onno kono
+ * offer ache?" (any other offers?) before giving their PIN code, and the AI
+ * said no offers existed — even though an active Janmashtami campaign
+ * genuinely was configured — purely because buildBusinessRulesNote used to
+ * return null outright whenever no PIN was known yet, so the campaign was
+ * never even looked up. This is ONLY for answering "does an offer exist at
+ * all" before a PIN is known — it must NEVER be used to decide whether a
+ * specific order actually qualifies (that still always goes through
+ * resolveActiveCampaign + validateCampaignOffer with the customer's real
+ * zone once their PIN is known, which correctly enforces any zone
+ * restriction).
+ */
+export async function resolveAnyActiveCampaign(organizationId: string, now: Date): Promise<CampaignInput | null> {
+  const campaign = await prisma.campaign.findFirst({
+    where: {
+      organizationId,
+      isActive: true,
+      startsAt: { lte: now },
+      endsAt: { gte: now },
+    },
+    orderBy: { startsAt: "desc" },
+  });
+  if (!campaign) return null;
+  return {
+    id: campaign.id,
+    name: campaign.name,
+    isActive: campaign.isActive,
+    startsAt: campaign.startsAt,
+    endsAt: campaign.endsAt,
+    minOrderAmount: campaign.minOrderAmount,
+    freeDelivery: campaign.freeDelivery,
+    freeGiftDescription: campaign.freeGiftDescription,
+    deliveryZoneId: campaign.deliveryZoneId,
+  };
+}
+
+/**
  * validateMinimumOrder — Hard Business Rule. The live quote's minOrderInPaise
  * is a hard floor: below it, the order can't be delivered to that PIN at
  * all, campaign or no campaign (a campaign can only add a better offer on
@@ -378,7 +418,25 @@ export async function buildBusinessRulesNote(
   organizationId: string,
   pincode: string | null
 ): Promise<string | null> {
-  if (!pincode) return null;
+  if (!pincode) {
+    // No PIN yet, so a real delivery fee can't be quoted — but a currently
+    // active campaign's EXISTENCE and terms are still worth telling the AI
+    // about (see resolveAnyActiveCampaign above for the real incident this
+    // fixes). If the campaign turns out to be zone-restricted, we can't yet
+    // confirm this specific customer qualifies, so that's flagged as a
+    // caveat rather than stated as a fact — the AI is told to ask for the
+    // PIN to confirm, not to promise it applies.
+    const campaign = await resolveAnyActiveCampaign(organizationId, new Date());
+    if (!campaign) return null;
+
+    const endDate = campaign.endsAt.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+    const areaCaveat = campaign.deliveryZoneId
+      ? " This may be limited to specific delivery areas — ask for the customer's PIN code to confirm it applies to them before promising it."
+      : "";
+    return `ACTIVE CAMPAIGN "${campaign.name}" (through ${endDate}): orders of ₹${campaign.minOrderAmount}+ get ${
+      campaign.freeDelivery ? "FREE delivery" : "a special offer"
+    }${campaign.freeGiftDescription ? ` + ${campaign.freeGiftDescription} FREE` : ""}.${areaCaveat} If a customer asks whether you have any offers, discounts, or deals, mention this confidently and specifically — never say there are no offers/deals when an active campaign like this exists.`;
+  }
 
   const quote = await fetchLiveDeliveryQuote(pincode, 0);
   if (!quote) {
