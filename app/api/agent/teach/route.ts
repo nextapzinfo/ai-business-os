@@ -7,6 +7,7 @@ import {
   UPDATE_PRODUCT_INFO_TOOL,
   ADD_KNOWLEDGE_NOTE_TOOL,
   UPDATE_STYLE_RULE_TOOL,
+  ADD_QA_PAIR_TOOL,
   type ChatHistoryMessage,
 } from "@/lib/llm";
 import { processKnowledgeContent } from "@/app/dashboard/agent/actions";
@@ -146,6 +147,59 @@ export async function POST(req: NextRequest) {
       return `Saved as a new knowledge note titled "${title}". Confirm this briefly to the owner.`;
     }
 
+    if (name === "add_qa_pair") {
+      const questions = Array.isArray(args.questions)
+        ? (args.questions as unknown[]).filter((q): q is string => typeof q === "string" && q.trim().length > 0)
+        : [];
+      const answers = Array.isArray(args.answers)
+        ? (args.answers as unknown[]).filter((a): a is string => typeof a === "string" && a.trim().length > 0)
+        : [];
+      if (questions.length === 0 || answers.length === 0) {
+        return "Missing questions or answers — nothing saved.";
+      }
+
+      const topic = (args.topic as string)?.trim() || questions[0].slice(0, 60);
+
+      // One coherent block, run through the SAME chunk+embed pipeline as
+      // add_knowledge_note (processKnowledgeContent) — chunkText's 1000-char
+      // chunk size comfortably fits a handful of phrasings + answers as one
+      // piece, so this stays a single embedded chunk rather than getting
+      // split apart. Listing several phrasings together (rather than one
+      // freeform sentence) is what makes this reliably findable even when a
+      // real customer asks in yet another, slightly different way — the
+      // retrieval below is nearest-neighbor over this whole block's meaning,
+      // not an exact-string match against any one phrasing.
+      const content = `Trained Q&A — "${topic}"
+
+A customer might ask this in different ways, for example:
+${questions.map((q) => `- ${q.trim()}`).join("\n")}
+
+Answer using one of these approved answers, in your own natural words — stay faithful to what they say, don't contradict them:
+${answers.map((a) => `- ${a.trim()}`).join("\n")}`;
+
+      const document = await prisma.document.create({
+        data: {
+          organizationId,
+          title: `Q&A: ${topic}`,
+          fileUrl: "teach-ai-qa",
+          status: "PENDING",
+        },
+      });
+      await processKnowledgeContent(organizationId, document.id, content);
+
+      await logAudit({
+        organizationId,
+        userId: user?.id,
+        action: "QA_PAIR_ADDED",
+        metadata: { documentId: document.id, topic, questionCount: questions.length, answerCount: answers.length },
+      });
+
+      actionsTaken.push(`Saved Q&A: "${topic}" (${questions.length} phrasings, ${answers.length} approved answer${answers.length > 1 ? "s" : ""})`);
+      return `Saved as a trained Q&A titled "${topic}" with ${questions.length} question phrasings and ${answers.length} approved answer${
+        answers.length > 1 ? "s" : ""
+      }. Confirm this briefly to the owner.`;
+    }
+
     return "Unknown tool.";
   }
 
@@ -153,7 +207,7 @@ export async function POST(req: NextRequest) {
     const { answer, usage } = await askTeachAI(
       message,
       history,
-      [UPDATE_PRODUCT_INFO_TOOL, ADD_KNOWLEDGE_NOTE_TOOL, UPDATE_STYLE_RULE_TOOL],
+      [UPDATE_PRODUCT_INFO_TOOL, ADD_KNOWLEDGE_NOTE_TOOL, UPDATE_STYLE_RULE_TOOL, ADD_QA_PAIR_TOOL],
       executeTool
     );
     await logAiUsage(organizationId, "teach_ai_chat", usage);

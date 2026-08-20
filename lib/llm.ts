@@ -959,6 +959,55 @@ export const UPDATE_STYLE_RULE_TOOL: ToolDefinition = {
   },
 };
 
+// Added 2026-08-20 — owner's own suggestion in chat: a customer can ask the
+// SAME underlying question 10 different ways ("PIN match korle koto charge
+// lagbe seta bole debe, na korle setao bole debe" was the real example that
+// prompted this), and the answer itself can also reasonably be phrased 2-3
+// different ways rather than one rigid fixed sentence. add_knowledge_note
+// alone doesn't reliably solve this: it's one freeform paragraph embedded as
+// a single chunk, so it's only found when a customer's wording happens to be
+// close to however the owner originally phrased it. This tool instead asks
+// the owner for SEVERAL realistic phrasings of the question up front and
+// saves them all together as one structured Q&A block (via the same
+// chunk+embed pipeline as add_knowledge_note) — so a customer's own novel
+// phrasing is far more likely to land close to at least one of the examples,
+// and the AI has real grounding to generalize from ("train itself further")
+// instead of falling back to "I don't know" on a slightly different wording
+// of something it's actually been taught. Deliberately NOT a rigid
+// verbatim-match system — buildSystemPrompt's existing "answer only from the
+// reference material, in your own natural words" instruction already applies
+// here, same as any other knowledge source.
+export const ADD_QA_PAIR_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "add_qa_pair",
+    description:
+      "Save a trained Q&A when the owner is teaching how to answer a specific kind of customer question — especially useful when they give (or you elicit) SEVERAL DIFFERENT WAYS a customer might ask the same thing. Unlike add_knowledge_note (one fact/topic, one phrasing), this is specifically for the shape 'when a customer asks something like X / Y / Z, the answer is something like A / B' — listing multiple phrasings of the SAME underlying question together so the AI reliably recognizes it even asked in a slightly different way than any single example, instead of defaulting to \"I don't know.\" Before calling this, if the owner has only given ONE way of asking and ONE answer, ask them for a couple more realistic phrasings of the question (and, if it naturally varies, 1-2 more ways to phrase the answer) so this is actually useful — don't call this tool with just a single question and single answer unless the owner makes clear that's genuinely all there is.",
+    parameters: {
+      type: "object",
+      properties: {
+        topic: {
+          type: "string",
+          description: "A short label for this Q&A, e.g. 'Delivery charge confirmation' or 'COD availability'.",
+        },
+        questions: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Several different realistic ways a customer might phrase this same question — ideally 3 or more. The more real variations given, the more reliably the AI recognizes this question later, even phrased slightly differently than any one of these examples.",
+        },
+        answers: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "1-3 approved ways to answer this question, written out in full (a single answer is fine if that's genuinely all the owner gave). The AI treats these as its source of truth and answers in its own natural words based on them — not necessarily verbatim, but never contradicting what's said here.",
+        },
+      },
+      required: ["questions", "answers"],
+    },
+  },
+};
+
 // Distinct from askAIWithTools's buildSystemPrompt: that one frames the model
 // as a customer-facing WhatsApp assistant, which is the wrong persona for this
 // internal owner-only chat. This system prompt is intentionally small and
@@ -974,10 +1023,11 @@ export async function askTeachAI(
 
   const systemPrompt = `You are helping a small business owner update their WhatsApp AI assistant's knowledge, by chatting naturally with them in whatever mix of Bengali/English they use — reply in kind. They will tell you things like a price change, a new policy, a general fact to remember, or a correction to how the AI writes/behaves.
 
-Three tools, pick carefully:
+Four tools, pick carefully:
 - update_product_info — ONLY for correcting a NAMED, existing product's own price or description (the rule only ever applies to that one specific product).
 - update_style_rule — for a standing rule that should apply on EVERY future reply, going forward, no matter what's being discussed. Two common shapes: (a) HOW the AI should write or behave — tone, word choice, translation/wording corrections, formatting, phrases to use or avoid; (b) a general operating/business POLICY that isn't scoped to one product — e.g. "minimum order is 5 pieces per product from now on", "always ask for the PIN code before confirming a delivery order", "no deliveries on Sundays". Use this even when the owner illustrates the rule with one specific example or product (e.g. pointing out a mistranslation in one product's description, or setting a minimum-order rule while mentioning one product) — the underlying rule is general and should apply everywhere, not just to that one instance. This is the most commonly missed case: a message that LOOKS like it's about one product but is actually teaching a general rule belongs here, not in update_product_info or add_knowledge_note — using the wrong tool means the rule silently never gets applied consistently again.
-- add_knowledge_note — for a new FACT that answers a specific question when asked, but does NOT need to be actively applied/enforced on every reply (store hours, a new offer, an FAQ-style answer). If in doubt between this and update_style_rule, ask: "should this change how the AI behaves on every reply, or just be available if someone asks about this exact topic?" — the former is update_style_rule.
+- add_qa_pair — when the owner is teaching how to answer a specific kind of question customers ask, especially when several different phrasings of that same question naturally come up (or you can reasonably elicit a couple more from them). Prefer this over add_knowledge_note whenever the shape is "customers ask this in different ways, answer like this" — it's specifically built to generalize across phrasing, which a single freeform paragraph is not. If the owner only gives one phrasing, briefly ask for 2-3 more realistic ways a customer might ask the same thing before saving (and up to a couple ways to phrase the answer, if that varies) — this tool is much less useful with just one example of each.
+- add_knowledge_note — for a new FACT that answers a specific question when asked, but does NOT need to be actively applied/enforced on every reply and isn't naturally a multi-phrasing Q&A (store hours, a new offer, a one-off detail). If in doubt between this and update_style_rule, ask: "should this change how the AI behaves on every reply, or just be available if someone asks about this exact topic?" — the former is update_style_rule.
 
 If you're not confident which applies, ask a short clarifying question instead of guessing or calling a tool.
 
