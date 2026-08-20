@@ -514,7 +514,32 @@ export function validateBusinessClaims(
     knownAmounts.add(0); // free delivery
   }
 
-  const sentences = replyText.split(/(?<=[.!?\n])\s+/);
+  // Real incident (2026-08-20): a reply listing several Janmashtami-offer
+  // products, one per line ("• SORBHAJA – 5 pcs – ₹50\n• Laal Kheer Doi –
+  // 500 gm – ₹180\n..."), came out on WhatsApp as one run-on paragraph with
+  // every line jammed together — the owner's own words: "AGE PRODUCT R NAME
+  // TA PORPOR DITO, AKHON AKSATHE JORO HOE JACHHE" (before it gave product
+  // names one after another, now they're clumping together). Root cause: the
+  // old split regex below split BEFORE each sentence/line but consumed
+  // (discarded) the actual newline/whitespace as part of the split
+  // delimiter — so even when every single line survived the filter
+  // untouched, `kept.join(" ")` still replaced every original "\n" between
+  // bullet lines with a plain space, and `.replace(/\s+/g, " ")` flattened
+  // any remaining line breaks too. This function only actually got exercised
+  // on a reply shaped like this (RETAIL org + known PIN + a bulleted
+  // multi-product campaign list) once the "AI said no offers" fix above
+  // started letting the AI answer with this kind of list in the first
+  // place — the whitespace-mangling bug itself likely predates today, it
+  // just wasn't visible on shorter one-line replies.
+  //
+  // Fix: match each sentence/line WITH its own trailing terminator+whitespace
+  // still attached (instead of splitting the terminator away), so a kept
+  // segment carries its original newline with it. Dropped segments simply
+  // don't contribute their content OR their trailing newline — surviving
+  // segments are joined with "" (no added separator) because each one
+  // already ends with whatever original whitespace followed it.
+  const SENTENCE_WITH_TRAILING_WHITESPACE = /[^.!?\n]*[.!?\n]+\s*|[^.!?\n]+$/g;
+  const sentences = replyText.match(SENTENCE_WITH_TRAILING_WHITESPACE) ?? [replyText];
   const kept = sentences.filter((sentence) => {
     if (!CLAIM_KEYWORDS.test(sentence)) return true;
     const amounts = sentence.match(RUPEE_AMOUNT);
@@ -526,5 +551,5 @@ export function validateBusinessClaims(
     return allKnown; // drop the sentence entirely if any quoted amount doesn't match a real configured number
   });
 
-  return kept.join(" ").replace(/\s+/g, " ").trim() || replyText; // never return an empty reply — fall back to the original if stripping ate everything
+  return kept.join("").trim() || replyText; // never return an empty reply — fall back to the original if stripping ate everything
 }
