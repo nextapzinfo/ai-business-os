@@ -489,8 +489,32 @@ export async function buildBusinessRulesNote(
 // campaign wording — mirrors the same "drop rather than risk" philosophy
 // already used by stripHallucinatedProductListings() in lib/llm.ts.
 // ---------------------------------------------------------------------------
-const CLAIM_KEYWORDS = /(delivery|shipping|minimum order|min order|free deliver|campaign|offer)/i;
-const RUPEE_AMOUNT = /₹\s?[\d,]+/g;
+// Bug found 2026-08-20 (owner's own screenshots repeatedly show real replies
+// written this way): CLAIM_KEYWORDS was English-only, so a claim sentence
+// written entirely in Bengali — e.g. "জন্মাষ্টমীর অফার অনুযায়ী... ₹১,৫০০ বা
+// তার বেশি হলে..." — never matched ANY keyword, meaning this whole backstop
+// silently skipped checking the ₹ amount in it at all (treated as "not a
+// claim sentence", the same as an unrelated sentence). Bengali equivalents
+// added for the same concepts already covered in English.
+const CLAIM_KEYWORDS =
+  /(delivery|shipping|minimum order|min order|free deliver|campaign|offer|ডেলিভারি|ন্যূনতম\s*অর্ডার|সর্বনিম্ন\s*অর্ডার|ক্যাম্পেইন|অফার)/i;
+const RUPEE_AMOUNT = /[₹৳]\s?[\d,]+/g;
+
+// Bug found 2026-08-20, same investigation as above: RUPEE_AMOUNT's digit
+// class ([\d,]+) is ASCII-only, so it never matched a price written in
+// Bengali numerals (০-৯) at all — e.g. "₹৫০০" simply didn't match, direct-
+// tested with Node. Since the AI is explicitly instructed to reply in
+// Bengali (including Bengali digits) when the customer writes in Bengali,
+// and every real screenshot reviewed this session shows exactly that, this
+// meant the amount-check below was silently a no-op on a large fraction of
+// real replies — it only ever fired on the ASCII-digit minority. Converting
+// a throwaway COPY of the sentence to ASCII digits before matching (the
+// original sentence text, digits and all, is still what's kept/returned)
+// fixes this without changing anything the customer actually sees.
+const BENGALI_DIGITS = "০১২৩৪৫৬৭৮৯";
+function normalizeDigits(s: string): string {
+  return s.replace(/[০-৯]/g, (d) => String(BENGALI_DIGITS.indexOf(d)));
+}
 
 export function validateBusinessClaims(
   replyText: string,
@@ -542,10 +566,10 @@ export function validateBusinessClaims(
   const sentences = replyText.match(SENTENCE_WITH_TRAILING_WHITESPACE) ?? [replyText];
   const kept = sentences.filter((sentence) => {
     if (!CLAIM_KEYWORDS.test(sentence)) return true;
-    const amounts = sentence.match(RUPEE_AMOUNT);
+    const amounts = normalizeDigits(sentence).match(RUPEE_AMOUNT);
     if (!amounts) return true; // claim-shaped sentence but no ₹ number in it — nothing to verify, leave it
     const allKnown = amounts.every((raw) => {
-      const n = Number(raw.replace(/[₹,\s]/g, ""));
+      const n = Number(raw.replace(/[₹৳,\s]/g, ""));
       return knownAmounts.has(n);
     });
     return allKnown; // drop the sentence entirely if any quoted amount doesn't match a real configured number

@@ -112,6 +112,81 @@ export async function fetchLiveProductPriceText(name: string): Promise<string | 
   }
 }
 
+// Structured full-catalog data — one call gets EVERY active product's real
+// name/description/category and its FULL variant list (each variant's real
+// label/price/compareAtPrice/min-max order quantity/stock — the same "2 Pc /
+// 5 Pieces"-style pack pricing shown as buttons on the product page). Added
+// 2026-08-20 at the owner's own instruction: "product r price o AI website
+// ta follow korle aro bhalo hobe... no need knowledge base data for product
+// priceing and min order qty" — this is what lets AI Business OS stop
+// maintaining its own separately-typed copy of prices/min-orders entirely,
+// the same duplication that already caused a real customer-facing mistake
+// this session (a per-piece price shown next to a "5 pcs" label). Backed by
+// banglardoi-app's /api/integrations/product-catalog (same shared-secret
+// auth as the other integrations here).
+export type BanglarDoiCatalogVariant = {
+  label: string;
+  price: string;
+  compareAtPrice: string | null;
+  minOrderQty: number;
+  maxOrderQty: number | null;
+  inStock: boolean;
+};
+
+export type BanglarDoiCatalogProduct = {
+  name: string;
+  slug: string;
+  description: string | null;
+  category: string | null;
+  featured: boolean;
+  bestSeller: boolean;
+  pricePerPiece: string | null;
+  variants: BanglarDoiCatalogVariant[];
+};
+
+export type BanglarDoiCatalogCategory = { name: string; slug: string; isSubcategory: boolean };
+
+export type BanglarDoiCatalog = {
+  products: BanglarDoiCatalogProduct[];
+  categories: BanglarDoiCatalogCategory[];
+};
+
+// Every single WhatsApp reply now needs this (buildSystemPrompt's
+// catalogNote — see lib/llm.ts), unlike the on-demand per-product lookup
+// above, so an in-memory cache avoids hitting banglardoi.com on every
+// customer message. Module-scoped, so it only helps within one warm
+// serverless instance — a cold start just fetches fresh, which is fine
+// (correctness never depends on the cache; it's a latency/load optimization
+// only). 5 minutes comfortably keeps prices/stock fresh enough while
+// cutting the vast majority of calls a busy conversation would otherwise
+// make.
+let catalogCache: { data: BanglarDoiCatalog; fetchedAt: number } | null = null;
+const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export async function fetchBanglarDoiFullCatalog(): Promise<BanglarDoiCatalog | null> {
+  const now = Date.now();
+  if (catalogCache && now - catalogCache.fetchedAt < CATALOG_CACHE_TTL_MS) {
+    return catalogCache.data;
+  }
+  try {
+    const data = await banglarDoiFetch(`/api/integrations/product-catalog`);
+    const catalog: BanglarDoiCatalog = {
+      products: Array.isArray(data.products) ? data.products : [],
+      categories: Array.isArray(data.categories) ? data.categories : [],
+    };
+    catalogCache = { data: catalog, fetchedAt: now };
+    return catalog;
+  } catch (err) {
+    console.error("fetchBanglarDoiFullCatalog failed:", err);
+    // Serve a stale cache rather than nothing, if one exists — a live
+    // catalog a few minutes old is still far more trustworthy than falling
+    // all the way back to the local DB's manually-retyped prices. Only
+    // returns null (triggering the caller's local-DB fallback) on a true
+    // cold failure with nothing cached yet at all.
+    return catalogCache ? catalogCache.data : null;
+  }
+}
+
 // Live delivery fee/minimum-order/COD-availability for a PIN code, straight
 // from banglardoi.com's own /api/delivery/check — the SAME endpoint the
 // checkout page's own pincode preview calls, and the same calculateDelivery()

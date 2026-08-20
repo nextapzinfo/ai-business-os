@@ -30,6 +30,7 @@ import {
   fetchBanglarDoiOrderStatus,
   fetchBanglarDoiProductStock,
   fetchLiveProductPriceText,
+  fetchBanglarDoiFullCatalog,
 } from "@/lib/banglardoi";
 import {
   resolveDeliveryZone,
@@ -1160,10 +1161,37 @@ export async function POST(req: NextRequest) {
     // but never actually fetched/passed from this webhook, meaning that whole
     // safety layer was silently inactive on real WhatsApp traffic the entire
     // time — this is what actually turns it on.
-    const catalogProducts: CatalogProduct[] = await prisma.product.findMany({
+    const localCatalogProducts: CatalogProduct[] = await prisma.product.findMany({
       where: { organizationId: organization.id },
       select: { name: true, price: true, description: true },
     });
+
+    // Prefer banglardoi.com's own live, structured catalog — real per-variant
+    // price + minOrderQty + category, straight from the same data the
+    // storefront itself sells from — over this org's local Product table,
+    // which the owner would otherwise have to keep manually re-typing in
+    // sync by hand. Owner's own instruction (2026-08-20): "product r price o
+    // AI website ta follow korle aro bhalo hobe... no need knowledge base
+    // data for product priceing and min order qty." Falls back to the local
+    // list above whenever the live fetch is unavailable/disabled or returns
+    // nothing — this must never block or degrade a reply just because
+    // banglardoi.com is briefly unreachable.
+    let catalogProducts: CatalogProduct[] = localCatalogProducts;
+    if (organization.vertical === "RETAIL" && isBanglarDoiIntegrationEnabled()) {
+      const liveCatalog = await fetchBanglarDoiFullCatalog();
+      if (liveCatalog && liveCatalog.products.length > 0) {
+        catalogProducts = liveCatalog.products.map((p) => ({
+          name: p.name,
+          price:
+            p.variants.length > 0
+              ? p.variants.map((v) => `${v.label}: ${v.price}`).join(", ")
+              : p.pricePerPiece,
+          description: p.description,
+          category: p.category,
+          variants: p.variants.map((v) => ({ label: v.label, price: v.price, minOrderQty: v.minOrderQty })),
+        }));
+      }
+    }
 
     // Business Rule Engine note (lib/business-rules.ts) — the authoritative
     // delivery-fee/minimum-order/active-campaign facts for this customer's

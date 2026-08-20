@@ -281,6 +281,20 @@ function normalizeProductName(s: string): string {
     .replace(/\s+/g, " ");
 }
 
+// Bug found 2026-08-20: every digit-matching regex in this file's safety
+// nets ([\d,]+) is ASCII-only, so a price written in Bengali numerals
+// (০-৯) never matched at all — direct-tested with Node ("₹৫০" against
+// PRODUCT_LISTING_LINE returns null). Since the AI is instructed to reply
+// in Bengali (digits included) when the customer writes in Bengali, and
+// every real screenshot reviewed this session shows exactly that, these
+// safety nets were silently inert on a large share of real replies. This
+// converts a throwaway COPY of text to ASCII digits before matching —
+// callers keep using the ORIGINAL text for anything the customer sees.
+const BENGALI_DIGITS = "০১২৩৪৫৬৭৮৯";
+function normalizeDigits(s: string): string {
+  return s.replace(/[০-৯]/g, (d) => String(BENGALI_DIGITS.indexOf(d)));
+}
+
 // Every number (as a plain float, commas stripped) found anywhere in a
 // product's raw price field — free-text, so it may read "150", "₹150",
 // "5 pcs - ৳250", or even "500gm - ₹150, 1kg - ₹280" for a product that
@@ -289,13 +303,29 @@ function normalizeProductName(s: string): string {
 // field still validates correctly against whichever figure the model quotes.
 function extractRealPriceNumbers(priceRaw: string | null | undefined): Set<number> {
   if (!priceRaw) return new Set();
-  const matches = priceRaw.match(/[\d,]+(?:\.\d+)?/g) || [];
+  const matches = normalizeDigits(priceRaw).match(/[\d,]+(?:\.\d+)?/g) || [];
   return new Set(
     matches.map((m) => parseFloat(m.replace(/,/g, ""))).filter((n) => !Number.isNaN(n))
   );
 }
 
-export type CatalogProduct = { name: string; price?: string | null; description?: string | null };
+// `variants` and `category` are optional — populated only when this product
+// came from banglardoi.com's live structured catalog (see
+// fetchBanglarDoiFullCatalog in lib/banglardoi.ts, wired in by
+// app/api/whatsapp/webhook/route.ts, added 2026-08-20). A product sourced
+// from the local Product table (the pre-existing fallback) simply omits
+// them — every existing call site keeps working unchanged. When present,
+// `variants` is the REAL "2 Pc — ₹100 / 5 Pieces — ₹250"-style pack list,
+// which lets stripHallucinatedProductListings below do an EXACT
+// quantity-to-price check instead of the older "is this number present
+// somewhere" heuristic.
+export type CatalogProduct = {
+  name: string;
+  price?: string | null;
+  description?: string | null;
+  category?: string | null;
+  variants?: { label: string; price: string; minOrderQty: number }[];
+};
 
 // Pulls a "Minimum Order: N piece(s)" style line out of a product's
 // description, if present, so it can be surfaced in the compact catalog list
@@ -314,8 +344,52 @@ function extractMinOrder(description?: string | null): string | null {
 // "* Baked Rosogolla — 1 kg — ₹350" — deliberately requires an actual price
 // figure, so ordinary bulleted text (FAQs, policy notes) is never touched by
 // this filter, only genuine "here's a list of products with prices" lines.
-// Capture group 2 is the quoted price digits, used for the price check below.
-const PRODUCT_LISTING_LINE = /^[•*\-]\s*\*?([^*\n—–-]{2,50}?)\*?\s*[—–-]\s*.*[₹৳]\s*([\d,]+(?:\.\d+)?)/;
+// Group 1 is the product name, group 2 is whatever sits between the name and
+// the price (usually a quantity/pack phrase like "5 pcs" or "৫ পিস" — used by
+// the quantity-mismatch check below), group 3 is the quoted price digits.
+// Matched against a digit-normalized COPY of the line (see stripHallucinated-
+// ProductListings) so this also engages on Bengali-numeral prices.
+const PRODUCT_LISTING_LINE = /^[•*\-]\s*\*?([^*\n—–-]{2,50}?)\*?\s*[—–-]\s*(.*?)[₹৳]\s*([\d,]+(?:\.\d+)?)/;
+
+// A quantity phrase stating MORE than one piece — "5 pcs", "10 pieces",
+// "৫ পিস", "৩টি" — used only to catch the specific bug below (a per-piece
+// price shown next to a multi-piece quantity label). Deliberately limited to
+// piece/count units, never weight (kg/gm), since a per-kg vs per-gm mix-up
+// isn't something this heuristic can safely reason about. Uses a negative
+// lookahead instead of \b after the unit word — JS's \b only treats ASCII
+// [A-Za-z0-9_] as "word" characters, so it fails to find a boundary right
+// after a Bengali-script word like "পিস" (confirmed by direct testing: \b
+// silently never matched there at all, which would have made this whole
+// check a no-op on the Bengali-unit case it's specifically meant to catch).
+const MULTI_PIECE_QTY = /(\d+)\s*(?:pcs?|pieces?|পিস|টি|টা)(?![a-zA-Zঀ-৿])/i;
+
+// Parses a leading count + unit out of a piece-count phrase — "5 pcs",
+// "৫ পিস", "2 Pc" (a real variant label from banglardoi.com), "1 piece" —
+// into a plain number, or null if the phrase isn't piece-counted at all
+// (e.g. a weight like "500 gm"/"1 kg", which this deliberately leaves alone
+// — see findMatchingVariant below). Used to match a listing line's stated
+// quantity against a REAL variant label when live catalog data is
+// available (CatalogProduct.variants), for an exact rather than heuristic
+// quantity-to-price check.
+function parsePieceCount(phrase: string): number | null {
+  const m = normalizeDigits(phrase).match(/(\d+)\s*(?:pcs?|pieces?|পিস|টি|টা)(?![a-zA-Zঀ-৿])/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// Finds the real variant whose label states the SAME piece count as the
+// listing line's quantity phrase — e.g. line phrase "৫ পিস" (5) matches a
+// real variant labeled "5 Pieces" or "5 Pc". Returns undefined (not found —
+// caller should fall back to the older heuristic check) rather than a false
+// match when the line's phrase isn't a clear piece-count at all (weight-
+// based lines are intentionally left to the existing checks).
+function findMatchingVariant(
+  qtyPhrase: string,
+  variants: { label: string; price: string; minOrderQty: number }[]
+): { label: string; price: string; minOrderQty: number } | undefined {
+  const lineQty = parsePieceCount(qtyPhrase);
+  if (lineQty == null) return undefined;
+  return variants.find((v) => parsePieceCount(v.label) === lineQty);
+}
 
 // Third deterministic safety net (same family as applyTerminologySwaps and
 // flattenAttributeBulletLines above) — added after a real incident where,
@@ -359,17 +433,65 @@ export function stripHallucinatedProductListings(text: string, catalogProducts: 
     const run: { line: string; keep: boolean }[] = [];
     let j = i;
     while (j < lines.length) {
-      const m = lines[j].match(PRODUCT_LISTING_LINE);
+      // Match against a digit-normalized COPY — lines[j] itself (pushed to
+      // `run` below) keeps its original Bengali/ASCII digits unchanged for
+      // the customer.
+      const m = normalizeDigits(lines[j]).match(PRODUCT_LISTING_LINE);
       if (!m) break;
       const real = realProductsByName.get(normalizeProductName(m[1]));
       let keep = false;
       if (real) {
-        const quoted = parseFloat(m[2].replace(/,/g, ""));
+        const quoted = parseFloat(m[3].replace(/,/g, ""));
         const realNumbers = extractRealPriceNumbers(real.price);
         // No parseable price on file at all → the quoted number can't be
         // verified either way, so don't trust it — same "drop rather than
         // risk it" call as an unrecognized product name.
         keep = realNumbers.size > 0 && realNumbers.has(quoted);
+
+        // Real incident (2026-08-20, owner's own WhatsApp screenshot):
+        // "SORBHAJA – 5 pcs – ₹50" — ₹50 genuinely IS Sorbhaja's real price
+        // on file, so the check above lets it through, but ₹50 is its
+        // PER-PIECE price, not a 5-piece total — the customer had already
+        // corrected the AI on this exact mistake once earlier in the same
+        // conversation, and it repeated it anyway. The check above only
+        // confirms the quoted number exists somewhere in the price field;
+        // it can't, on its own, confirm it's the RIGHT number for the
+        // STATED quantity. Two ways to catch that, tried in order:
+        //
+        // 1) EXACT check, when live variant data is available (added
+        // 2026-08-20, same day as the incident above — see
+        // fetchBanglarDoiFullCatalog in lib/banglardoi.ts): look up the
+        // REAL variant matching this line's stated piece count and require
+        // the quoted price to equal that variant's real price exactly, no
+        // guessing. This is strictly more correct than the heuristic below
+        // wherever it can apply — e.g. it correctly ALLOWS "5 pcs – ₹250"
+        // once ₹250 really is Sorbhaja's real 5-piece bundle price, which
+        // the old heuristic (any product with only one price on file) can't
+        // distinguish from the bug case.
+        if (real.variants && real.variants.length > 0) {
+          const matchedVariant = findMatchingVariant(m[2], real.variants);
+          if (matchedVariant) {
+            const variantPrice = parseFloat(normalizeDigits(matchedVariant.price).replace(/[₹৳,\s]/g, ""));
+            keep = !Number.isNaN(variantPrice) && quoted === variantPrice;
+          }
+          // No confident variant match (e.g. a weight-based line like "500
+          // gm", which this exact check deliberately doesn't attempt) —
+          // fall through to whatever `keep` the flat number-exists check
+          // above already produced.
+        } else if (keep && realNumbers.size === 1) {
+          // 2) Heuristic fallback, for products with no live variant data
+          // (local-DB-only products): the product has only ONE price figure
+          // on file at all (no bundle/tier pricing to fall back on), the
+          // line states a quantity of MORE than one piece, and the quoted
+          // price is exactly that single on-file figure, unmultiplied —
+          // i.e. almost certainly a per-piece price mislabeled at a bulk
+          // quantity. Same "drop rather than risk it" stance as everywhere
+          // else in this function.
+          const qtyMatch = m[2].match(MULTI_PIECE_QTY);
+          if (qtyMatch && parseInt(qtyMatch[1], 10) > 1) {
+            keep = false;
+          }
+        }
       }
       run.push({ line: lines[j], keep });
       j++;
@@ -546,12 +668,39 @@ function buildSystemPrompt(
       ? `\n\nThe COMPLETE, EXACT list of every product this business actually sells, with its real price and (where set) its real minimum order quantity — nothing else exists, even a well-known item you'd normally expect a shop like this to carry, and no product's real price or minimum is ever anything other than what's listed here: ${catalogProducts
           .slice(0, CATALOG_NAME_CAP)
           .map((p) => {
+            // Live variant data (from banglardoi.com, see CatalogProduct's
+            // own comment) is the real, structured "2 Pc — ₹100 / 5 Pieces
+            // — ₹250"-style pack list — prefer it outright over the older
+            // regex-scraped-from-description min-order guess below, since
+            // it's exact rather than inferred.
+            if (p.variants && p.variants.length > 0) {
+              const variantText = p.variants
+                .map((v) => `${v.label}: ${v.price}${v.minOrderQty > 1 ? ` (min order ${v.minOrderQty})` : ""}`)
+                .join(", ");
+              return `${p.name} [${variantText}]`;
+            }
             const minOrder = extractMinOrder(p.description);
             return `${p.name}${p.price ? ` (${p.price})` : ""}${minOrder ? ` [min order: ${minOrder} pcs]` : ""}`;
           })
           .join(", ")}${
           catalogProducts.length > CATALOG_NAME_CAP ? ", …" : ""
-        }. NEVER mention, list, suggest, or imply the existence of a product not in this exact list, and NEVER quote a price for a listed product other than its real price shown here — never borrow, average, or guess a price from a different product. If a customer asks about something not on this list, or a price you're not sure of, say honestly that you don't carry it or aren't certain and will check, instead of guessing or padding out an answer to sound more helpful.`
+        }. NEVER mention, list, suggest, or imply the existence of a product not in this exact list, and NEVER quote a price for a listed product other than its real price shown here — never borrow, average, or guess a price from a different product. If a customer asks about something not on this list, or a price you're not sure of, say honestly that you don't carry it or aren't certain and will check, instead of guessing or padding out an answer to sound more helpful. When a product's entry above shows several bracketed options like "[2 Pc: ₹100, 5 Pieces: ₹250]", each is its OWN real price for that exact pack — never compute or guess a price for a quantity that isn't listed by multiplying another one yourself, and never state one bracketed option's price as if it were a different one's.`
+      : "";
+
+  // Category info — only present when the live banglardoi.com catalog was
+  // used (see CatalogProduct's own comment; a local-DB-only fallback never
+  // sets `category`). Added 2026-08-20 alongside the live-catalog wiring so
+  // the AI can proactively point a browsing/unsure customer at a category —
+  // e.g. Gift Box or Combo — instead of only ever naming individual items
+  // one at a time.
+  const categoryNames = Array.from(
+    new Set(catalogProducts.map((p) => p.category).filter((c): c is string => Boolean(c && c.trim())))
+  );
+  const categoriesNote =
+    categoryNames.length > 0
+      ? `\n\nThis business organizes its products into these categories: ${categoryNames.join(
+          ", "
+        )}. When a customer seems unsure what to order, is just browsing, or asks for a gift or a combo/festival pack, it's natural to mention a relevant category (e.g. suggest looking at the Gift Box or Combo options) rather than only ever listing individual items — but only suggest a category that's actually in this list.`
       : "";
 
   // Added after a real incident: "Baked Rosogolla" is priced as "৳30/pc (min
@@ -614,7 +763,7 @@ Keep it looking like a real WhatsApp message a person would type, not a formatte
 
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
-Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions. If a source titled "EXACT CURRENT INFO — [product name]" is present, that is the ground-truth, freshly-fetched record for the product this conversation is currently about — trust it over any other source AND over anything you yourself said earlier in this same conversation, for that product's price, description, or minimum order quantity. If you notice you stated a different number for this product earlier in the conversation, this fresh record is correct and your earlier statement was wrong — correct yourself plainly rather than repeating the old number for consistency. Other similar-sounding products' details must never be substituted in its place.${toolsNote}${customInstructionsNote}${businessRulesNoteText}${brandLanguageNote}${photoInstructionNote}${catalogNote}${priceFormatNote}
+Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions. If a source titled "EXACT CURRENT INFO — [product name]" is present, that is the ground-truth, freshly-fetched record for the product this conversation is currently about — trust it over any other source AND over anything you yourself said earlier in this same conversation, for that product's price, description, or minimum order quantity. If you notice you stated a different number for this product earlier in the conversation, this fresh record is correct and your earlier statement was wrong — correct yourself plainly rather than repeating the old number for consistency. Other similar-sounding products' details must never be substituted in its place.${toolsNote}${customInstructionsNote}${businessRulesNoteText}${brandLanguageNote}${photoInstructionNote}${catalogNote}${categoriesNote}${priceFormatNote}
 
 Reference material:
 ${contextBlock}`;
