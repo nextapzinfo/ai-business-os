@@ -133,6 +133,18 @@ export type BanglarDoiCatalogVariant = {
   inStock: boolean;
 };
 
+// "What's inside this pack" — only non-empty for a Combo/Gift Box product
+// (banglardoi-app's ProductBundleItem, added 2026-08-20 at the owner's own
+// request: "Combo and Gift box r khetre multiple product aksathe rakte
+// hobe .. tar jonno admin e kono option nei"). Lets the AI answer
+// "combo-te ki ki ache?" with the real, admin-set contents instead of
+// guessing or saying it doesn't know.
+export type BanglarDoiBundleItem = {
+  quantity: number;
+  name: string;
+  variantLabel: string | null;
+};
+
 export type BanglarDoiCatalogProduct = {
   name: string;
   slug: string;
@@ -142,6 +154,7 @@ export type BanglarDoiCatalogProduct = {
   bestSeller: boolean;
   pricePerPiece: string | null;
   variants: BanglarDoiCatalogVariant[];
+  bundleItems: BanglarDoiBundleItem[];
 };
 
 export type BanglarDoiCatalogCategory = { name: string; slug: string; isSubcategory: boolean };

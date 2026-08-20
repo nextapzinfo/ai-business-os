@@ -52,8 +52,20 @@ const TONE_TEXT: Record<string, string> = {
 const LANGUAGE_TEXT: Record<string, string> = {
   bn: "Always reply in Bengali (Bangla). Use natural, grammatically correct Bengali — never invent a Bengali word or phrase you're not sure is real.",
   en: "Always reply in English.",
+  // Real incident (2026-08-20): a customer chatting entirely in Bengali got
+  // a reply with a stray, unrelated Hindi phrase ("इनमें से") stitched into
+  // an otherwise-Bengali sentence. Root cause: this text used to promise
+  // "if they write in Hindi, reply in Hindi" as one of several mirrored
+  // languages, while the separate language-quality rule further down this
+  // file (search "no stray Cyrillic, Hindi") flatly forbids switching into
+  // any language other than Bengali/English — the SAME prompt was telling
+  // the model both "Hindi is a valid reply language" and "never use Hindi."
+  // This business only actually operates in Bengali/English, so mirroring
+  // is now scoped to just those two, with any other language (Hindi
+  // included) explicitly redirected to English rather than attempted — that
+  // resolves the contradiction and matches the language-quality rule.
   mixed:
-    "Mirror whatever language the customer actually writes in, the same way ChatGPT does — if they write in English, reply in English; if they write in Hindi, reply in Hindi; if they write in Bengali script, reply in Bengali script; and so on for any other language. Don't default to Bengali just because the business is Bengali. The one special case: if the customer writes Banglish (Bengali words spelled out in English/Roman letters, e.g. 'ghee kamon hobe'), reply in proper Bengali script (বাংলা), not in Roman letters — never reply in Banglish yourself. You can naturally keep English brand/product names mixed into a reply in any language. Only use words and phrases in a language you are certain are grammatically correct and actually mean what you intend; if you're not sure how to say something naturally in a given language, say that part in English instead of guessing or inventing a word.",
+    "Mirror whether the customer writes in English or Bengali — if they write in English, reply in English; if they write in Bengali script, reply in Bengali script. Don't default to Bengali just because the business is Bengali. The one special case: if the customer writes Banglish (Bengali words spelled out in English/Roman letters, e.g. 'ghee kamon hobe'), reply in proper Bengali script (বাংলা), not in Roman letters — never reply in Banglish yourself. If the customer writes in some other language (e.g. Hindi, or anything else), reply in English instead of attempting that language — never mix in even a single stray word from a language other than Bengali/English (see the language-quality rule below). You can naturally keep English brand/product names mixed into a reply in any language. Only use words and phrases in a language you are certain are grammatically correct and actually mean what you intend; if you're not sure how to say something naturally in Bengali, say that part in English instead of guessing or inventing a word.",
 };
 
 // Turns the owner's structured word-swap/vocabulary settings into a short
@@ -325,6 +337,12 @@ export type CatalogProduct = {
   description?: string | null;
   category?: string | null;
   variants?: { label: string; price: string; minOrderQty: number }[];
+  // "What's inside this pack" — only present for a Combo/Gift Box product
+  // (banglardoi-app's ProductBundleItem, added 2026-08-20). Only ever set
+  // when the live banglardoi.com catalog was used (a local-DB-only
+  // fallback never sets this) — see buildSystemPrompt's bundleNote below
+  // for how the AI is told about it.
+  bundleItems?: { quantity: number; name: string; variantLabel?: string | null }[];
 };
 
 // Pulls a "Minimum Order: N piece(s)" style line out of a product's
@@ -703,6 +721,26 @@ function buildSystemPrompt(
         )}. When a customer seems unsure what to order, is just browsing, or asks for a gift or a combo/festival pack, it's natural to mention a relevant category (e.g. suggest looking at the Gift Box or Combo options) rather than only ever listing individual items — but only suggest a category that's actually in this list.`
       : "";
 
+  // Combo/Gift Box contents — only present for a product whose `bundleItems`
+  // was set by the admin (banglardoi-app's ProductBundleItem; see
+  // CatalogProduct's own comment). Added 2026-08-20 alongside the admin UI
+  // to build these packs, at the owner's own request: previously there was
+  // no way for the AI to know what was actually inside a Combo or Gift Box,
+  // so a customer asking "combo-te ki ki ache?" either got no real answer
+  // or, worse, an invented one.
+  const bundleProducts = catalogProducts.filter((p) => p.bundleItems && p.bundleItems.length > 0);
+  const bundleNote =
+    bundleProducts.length > 0
+      ? `\n\nThe exact, real contents of these Combo/Gift Box packs (only mention what's listed here — never guess or invent a pack's contents): ${bundleProducts
+          .map(
+            (p) =>
+              `${p.name} contains [${p
+                .bundleItems!.map((b) => `${b.quantity} × ${b.name}${b.variantLabel ? ` (${b.variantLabel})` : ""}`)
+                .join(", ")}]`
+          )
+          .join("; ")}.`
+      : "";
+
   // Added after a real incident: "Baked Rosogolla" is priced as "৳30/pc (min
   // order 5 pcs = ৳150)" — a customer asked to confirm "1 pc ৳150?" and the
   // model answered "১ পিসের দাম ৳150" (the price of 1 piece is ৳150),
@@ -724,7 +762,9 @@ function buildSystemPrompt(
     catalogProducts.length > 0
       ? `\n\nSome prices above are written as "₹X/pc (min order N pcs = ₹Y)" — X is the price of ONE single piece, N is the minimum quantity that must be ordered, and Y is simply X multiplied by N (the total cost of ordering the minimum quantity), not a separate or different price. If a customer asks the price of a single piece, always answer with X, never Y. Only mention Y when you're stating the total cost of the minimum order (e.g. "৫ পিস অর্ডার করলে মোট ৳150"), and always make clear which quantity a price refers to — never state a multi-piece total as if it were a single piece's price. Example: for "₹30/pc (min order 5 pcs = ₹150)", "1 pc price?" → "৳30 প্রতি পিস (সর্বনিম্ন অর্ডার ৫ পিস, অর্থাৎ মোট ৳150)" — never "১ পিসের দাম ৳150". Some products instead show this as two separate lines, e.g. "Price: ₹30 per piece" and "Minimum Order: 5 pieces" — treat that exactly the same way, computing the total yourself as price × minimum when needed.
 
-MINIMUM ORDER IS A HARD RULE, ALWAYS CHECK IT — this applies to every single reply about a quantity, not just when finalizing an order. Whenever a customer states or implies a quantity for a specific product (even in a first "here's what I'd like" message, before anything is confirmed), check that product's info for a "Minimum Order" line FIRST, before calculating or quoting any total. If their quantity is below that minimum: do NOT calculate a total for it, do NOT treat it as accepted, and do NOT proceed toward confirming an address/order — instead, tell them the minimum plainly and ask if they'd like to order that many instead. Only calculate a total and move toward confirming once the quantity meets or exceeds the minimum.`
+MINIMUM ORDER IS A HARD RULE, ALWAYS CHECK IT — this applies to every single reply about a quantity, not just when finalizing an order. Whenever a customer states or implies a quantity for a specific product (even in a first "here's what I'd like" message, before anything is confirmed), check that product's info for a "Minimum Order" line FIRST, before calculating or quoting any total. If their quantity is below that minimum: do NOT calculate a total for it, do NOT treat it as accepted, and do NOT proceed toward confirming an address/order — instead, tell them the minimum plainly and ask if they'd like to order that many instead. Only calculate a total and move toward confirming once the quantity meets or exceeds the minimum.
+
+If a customer asks for a size/weight/quantity that isn't sold as its own pack (e.g. they ask for 1 kg but only 250 gm and 500 gm packs are listed), don't just say it's unavailable and stop there — check whether an exact multiple of a real listed pack reaches what they asked for (e.g. two 500 gm packs = 1 kg), and if so, proactively suggest that combination, computing the total by multiplying that exact pack's real listed price (never inventing or guessing a new price, and never a fractional/partial pack) — e.g. "১ kg প্যাকেজ নেই, তবে ৫০০ gm-এর ২টা প্যাকেজ নিলে ১ kg হয়ে যাবে, মোট হবে ₹1000।" If no clean multiple lands exactly on what they asked for, say so plainly and offer the closest real pack sizes instead of forcing an odd combination.`
       : "";
 
   // Core AI Identity (set in Agent Studio → Profile, top of the page) is a
@@ -763,7 +803,7 @@ Keep it looking like a real WhatsApp message a person would type, not a formatte
 
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
-Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions. If a source titled "EXACT CURRENT INFO — [product name]" is present, that is the ground-truth, freshly-fetched record for the product this conversation is currently about — trust it over any other source AND over anything you yourself said earlier in this same conversation, for that product's price, description, or minimum order quantity. If you notice you stated a different number for this product earlier in the conversation, this fresh record is correct and your earlier statement was wrong — correct yourself plainly rather than repeating the old number for consistency. Other similar-sounding products' details must never be substituted in its place.${toolsNote}${customInstructionsNote}${businessRulesNoteText}${brandLanguageNote}${photoInstructionNote}${catalogNote}${categoriesNote}${priceFormatNote}
+Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions. If a source titled "EXACT CURRENT INFO — [product name]" is present, that is the ground-truth, freshly-fetched record for the product this conversation is currently about — trust it over any other source AND over anything you yourself said earlier in this same conversation, for that product's price, description, or minimum order quantity. If you notice you stated a different number for this product earlier in the conversation, this fresh record is correct and your earlier statement was wrong — correct yourself plainly rather than repeating the old number for consistency. Other similar-sounding products' details must never be substituted in its place.${toolsNote}${customInstructionsNote}${businessRulesNoteText}${brandLanguageNote}${photoInstructionNote}${catalogNote}${categoriesNote}${bundleNote}${priceFormatNote}
 
 Reference material:
 ${contextBlock}`;

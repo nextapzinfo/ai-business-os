@@ -1189,6 +1189,11 @@ export async function POST(req: NextRequest) {
           description: p.description,
           category: p.category,
           variants: p.variants.map((v) => ({ label: v.label, price: v.price, minOrderQty: v.minOrderQty })),
+          bundleItems: p.bundleItems.map((b) => ({
+            quantity: b.quantity,
+            name: b.name,
+            variantLabel: b.variantLabel,
+          })),
         }));
       }
     }
