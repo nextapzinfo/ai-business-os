@@ -386,6 +386,21 @@ export async function validateOrderState(input: OrderStateInput): Promise<OrderV
     };
   }
 
+  // Owner's own instruction (2026-08-22): "pin code na thakle - Ai handsoff
+  // and said that our team will check ur area is servicable or not and then
+  // will confirm" — an unmatched PIN must NEVER get quoted the flat
+  // fallback fee as if the area were a confirmed one; it goes to staff
+  // instead. See buildBusinessRulesNote below for the same rule applied
+  // earlier in the conversation (before an order is actually attempted).
+  if (!quote.zoneMatched) {
+    return {
+      valid: false,
+      blockers: [
+        `PIN ${input.pincode} is not yet in our confirmed delivery zones. Do NOT quote a delivery fee or confirm this order — tell the customer our team will check whether their area is serviceable and confirm, and call request_human_handoff so staff can follow up.`,
+      ],
+    };
+  }
+
   const minCheck = validateMinimumOrder(quote, input.orderAmount);
   if (!minCheck.valid) {
     return {
@@ -443,6 +458,15 @@ export async function buildBusinessRulesNote(
     return `AUTHORITATIVE DELIVERY INFO for PIN ${pincode}: couldn't reach banglardoi.com's live delivery check just now. Do NOT state a delivery fee or minimum order for this PIN — tell the customer you'll confirm and follow up, or offer to connect them with a real person. Never guess or reuse a number from a different area.`;
   }
 
+  // Owner's own instruction (2026-08-22): an unmatched PIN (no configured
+  // Delivery Zone covers it) must never be quoted the flat fallback fee as
+  // if the area were confirmed serviceable — hand off to staff instead, as
+  // soon as the PIN is known, not only once the customer tries to place an
+  // order (see the matching check in validateOrderState above).
+  if (!quote.zoneMatched) {
+    return `PIN ${pincode} is NOT yet in our confirmed delivery zones. Do NOT state a delivery fee, minimum order, or COD availability for this PIN, and do NOT confirm any order to this address. Tell the customer our team will check whether their area is serviceable and confirm — and call request_human_handoff so staff can follow up on this specific PIN.`;
+  }
+
   // Local zone lookup is now ONLY used to scope a Campaign to a specific
   // area — the numbers below always come from the live quote above, never
   // from this local zone's own (legacy) tiers/minOrderAmount.
@@ -468,6 +492,8 @@ export async function buildBusinessRulesNote(
           quote.freeDeliveryThresholdInPaise ? ` (FREE above ₹${quote.freeDeliveryThresholdInPaise / 100})` : ""
         }\n`;
   note += `  Cash on Delivery: ${quote.codAllowed ? "available" : "NOT available — prepaid/online payment only"} for this PIN\n`;
+  note += `  Estimated standard delivery time: ${quote.estimatedDeliveryDays} day${quote.estimatedDeliveryDays === 1 ? "" : "s"} (via our own delivery — never state a different number of days for standard delivery)\n`;
+  note += `  Instant/express delivery: we can arrange this through a courier partner, but the exact charge is NOT known here — do not invent or estimate a number. If the customer wants instant delivery, tell them our team will confirm the exact instant-delivery charge, and call request_human_handoff so staff can follow up with it.\n`;
 
   if (campaign) {
     const endDate = campaign.endsAt.toLocaleDateString("en-IN", { day: "numeric", month: "short" });

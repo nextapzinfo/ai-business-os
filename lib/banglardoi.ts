@@ -46,6 +46,17 @@ export type BanglarDoiDeliveryQuote = {
   meetsMinOrder: boolean;
   freeDeliveryThresholdInPaise: number | null;
   feeTiers: BanglarDoiDeliveryFeeTier[];
+  // Real estimate from banglardoi.com — the zone's own configured value, or
+  // its DEFAULT_ESTIMATED_DELIVERY_DAYS fallback (currently 3 days) when the
+  // zone didn't set one. Lets the AI state an actual delivery-time estimate
+  // instead of inventing one.
+  estimatedDeliveryDays: number;
+  // false means this PIN didn't match any admin-configured Delivery Zone on
+  // banglardoi.com — the numbers above are still a real, valid quote (the
+  // website's own flat fallback rate), but nobody has actually confirmed we
+  // deliver to this area. See lib/business-rules.ts for how this is used to
+  // hand off to staff instead of quoting a fee for an unconfirmed area.
+  zoneMatched: boolean;
 };
 
 async function banglarDoiFetch(path: string): Promise<any> {
@@ -234,5 +245,13 @@ export async function fetchBanglarDoiDeliveryCheck(
     meetsMinOrder: data.meetsMinOrder,
     freeDeliveryThresholdInPaise: data.freeDeliveryThresholdInPaise ?? null,
     feeTiers: Array.isArray(data.feeTiers) ? data.feeTiers : [],
+    // Falls back to 3 (banglardoi-app's own DEFAULT_ESTIMATED_DELIVERY_DAYS)
+    // on an older deployment that doesn't send this field yet.
+    estimatedDeliveryDays: typeof data.estimatedDeliveryDays === "number" ? data.estimatedDeliveryDays : 3,
+    // Defaults true (older banglardoi.com deployments before this field
+    // existed always meant "a real zone" as far as this app knew) — only an
+    // explicit `false` from the website should ever trigger the
+    // area-not-confirmed handoff path.
+    zoneMatched: data.zoneMatched !== false,
   };
 }

@@ -40,6 +40,7 @@ import {
   resolveActiveCampaign,
   fetchLiveDeliveryQuote,
 } from "@/lib/business-rules";
+import { resolvePincodeAreaNames } from "@/lib/pincode";
 import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
 import { logAiUsage } from "@/lib/billing";
@@ -996,7 +997,39 @@ export async function POST(req: NextRequest) {
           action: "CLIENT_ADDRESS_SAVED_BY_AI",
           metadata: { clientId: client!.id, address, pincode },
         });
-        return `Saved address: ${address}${pincode ? ` (PIN ${pincode})` : ""}`;
+        // Deliberately worded to steer the model's next reply, not just log
+        // what happened — a naive "Saved address: ..." return here (even
+        // with no PIN) let the model confidently tell the customer their
+        // address/PIN was saved correctly regardless, since it wasn't told
+        // anything was actually missing. Real incident (2026-08-22, owner's
+        // own screenshot): customer sent a 5-digit "70001", the model
+        // replied the address was "সঠিকভাবে সংরক্ষিত হয়েছে" (correctly
+        // saved) with that PIN and moved straight on to quoting a total —
+        // the invalid PIN was silently dropped here (pincode stayed
+        // undefined, nothing wrong with that on its own), but the model had
+        // no signal that it should NOT have confirmed it.
+        if (!pincode) {
+          return `Address text saved, but NO valid 6-digit PIN code was found in "${address}". Do NOT tell the customer their address or PIN is confirmed, and do NOT quote a delivery fee or total yet — ask them to resend just their correct 6-digit PIN code.`;
+        }
+
+        // Ground truth for "which area is this PIN" — a SECOND real
+        // incident (2026-08-22, same conversation): the customer's own
+        // earlier free-text address said "Newtown, action area 1", then
+        // they gave PIN 700001 — which actually resolves to Fairley
+        // Place/BBD Bagh/Netaji Subhas Road, Kolkata, nowhere near Newtown.
+        // Asked "amar area janen apni?" (do you know my area), the model
+        // answered "নিউটাউন এলাকায়" (Newtown) anyway — just parroting the
+        // earlier address text instead of ever actually checking what the
+        // PIN itself resolves to, so a customer's own mistake (or a
+        // mismatched PIN/address) was never caught or corrected. Same free
+        // India Post API banglardoi.com's own Delivery Zone admin already
+        // uses for this exact purpose (see pincode.ts).
+        const areaNames = await resolvePincodeAreaNames(pincode);
+        const areaNote =
+          areaNames.length > 0
+            ? ` India Post confirms PIN ${pincode} covers: ${areaNames.join(" / ")}. When telling the customer their area/locality, state ONLY this — never state a different area name (including one the customer themselves typed earlier in this conversation) unless it genuinely matches one of these. If the customer's own address text names a different area, gently point out the mismatch and ask them to confirm which is correct rather than picking one yourself.`
+            : ` Could not confirm PIN ${pincode}'s real area right now — if the customer asks what area their PIN is in, say you're not able to confirm it rather than guessing or reusing an area name from earlier in the conversation.`;
+        return `Saved address: ${address} (PIN ${pincode}).${areaNote}`;
       }
       if (name === "set_reminder") {
         const title = (args.title as string)?.trim();
