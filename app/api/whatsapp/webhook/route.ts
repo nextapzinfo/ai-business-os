@@ -1239,7 +1239,9 @@ export async function POST(req: NextRequest) {
     // stating a number that isn't backed by a real configured zone. RETAIL-
     // vertical only, same gating already used for the Banglar Doi tools.
     const businessRulesNote =
-      organization.vertical === "RETAIL" ? await buildBusinessRulesNote(organization.id, effectivePincode) : null;
+      organization.vertical === "RETAIL"
+        ? await buildBusinessRulesNote(organization.id, effectivePincode, client.address)
+        : null;
 
     // Real incident (2026-08-20, owner's own report): asked "ki ki product
     // ache" (general browse), a 7-item featured carousel was sent, but the

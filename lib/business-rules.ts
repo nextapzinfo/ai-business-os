@@ -59,6 +59,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { fetchBanglarDoiDeliveryCheck, type BanglarDoiDeliveryQuote } from "@/lib/banglardoi";
+import { resolvePincodeAreaNames } from "@/lib/pincode";
 
 export interface DeliveryTierInput {
   minAmount: number;
@@ -431,7 +432,12 @@ export async function validateOrderState(input: OrderStateInput): Promise<OrderV
  */
 export async function buildBusinessRulesNote(
   organizationId: string,
-  pincode: string | null
+  pincode: string | null,
+  // The customer's own free-text address on file (Client.address), if any —
+  // added 2026-08-22 so this same authoritative block can also catch an
+  // address/PIN mismatch (see the check right after the live quote below).
+  // Optional and purely additive — omitting it just skips that one check.
+  addressText: string | null = null
 ): Promise<string | null> {
   if (!pincode) {
     // No PIN yet, so a real delivery fee can't be quoted — but a currently
@@ -458,13 +464,44 @@ export async function buildBusinessRulesNote(
     return `AUTHORITATIVE DELIVERY INFO for PIN ${pincode}: couldn't reach banglardoi.com's live delivery check just now. Do NOT state a delivery fee or minimum order for this PIN — tell the customer you'll confirm and follow up, or offer to connect them with a real person. Never guess or reuse a number from a different area.`;
   }
 
+  // Real incident (2026-08-22, owner's own WhatsApp screenshot): customer's
+  // address text said "newtown, axis mall r pase", then gave PIN 700028 —
+  // which India Post actually resolves to Dumdum, nowhere near Newtown. The
+  // AI only surfaced the (separate) out-of-zone handoff message below and
+  // never mentioned the mismatch at all — checked here instead, prepended
+  // ahead of everything else, because owner's own words were explicit:
+  // "apni exact address ar pin code na bolle amra order ta complete korte
+  // parchi na" (if you don't give the exact matching address and PIN, we
+  // can't complete the order). This was ALSO instructed once already inside
+  // save_customer_address's own tool result (softer wording, "gently point
+  // out"), but that lives in the conversation history, not this per-turn
+  // authoritative reference block — competing against the equally-
+  // authoritative zone-handoff instruction below, the model dropped the
+  // softer one. Stated here instead, at the same authority and force as
+  // every other rule in this function, so it can't be dropped. Deliberately
+  // NOT a brittle string/substring match (Bengali-script addresses vs. India
+  // Post's English area names would false-positive on almost every real
+  // customer) — the real area name(s) are just handed to the model, which is
+  // genuinely better suited to judging "does this address describe this
+  // area" than a hardcoded text comparison. Prepended to (not replacing) the
+  // rest of this function's output — the model still needs the full
+  // pricing/zone facts below to correctly decide the "address DOES match,
+  // proceed normally" branch of its own instruction.
+  let addressMismatchNote = "";
+  if (addressText && addressText.trim().length > 0) {
+    const realAreas = await resolvePincodeAreaNames(pincode);
+    if (realAreas.length > 0) {
+      addressMismatchNote = `ADDRESS/PIN CHECK for this customer: PIN ${pincode} genuinely resolves to ${realAreas.join(" / ")} (source: India Post). The address on file reads: "${addressText}". Compare these yourself — if the address clearly does NOT describe the same area as ${realAreas[0]} (a different locality, not just a shorter/less-detailed version of it), do NOT state a delivery fee, minimum order, or COD availability from the info below, and do NOT confirm any order. Instead tell the customer plainly and specifically that their given address doesn't match this PIN code — name the real area (${realAreas[0]}) — and ask them to resend the correct, matching address AND PIN code together; we cannot proceed until they agree. If the address DOES genuinely match, ignore this and continue normally using the delivery info below.\n\n`;
+    }
+  }
+
   // Owner's own instruction (2026-08-22): an unmatched PIN (no configured
   // Delivery Zone covers it) must never be quoted the flat fallback fee as
   // if the area were confirmed serviceable — hand off to staff instead, as
   // soon as the PIN is known, not only once the customer tries to place an
   // order (see the matching check in validateOrderState above).
   if (!quote.zoneMatched) {
-    return `PIN ${pincode} is NOT yet in our confirmed delivery zones. Do NOT state a delivery fee, minimum order, or COD availability for this PIN, and do NOT confirm any order to this address. Tell the customer our team will check whether their area is serviceable and confirm — and call request_human_handoff so staff can follow up on this specific PIN.`;
+    return `${addressMismatchNote}PIN ${pincode} is NOT yet in our confirmed delivery zones. Do NOT state a delivery fee, minimum order, or COD availability for this PIN, and do NOT confirm any order to this address. Tell the customer our team will check whether their area is serviceable and confirm — and call request_human_handoff so staff can follow up on this specific PIN.`;
   }
 
   // Local zone lookup is now ONLY used to scope a Campaign to a specific
@@ -502,7 +539,7 @@ export async function buildBusinessRulesNote(
     }${campaign.freeGiftDescription ? ` + ${campaign.freeGiftDescription} FREE` : ""}. This OVERRIDES the delivery fee above ONLY when the order meets ₹${campaign.minOrderAmount} — below that, the fee above applies as normal.\n`;
   }
 
-  return note;
+  return addressMismatchNote + note;
 }
 
 // ---------------------------------------------------------------------------
