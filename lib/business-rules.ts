@@ -336,8 +336,30 @@ export function validateAddress(address: {
 }): { valid: boolean; missing: string[] } {
   const missing: string[] = [];
   const pincodeOk = !!address.pincode && /^[1-9][0-9]{5}$/.test(address.pincode);
-  const lineOk = !!address.line && address.line.trim().length >= 8; // rough floor for "has street/house detail", not just a bare area name
-  if (!lineOk) missing.push("street/house-level address detail");
+
+  // Real incident (2026-08-23, owner's own words): "Birati, PIN 700051" — an
+  // area name plus a PIN and nothing else — was accepted as a complete
+  // address, and an order was later confirmed against it. The old check
+  // here only required 8+ characters of ANY text, which an area name + PIN
+  // easily clears with no house/plot/flat number at all. Owner's own
+  // instruction: "full address chai - House/plot/Flat no die full address."
+  // A real deliverable address needs a number identifying the specific
+  // building/unit (house no., flat no., plot no., road/lane no. — "23/8",
+  // "flat 4B", "H.No. 12", etc.), not just a locality name. Detected here by
+  // requiring at least one digit in the address line OTHER than the 6-digit
+  // PIN itself — the PIN's own digits don't count as a house number, so
+  // "Birati, PIN 700051" (no other digit) correctly fails, while "23/8,
+  // Birati, PIN 700051" or "Flat 4B, Birati, PIN 700051" passes. Deliberately
+  // a number check, not a keyword check ("house"/"flat"/"plot"/...) — real
+  // Bengali/English addresses phrase this too many different ways for a
+  // keyword list to reliably catch, and a missed keyword would false-negative
+  // far more often than a missing digit would false-positive.
+  const lineRaw = (address.line ?? "").trim();
+  const lineWithoutPincode = address.pincode ? lineRaw.split(address.pincode).join("") : lineRaw;
+  const hasHouseLevelDetail = lineRaw.length >= 8 && /\d/.test(lineWithoutPincode);
+  if (!hasHouseLevelDetail) {
+    missing.push("house/plot/flat number (an area name and PIN code alone is not a complete address)");
+  }
   if (!pincodeOk) missing.push("6-digit PIN code");
   return { valid: missing.length === 0, missing };
 }
@@ -526,6 +548,28 @@ export async function buildBusinessRulesNote(
   const campaign = await resolveActiveCampaign(organizationId, zone?.id ?? null, new Date());
 
   const sortedTiers = [...quote.feeTiers].sort((a, b) => a.uptoInPaise - b.uptoInPaise);
+
+  // BUG FIX (2026-08-23): `quote` above was fetched at subtotal=0 (this
+  // function doesn't know the customer's actual cart total yet), so when the
+  // zone has bracket pricing, quote.feeInPaise reflects whatever the FIRST
+  // (lowest-order-value) bracket charges — e.g. ₹100 for "up to ₹700" — NOT
+  // the flat rate that applies once an order is bigger than every bracket.
+  // Real incident (owner's own WhatsApp screenshot): a zone priced "≤₹700 →
+  // ₹100, ₹701–1000 → ₹50, above ₹1000 → FREE" had the AI tell a ₹600-order
+  // customer "১০০০ এর উপরে → ₹100" — exactly inverted, FREE became ₹100,
+  // because this line below was built from that same subtotal=0 quote. Fetch
+  // a second quote at a subtotal guaranteed to exceed every configured
+  // bracket so its feeInPaise genuinely reflects the above-every-bracket
+  // rate (which correctly falls through to the free-delivery-threshold
+  // check, or the zone's real flat fee, exactly like resolveZoneFee does on
+  // the website itself).
+  let aboveAllBracketsFeeInPaise = quote.feeInPaise;
+  if (sortedTiers.length > 0) {
+    const topBracketUpto = sortedTiers[sortedTiers.length - 1].uptoInPaise;
+    const aboveBracketsQuote = await fetchLiveDeliveryQuote(pincode, topBracketUpto + 100);
+    if (aboveBracketsQuote) aboveAllBracketsFeeInPaise = aboveBracketsQuote.feeInPaise;
+  }
+
   let prevFloor = 0;
   const tierLines = sortedTiers
     .map((t) => {
@@ -539,7 +583,8 @@ export async function buildBusinessRulesNote(
   note += `  Minimum order for this PIN: ${quote.minOrderInPaise > 0 ? `₹${quote.minOrderInPaise / 100}` : "no minimum"}\n`;
   note +=
     tierLines.length > 0
-      ? tierLines + `\n  Above every bracket above → ${quote.feeInPaise === 0 ? "FREE delivery" : `₹${quote.feeInPaise / 100} delivery`}\n`
+      ? tierLines +
+        `\n  Above every bracket above → ${aboveAllBracketsFeeInPaise === 0 ? "FREE delivery" : `₹${aboveAllBracketsFeeInPaise / 100} delivery`}\n`
       : `  Delivery fee: ${quote.feeInPaise === 0 ? "FREE delivery" : `₹${quote.feeInPaise / 100}`}${
           quote.freeDeliveryThresholdInPaise ? ` (FREE above ₹${quote.freeDeliveryThresholdInPaise / 100})` : ""
         }\n`;

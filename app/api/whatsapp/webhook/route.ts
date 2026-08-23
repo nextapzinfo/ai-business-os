@@ -37,6 +37,7 @@ import {
   buildBusinessRulesNote,
   validateOrderState,
   validateBusinessClaims,
+  validateAddress,
   resolveActiveCampaign,
   fetchLiveDeliveryQuote,
 } from "@/lib/business-rules";
@@ -766,6 +767,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Free-delivery-upsell carousel — set inside the record_order tool
+    // handler below (see its BILL BREAKDOWN / FREE DELIVERY UPSELL comment)
+    // when a just-confirmed order sits below the zone's free-delivery
+    // threshold. Sent at the end of this handler, the same way as
+    // featuredCarousel above, once the AI's text reply (which names these
+    // same products) has already gone out.
+    let upsellCarousel: { id: string; name: string; retailerId: string | null; imageUrl: string | null }[] = [];
+
     let photoNote: string;
     if (matchedProduct?.imageUrl || matchedProduct?.retailerId) {
       photoNote = `A photo of "${matchedProduct.name}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally (you can casually mention a photo is coming if it fits).`;
@@ -1029,7 +1038,22 @@ export async function POST(req: NextRequest) {
           areaNames.length > 0
             ? ` India Post confirms PIN ${pincode} covers: ${areaNames.join(" / ")}. When telling the customer their area/locality, state ONLY this — never state a different area name (including one the customer themselves typed earlier in this conversation) unless it genuinely matches one of these. If the customer's own address text names a different area, gently point out the mismatch and ask them to confirm which is correct rather than picking one yourself.`
             : ` Could not confirm PIN ${pincode}'s real area right now — if the customer asks what area their PIN is in, say you're not able to confirm it rather than guessing or reusing an area name from earlier in the conversation.`;
-        return `Saved address: ${address} (PIN ${pincode}).${areaNote}`;
+
+        // Real incident (2026-08-23, owner's own words): "Birati, PIN 700051"
+        // — an area name plus a PIN and nothing else — was accepted here as
+        // a complete address; the AI later told the customer their address
+        // was already on file and moved straight to asking for name/mobile,
+        // then confirmed an order against it. validateAddress() (the same
+        // hard check record_order's tool-safety backstop uses) is run here
+        // too, so this is caught as early as possible — right when the
+        // address is first saved — instead of only if/when an order is
+        // actually attempted.
+        const completeness = validateAddress({ line: address, pincode });
+        const houseDetailNote = completeness.valid
+          ? ""
+          : ` This address does NOT yet include a house/plot/flat number — an area name and PIN code alone is not enough to deliver to. Do NOT tell the customer their address is complete or ready to order against; ask them for their full address with house/plot/flat number (e.g. house no., flat no., road/lane no.) before proceeding to name/mobile or confirming any order.`;
+
+        return `Saved address: ${address} (PIN ${pincode}).${areaNote}${houseDetailNote}`;
       }
       if (name === "set_reminder") {
         const title = (args.title as string)?.trim();
@@ -1094,6 +1118,23 @@ export async function POST(req: NextRequest) {
         // told exactly why, so it asks the customer for what's missing on
         // its next reply instead of confirming an order that isn't actually
         // deliverable yet.
+        //
+        // billNote — the full items+delivery=total breakdown and the
+        // free-delivery upsell nudge, appended to the tool result once
+        // validation passes. Real incident (2026-08-23, owner's own WhatsApp
+        // screenshots): an order was confirmed as just "Combo Janmastami —
+        // ₹600" with no delivery fee or grand total ever stated — the
+        // customer had to separately ask "delivery charge lagbe na?" (which
+        // got ignored) before any total was given, and even then it didn't
+        // match the confirmed order. Owner's own words: "Ai full bill tai
+        // nijer theke bolche na" (the AI isn't stating the full bill itself)
+        // and "Kobe delivery hobe setao bolche na" (it's not saying when
+        // delivery will happen either). Computed live here, from the exact
+        // same banglardoi.com quote used everywhere else, and handed back as
+        // part of THIS tool result so the model states it in the SAME reply
+        // that confirms the order.
+        let billNote = "";
+
         if (organization!.vertical === "RETAIL" && deliveryAddress) {
           const pincodeFromArg = deliveryAddress.match(/\b[1-9][0-9]{5}\b/)?.[0] ?? null;
           const pincode = pincodeFromArg ?? conversation!.pincode ?? null;
@@ -1114,6 +1155,62 @@ export async function POST(req: NextRequest) {
           if (blockers.length > 0) {
             return `ORDER_BLOCKED: ${blockers.join(" ")} Do not tell the customer the order is confirmed — ask for what's missing instead.`;
           }
+
+          if (pincode && estimatedTotal !== null) {
+            const quote = await fetchLiveDeliveryQuote(pincode, Math.round(estimatedTotal * 100));
+            if (quote && quote.zoneMatched) {
+              const deliveryFee = quote.feeInPaise / 100;
+              const grandTotal = estimatedTotal + deliveryFee;
+              billNote =
+                `\n\nBILL BREAKDOWN — state this FULL breakdown to the customer in THIS reply (translate/phrase naturally, don't just paste it), not just the item total:\n` +
+                `  Items: ₹${estimatedTotal}\n` +
+                `  Delivery: ${deliveryFee === 0 ? "FREE" : `₹${deliveryFee}`}\n` +
+                `  Grand total: ₹${grandTotal}\n` +
+                `  Estimated delivery: ${quote.estimatedDeliveryDays} day${quote.estimatedDeliveryDays === 1 ? "" : "s"}\n`;
+
+              // Free-delivery upsell nudge — owner's own instruction: "er
+              // sathe customer ke to bolbe apni ar 400/- r jinish nile
+              // apnar delivery charge free hoe jabe" (also tell the
+              // customer that adding ₹400 more gets them free delivery),
+              // plus "sathe sathe 3 te product r name, price r 3 te
+              // carasoul dakhake" (also show 3 product names/prices and a
+              // 3-item carousel). Only fires when a real gap to the zone's
+              // own free-delivery threshold exists. upsellCarousel (outer
+              // scope, declared near featuredCarousel above) is read at the
+              // end of this handler to actually send the carousel, the same
+              // way featuredCarousel already does for general browsing.
+              if (quote.freeDeliveryThresholdInPaise != null) {
+                const gapInPaise = quote.freeDeliveryThresholdInPaise - Math.round(estimatedTotal * 100);
+                if (gapInPaise > 0) {
+                  const gapRupees = Math.ceil(gapInPaise / 100);
+                  // take: 6, then filtered down to 3 fresh ones below — a
+                  // customer's order might already include 1-2 of the
+                  // featured items, and we don't want to "upsell" something
+                  // they've already ordered.
+                  const suggestions = await prisma.product.findMany({
+                    where: { organizationId: organization!.id, featured: true },
+                    select: { id: true, name: true, price: true, retailerId: true, imageUrl: true },
+                    orderBy: [{ featuredOrder: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
+                    take: 6,
+                  });
+                  const itemsLower = items.toLowerCase();
+                  const freshSuggestions = suggestions
+                    .filter((p: { name: string }) => !itemsLower.includes(p.name.toLowerCase()))
+                    .slice(0, 3);
+                  if (freshSuggestions.length > 0) {
+                    upsellCarousel = freshSuggestions;
+                    const suggestionLines = freshSuggestions
+                      .map((p: { name: string; price: string | null }) => `  - ${p.name}${p.price ? ` — ${p.price}` : ""}`)
+                      .join("\n");
+                    billNote +=
+                      `\nFREE DELIVERY UPSELL: this order is ₹${gapRupees} short of free delivery (free above ₹${
+                        quote.freeDeliveryThresholdInPaise / 100
+                      }). Tell the customer, naturally and briefly, that adding about ₹${gapRupees} more to their order would make delivery free, and mention these as easy options — a carousel of these SAME 3 products (with photos) will be sent automatically right after this text reply, so name these same 3 in your text, don't substitute or add others:\n${suggestionLines}\n`;
+                  }
+                }
+              }
+            }
+          }
         }
 
         const order = await prisma.order.create({
@@ -1132,7 +1229,7 @@ export async function POST(req: NextRequest) {
           action: "ORDER_RECORDED_BY_AI",
           metadata: { clientId: client!.id, orderId: order.id, items, deliveryAddress, estimatedTotal },
         });
-        return `Order recorded: ${items}. Our team will confirm shortly.`;
+        return `Order recorded: ${items}.${billNote}\nOur team will confirm shortly.`;
       }
       if (name === "check_order_status") {
         try {
@@ -1626,6 +1723,44 @@ export async function POST(req: NextRequest) {
         }
       } catch (err) {
         console.error("Featured carousel send failed:", err);
+      }
+    }
+
+    // Free-delivery-upsell carousel — the same 3 products the record_order
+    // handler above put in the FREE DELIVERY UPSELL tool-result text (see
+    // that comment), sent the same way featuredCarousel is: a native
+    // swipeable Multi-Product Message when every suggested item has a
+    // catalog Content ID, otherwise each product's plain photo individually.
+    if (upsellCarousel.length > 0) {
+      try {
+        const withRetailer = upsellCarousel.filter((p) => p.retailerId);
+        if (withRetailer.length === upsellCarousel.length && organization.metaCatalogId) {
+          await sendWhatsAppProductListMessage(
+            from,
+            organization.metaCatalogId,
+            "A few easy options",
+            withRetailer.map((p) => p.retailerId!),
+            "Add a bit more for FREE delivery",
+            "Tap any to add it to your order."
+          );
+          await prisma.message.create({
+            data: {
+              conversationId: conversation.id,
+              sender: "AI",
+              content: `[Sent free-delivery-upsell carousel] ${withRetailer.map((p) => p.name).join(", ")}`,
+            },
+          });
+        } else {
+          for (const p of upsellCarousel) {
+            if (!p.imageUrl) continue;
+            await sendWhatsAppImageMessage(from, p.imageUrl, p.name);
+            await prisma.message.create({
+              data: { conversationId: conversation.id, sender: "AI", content: `[Sent photo] ${p.name}`, imageUrl: p.imageUrl },
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Free-delivery-upsell carousel send failed:", err);
       }
     }
 
