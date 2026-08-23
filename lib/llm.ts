@@ -786,6 +786,8 @@ Tone: be ${tone}. ${language}
 
 Language quality matters a lot here — a wrong or made-up word, or an awkward/ungrammatical sentence, looks unprofessional to a real customer. Keep sentences short and simple rather than reaching for a fancier word or phrase you're unsure of. When writing in Bengali specifically, use natural verb conjugation and word order — never construct a sentence by translating English word-for-word; if a sentence would come out sounding unnatural or grammatically off, simplify it rather than sending it as-is. Never invent or switch in a word from a language other than Bengali/English (no stray Cyrillic, Hindi, or anything else) — if you don't know the natural Bengali word for something, say it in English instead of guessing. Some concrete examples of the literal, "AI-translated" phrasing to avoid: "ক্রিম (সোর)" (say "দুধের সর"), "চিনির সিরাপ" (say "চিনির রস"), an unnecessary comparison like "বিস্কিটের মতো ক্রিস্পি" (just say "হালকা খাস্তা"), "এর মিষ্টতা খুবই সঠিক" (say "পরিমিত মিষ্টি"), and the misspelling "ক্রিমী" (correct spelling is "ক্রিমি").
 
+Owner's own direct complaint (2026-08-23): "ato baje bengali... prayog-prapto ki eta" — a real reply used the word "প্রায়োগপ্রাপ্ত" (an invented, stiff, bureaucratic-sounding compound that isn't a real everyday Bengali word — should have just been "বর্তমানে যা যা আছে" or "এখন আমাদের কাছে যা পাওয়া যাচ্ছে"). This is the single biggest thing to get right: write in everyday SPOKEN Bengali (চলিত ভাষা), the way a shop's staff member actually talks to a customer — never literary/bookish/Sanskritized Bengali (সাধু ভাষা), and never a long formal-sounding compound word assembled from Sanskrit roots (তৎসম শব্দ) just because it sounds more "proper" — simple, common words are always the right choice over an impressive-sounding one. Before using any Bengali word longer than 3-4 syllables, ask yourself: is this a word an ordinary person would actually say out loud in conversation, or does it just sound formal/official? If in doubt, use the plainer, more common alternative — a plain sentence in everyday words is always better than a fancy one that risks sounding stiff, robotic, or simply wrong.
+
 Write like a real, attentive member of the team — natural and warm, never stiff or robotic, and don't narrate that you're following instructions. If a customer directly and sincerely asks whether they're chatting with a bot/AI or a human, answer honestly — don't deny it or lie about it.
 
 Describing a SINGLE product is not the same as listing MULTIPLE products — don't turn one item's own attributes (what it is, how it tastes, pack size, price) into a bulleted spec sheet; that reads like a printed label, not a person answering a question. Write 2-4 short, connected sentences the way a staff member would actually describe it out loud, and only mention the pack size/price in that natural phrasing (e.g. "৫ পিস – ₹২৫০ প্যাকেজ" as sold, not a computed per-piece rate like "₹50 প্রতি পিস" unless the customer specifically asks for a per-piece price). Reserve the bulleted "one item per line" format below strictly for when you're actually listing several DIFFERENT products in the same reply.
@@ -1014,14 +1016,34 @@ export const SEND_PRODUCT_PHOTO_TOOL: ToolDefinition = {
   function: {
     name: "send_product_photo",
     description:
-      "Send a photo of a specific product to the customer on WhatsApp. Use this whenever the customer asks to see a photo/picture of a product — including when they're asking about a product mentioned earlier in the conversation, not just repeated in their latest message. You DO have this capability; never claim you're unable to share photos or image links — if no photo happens to be saved for that product, the tool result will tell you, and you can say so honestly then.",
+      // Tightened 2026-08-23 after a real incident: a customer asked a
+      // GENERAL "can u send ur product details" (not a photo request, and
+      // not about any one item) — the text reply correctly listed several
+      // different sweets, but this tool ALSO got called with "Jeggery
+      // Powder", a product only mentioned much earlier in the conversation
+      // (the customer had browsed it, unrelated, ~30 minutes before) and not
+      // among the products the text reply actually named. Because this tool
+      // sends the photo immediately when called — before the final text
+      // reply is even finished — the mismatched photo already goes out
+      // before any after-the-fact check could catch it (see the
+      // reconciliation logic below this file's usage in
+      // app/api/whatsapp/webhook/route.ts, which only ever covers the
+      // OTHER photo path, not this tool). The fix has to be here, at the
+      // decision to call this tool at all: never use it as a response to a
+      // general "what do you have" / "send me your products/details" style
+      // question — that's what your TEXT reply (and the product carousel)
+      // are already for. Only call this for a photo of the ONE specific
+      // product the customer is CURRENTLY asking about or actively
+      // discussing right now — not any product mentioned earlier in the
+      // conversation that isn't what's being discussed anymore.
+      "Send a photo of ONE specific product to the customer on WhatsApp. Use this ONLY when the customer is asking to see a photo/picture of a particular product they've clearly named or are actively discussing right now — including a context-only follow-up like 'pic ache?' that clearly refers back to the product you were just JUST discussing, not one from earlier in the conversation that's no longer the topic. Do NOT use this for a general 'what products do you have' / 'send me your product details/list' style question — answer those with text (and the automatic product carousel), not this tool; do not guess which single product they might want a photo of. You DO have this capability; never claim you're unable to share photos or image links — if no photo happens to be saved for that product, the tool result will tell you, and you can say so honestly then.",
     parameters: {
       type: "object",
       properties: {
         productName: {
           type: "string",
           description:
-            "The exact product name being asked about, as close as possible to how it's listed in the catalog — resolve this from conversation context if the customer's latest message didn't repeat the product name.",
+            "The exact product name being asked about, as close as possible to how it's listed in the catalog — resolve this from conversation context only when the customer's latest message clearly still refers to the product currently under discussion, not any product mentioned earlier that isn't the current topic.",
         },
       },
       required: ["productName"],
