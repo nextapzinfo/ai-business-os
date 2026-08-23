@@ -1346,20 +1346,59 @@ export async function POST(req: NextRequest) {
     // stays stuck on whatever product was last resolved several turns ago —
     // so a following "pic" wrongly pulls up the STALE old product instead of
     // the one the AI just actually talked about.
-    if (!matchedProduct && !toolSentPhotoForProductId) {
+    //
+    // Real incident (2026-08-23, owner's own WhatsApp screenshot): customer
+    // asked a general "ki ki aval ache ar price koto" (what's available and
+    // the price) — a phrasing that didn't clear BROWSE_REQUEST_REGEX above,
+    // so no featuredCarousel kicked in. matchedProduct instead got set from
+    // the RAG distance-threshold fallback (line ~700), using the raw
+    // customer message — which happened to land on "Jeggery Powder", a
+    // product wholly unrelated to what the reply ended up saying. The reply
+    // itself confidently listed 4 completely different named products (Laal
+    // Kheer Doi, Combo Janmastami, Sorbhaja, Baked Rosogolla) drawn from the
+    // general catalog — but since matchedProduct was already non-null before
+    // the answer was even generated, the reconciliation block below never
+    // used to run at all (it was gated on `!matchedProduct`), so the
+    // Jeggery Powder photo went out anyway, next to text that never
+    // mentioned it. Owner's own words: "he shold send pics form the above
+    // list" — the photo must be one of the products the text actually named,
+    // or no photo at all, never an independently-guessed one.
+    if (!toolSentPhotoForProductId) {
       const answerWords = extractWords(answer);
       if (answerWords.length > 0) {
         const orgProducts = await prisma.product.findMany({
           where: { organizationId: organization.id },
           select: { id: true, name: true, imageUrl: true, retailerId: true },
         });
-        const bestMatch = findBestProductMatch(answerWords, orgProducts);
-        if (bestMatch && (bestMatch.imageUrl || bestMatch.retailerId)) {
-          matchedProduct = bestMatch;
-          if (conversation.lastProductId !== matchedProduct.id) {
-            await prisma.conversation
-              .update({ where: { id: conversation.id }, data: { lastProductId: matchedProduct.id } })
-              .catch((err) => console.error("Failed to update conversation.lastProductId:", err));
+
+        if (matchedProduct) {
+          // Reconciliation: a photo was already picked before the reply
+          // existed (name match on the customer's message, or RAG). Verify
+          // the reply's own text actually names it — if the reply instead
+          // confidently names one or more OTHER real products and never
+          // mentions the precomputed one, that photo would be a mismatch.
+          // If the reply names no confident product at all, leave the
+          // precomputed match alone — it may still be legitimate (a
+          // description that doesn't literally repeat the catalog name).
+          const namedInAnswer = findAllProductMatches(answerWords, orgProducts);
+          if (namedInAnswer.length > 0 && !namedInAnswer.some((p) => p.id === matchedProduct!.id)) {
+            const replacement = namedInAnswer.length === 1 ? namedInAnswer[0] : null;
+            matchedProduct = replacement && (replacement.imageUrl || replacement.retailerId) ? replacement : null;
+            if (matchedProduct && conversation.lastProductId !== matchedProduct.id) {
+              await prisma.conversation
+                .update({ where: { id: conversation.id }, data: { lastProductId: matchedProduct.id } })
+                .catch((err: unknown) => console.error("Failed to update conversation.lastProductId:", err));
+            }
+          }
+        } else {
+          const bestMatch = findBestProductMatch(answerWords, orgProducts);
+          if (bestMatch && (bestMatch.imageUrl || bestMatch.retailerId)) {
+            matchedProduct = bestMatch;
+            if (conversation.lastProductId !== matchedProduct.id) {
+              await prisma.conversation
+                .update({ where: { id: conversation.id }, data: { lastProductId: matchedProduct.id } })
+                .catch((err: unknown) => console.error("Failed to update conversation.lastProductId:", err));
+            }
           }
         }
       }
