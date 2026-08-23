@@ -1240,7 +1240,16 @@ export async function POST(req: NextRequest) {
     // vertical only, same gating already used for the Banglar Doi tools.
     const businessRulesNote =
       organization.vertical === "RETAIL"
-        ? await buildBusinessRulesNote(organization.id, effectivePincode, client.address)
+        ? await buildBusinessRulesNote(
+            organization.id,
+            effectivePincode,
+            client.address,
+            // This turn's own product match wins if there is one, else fall
+            // back to whatever this conversation last settled on — same
+            // "current message first, then conversation memory" pattern used
+            // for lastProductId itself (see the comment near PINCODE_REGEX).
+            matchedProduct?.id ?? conversation.lastProductId
+          )
         : null;
 
     // Real incident (2026-08-20, owner's own report): asked "ki ki product

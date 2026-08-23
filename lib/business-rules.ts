@@ -437,7 +437,22 @@ export async function buildBusinessRulesNote(
   // added 2026-08-22 so this same authoritative block can also catch an
   // address/PIN mismatch (see the check right after the live quote below).
   // Optional and purely additive — omitting it just skips that one check.
-  addressText: string | null = null
+  addressText: string | null = null,
+  // conversation.lastProductId (or this turn's freshly-matched product, if
+  // the caller has one) — added 2026-08-23 after a real incident: a customer
+  // asked about Combo Janmastami (₹600), was told the price, then said
+  // "kibhabe pabo, ar kobe pabo" (how/when will I get it) and gave their
+  // address + PIN. Once the PIN was confirmed deliverable, the AI's reply
+  // asked "আপনি কি অর্ডার করতে চান?" (do you want to order?) and, after the
+  // customer said they didn't understand, asked again whether they wanted to
+  // "order more at the same time" — never once naming Combo Janmastami, as
+  // if the earlier part of the conversation had never happened. Nothing fed
+  // "what product is this customer actually trying to order" into THIS
+  // authoritative per-turn block, the same authority problem Bug 4 (address/
+  // PIN mismatch) hit — a softer signal elsewhere in conversation history
+  // lost out to whatever this block said instead. Optional and purely
+  // additive: a caller that doesn't pass it just skips this hint.
+  activeProductId: string | null = null
 ): Promise<string | null> {
   if (!pincode) {
     // No PIN yet, so a real delivery fee can't be quoted — but a currently
@@ -537,6 +552,19 @@ export async function buildBusinessRulesNote(
     note += `  ACTIVE CAMPAIGN "${campaign.name}" (through ${endDate}): orders of ₹${campaign.minOrderAmount}+ get ${
       campaign.freeDelivery ? "FREE delivery" : "a special offer"
     }${campaign.freeGiftDescription ? ` + ${campaign.freeGiftDescription} FREE` : ""}. This OVERRIDES the delivery fee above ONLY when the order meets ₹${campaign.minOrderAmount} — below that, the fee above applies as normal.\n`;
+  }
+
+  // Only add this hint when the address genuinely checked out above (no
+  // mismatch note) — an address/PIN mismatch already tells the model not to
+  // confirm any order at all, and this would contradict that.
+  if (activeProductId && !addressMismatchNote) {
+    const activeProduct = await prisma.product.findUnique({
+      where: { id: activeProductId },
+      select: { name: true },
+    });
+    if (activeProduct) {
+      note += `\nThe product this customer has most recently been discussing/asking about in this conversation is "${activeProduct.name}". If they are in the process of trying to order it (e.g. they asked how/when they'd get it, or gave their address right after discussing it), use the delivery info above to confirm THIS specific order back to them by name — product, price if you already know it, delivery fee, and total — and ask them to confirm so you can proceed. Do NOT ask a generic "what would you like to order?" question when the conversation already makes clear what they're interested in. If they've clearly moved on to asking about something unrelated, ignore this and just answer what they actually asked.\n`;
+    }
   }
 
   return addressMismatchNote + note;
