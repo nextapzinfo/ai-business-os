@@ -36,6 +36,28 @@ import { prisma } from "@/lib/prisma";
 // mix costs nothing, it just won't get used).
 const QA_DISTANCE_THRESHOLD = 0.55;
 
+// Second incident (2026-08-24, same day): even after the fix above shipped,
+// "May I know about ur misti" still failed — but this time an exact,
+// word-for-word copy of the customer's question was ALREADY listed as one
+// of the trained phrasings in the Q&A doc. Traced it to chunking: Teach AI
+// combines every phrasing + every approved answer for one Q&A into ONE
+// document, on the assumption it stays a single ~1000-char DocumentChunk
+// (see the comment on add_qa_pair in app/api/agent/teach/route.ts). As an
+// owner keeps adding more phrasings over time — completely reasonable, and
+// exactly what "teach it more ways to ask this" looks like — that doc can
+// silently cross chunkText's size limit and get split into two+ chunks.
+// When that happens, the nearest-neighbor match above can land on a chunk
+// that holds the phrasing list but NOT the approved answer (it got pushed
+// into the next chunk), so the model has the question recognized but no
+// answer content to draw from. There's no warning anywhere when this split
+// happens — it silently degrades a previously-working Q&A.
+//
+// Fix: once the nearest matching chunk identifies WHICH document is the
+// best match, fetch every chunk belonging to that document (not just the
+// one nearest chunk) and stitch them back together in original order. This
+// makes the boost resilient to future chunk splits regardless of how long
+// an owner's phrasing list grows — the model always gets the complete
+// Q&A (every phrasing + every approved answer), never a fragment of it.
 export type BoostedQAChunk = {
   content: string;
   documentTitle: string;
@@ -59,5 +81,18 @@ export async function fetchBoostedQAChunk(
 
   const best = rows[0];
   if (!best || best.distance > QA_DISTANCE_THRESHOLD) return null;
-  return best;
+
+  // Re-assemble the full document from ALL its chunks (in original order),
+  // not just the single nearest one — see the chunk-splitting note above.
+  const allChunks = (await prisma.$queryRaw`
+    SELECT content
+    FROM "DocumentChunk"
+    WHERE "documentId" = ${best.documentId}
+    ORDER BY "chunkIndex" ASC
+  `) as { content: string }[];
+
+  const fullContent =
+    allChunks.length > 1 ? allChunks.map((c) => c.content).join("\n\n") : best.content;
+
+  return { ...best, content: fullContent };
 }
