@@ -1,5 +1,5 @@
 {
-  "buildCommand": "prisma generate && next build",
+  "buildCommand": "prisma generate && prisma db push && next build",
   "framework": "nextjs",
   "crons": [
     { "path": "/api/cron/follow-up", "schedule": "30 3 * * *" },
