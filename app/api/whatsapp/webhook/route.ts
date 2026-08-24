@@ -853,12 +853,23 @@ export async function POST(req: NextRequest) {
     // required carousel list itself is untouched.
     const todayIndia = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
     const janmashtamiPromoActive = todayIndia <= "2026-09-03";
+    // Applied to EVERY branch below, not just the featuredCarousel one — an
+    // earlier version of this fix only patched the carousel branch, but a
+    // real customer's "May I know ur products" (2026-08-25, 1:07am) took the
+    // matchedProduct branch instead (a single RAG-matched product photo, e.g.
+    // Kalojam) and still got zero Janmashtami mention, proving the gap has to
+    // be universal — whichever photoNote branch fires on a given turn is not
+    // predictable per-message, so the model needs this option available no
+    // matter which one wins.
+    const janmashtamiAddendum = janmashtamiPromoActive
+      ? ` Separately, per your Custom Instructions: while today's date is on or before 3 September 2026, you may add ONE short additional festive sentence naturally introducing the Janmashtami Special (Taal Pulp + Taal Bora) somewhere in your text reply — this is a seasonal mention, independent of whatever photo/carousel this note describes, so it never counts as substituting or adding to any required product list above. Skip it if you've already mentioned Janmashtami earlier in this same conversation.`
+      : "";
 
     let photoNote: string;
     if (matchedProduct?.imageUrl || matchedProduct?.retailerId) {
-      photoNote = `A photo of "${matchedProduct.name}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally (you can casually mention a photo is coming if it fits).`;
+      photoNote = `A photo of "${matchedProduct.name}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally (you can casually mention a photo is coming if it fits).${janmashtamiAddendum}`;
     } else if (matchedEvent?.imageUrl) {
-      photoNote = `A photo for "${matchedEvent.title}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally.`;
+      photoNote = `A photo for "${matchedEvent.title}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally.${janmashtamiAddendum}`;
     } else if (featuredCarousel.length > 0) {
       // The carousel sent right after this text is HARD-CODED to exactly this
       // list, in exactly this order (see featuredCarousel query above, sorted
@@ -867,13 +878,9 @@ export async function POST(req: NextRequest) {
       // list that doesn't match the photos underneath it, which reads as
       // broken/confusing. Never substitute, add, or reorder products here.
       const orderedNames = featuredCarousel.map((p, i) => `${i + 1}. ${p.name}`).join("\n");
-      photoNote = `A carousel of these exact products (with photos), in this exact order, will be sent automatically right after this text reply:\n${orderedNames}\n\nYour text reply must list these SAME products in this SAME order (a short numbered or bulleted list is fine) — do not substitute different products, add extra ones, or change the order within that list. You do not need to describe each in detail; the carousel below your text will show photos and prices.${
-        janmashtamiPromoActive
-          ? ` After that required list, per your Custom Instructions you may add ONE short additional festive sentence naturally introducing the Janmashtami Special (Taal Pulp + Taal Bora) — this is a seasonal mention, not part of the carousel above, so it does not count as substituting or adding to that list. Skip it if you've already mentioned Janmashtami earlier in this conversation.`
-          : ""
-      }`;
+      photoNote = `A carousel of these exact products (with photos), in this exact order, will be sent automatically right after this text reply:\n${orderedNames}\n\nYour text reply must list these SAME products in this SAME order (a short numbered or bulleted list is fine) — do not substitute different products, add extra ones, or change the order within that list. You do not need to describe each in detail; the carousel below your text will show photos and prices.${janmashtamiAddendum}`;
     } else {
-      photoNote = `No product/event photo is precomputed for this specific reply. If the customer is asking to see a photo of a specific product — including a product only mentioned earlier in this conversation, not necessarily repeated just now — use the send_product_photo tool with that product's exact name. You DO have this capability; never say you're generally unable to share images or photo links. Only if the tool itself reports no photo is saved should you honestly say you don't have one on hand right now.`;
+      photoNote = `No product/event photo is precomputed for this specific reply. If the customer is asking to see a photo of a specific product — including a product only mentioned earlier in this conversation, not necessarily repeated just now — use the send_product_photo tool with that product's exact name. You DO have this capability; never say you're generally unable to share images or photo links. Only if the tool itself reports no photo is saved should you honestly say you don't have one on hand right now.${janmashtamiAddendum}`;
     }
 
     // Remember which product this reply settled on (RAG match or the fallback
@@ -1453,11 +1460,7 @@ export async function POST(req: NextRequest) {
           return `${i + 1}. ${p.name}${price ? ` — ${price}` : ""}`;
         })
         .join("\n");
-      photoNote = `A carousel of these exact products (with photos), in this exact order, will be sent automatically right after this text reply:\n${orderedNames}\n\nYour text reply must list these SAME products, with these SAME real prices shown above, in this SAME order (a short numbered or bulleted list is fine) — do not substitute different products, invent or guess a different price, add extra ones, or change the order within that list.${
-        janmashtamiPromoActive
-          ? ` After that required list, per your Custom Instructions you may add ONE short additional festive sentence naturally introducing the Janmashtami Special (Taal Pulp + Taal Bora) — this is a seasonal mention, not part of the carousel above, so it does not count as substituting or adding to that list. Skip it if you've already mentioned Janmashtami earlier in this conversation.`
-          : ""
-      }`;
+      photoNote = `A carousel of these exact products (with photos), in this exact order, will be sent automatically right after this text reply:\n${orderedNames}\n\nYour text reply must list these SAME products, with these SAME real prices shown above, in this SAME order (a short numbered or bulleted list is fine) — do not substitute different products, invent or guess a different price, add extra ones, or change the order within that list.${janmashtamiAddendum}`;
     }
 
     // Category-aware retrieval — real incident (2026-08-20, owner's own
