@@ -130,6 +130,24 @@ export async function POST(req: NextRequest) {
     }
     const contactName = value.contacts?.[0]?.profile?.name ?? from;
 
+    // When a customer taps "Send WhatsApp Message" on a Facebook/Instagram
+    // Click-to-WhatsApp ad, or the WhatsApp button on an organic FB/IG post,
+    // Meta attaches a `referral` object to the FIRST message of that chat —
+    // no separate Meta Ads integration needed to detect this, WhatsApp
+    // supplies it automatically. Only present on that first message, so this
+    // only ever affects new-Client creation below, never existing clients.
+    const referral = message.referral as
+      | { source_type?: string; source_url?: string; headline?: string; body?: string }
+      | undefined;
+    let detectedSource = "WHATSAPP_DIRECT";
+    let detectedSourceDetail: string | null = null;
+    if (referral) {
+      const platform = (referral.source_url ?? "").includes("instagram") ? "INSTAGRAM" : "FACEBOOK";
+      const kind = referral.source_type === "ad" ? "AD" : "POST";
+      detectedSource = `${platform}_${kind}`;
+      detectedSourceDetail = referral.headline || referral.body || referral.source_url || null;
+    }
+
     const organization = await prisma.organization.findUnique({
       where: { whatsappPhoneNumberId: phoneNumberId },
     });
@@ -152,6 +170,8 @@ export async function POST(req: NextRequest) {
           organizationId: organization.id,
           name: contactName,
           phone: from,
+          source: detectedSource,
+          sourceDetail: detectedSourceDetail,
         },
       });
 

@@ -127,6 +127,18 @@ model Client {
   dateOfBirth    DateTime? // kept in the schema for existing data; no longer collected via the Clients UI
   interestedIn   String? // free-text note from staff at signup time — separate from the AI-tracked productInterests relation below
   tags           String[]     @default([])
+  // Where this phone number first came from. "WHATSAPP_DIRECT" = organic
+  // contact with no ad/post attribution (the default — set on every
+  // webhook-created Client unless a referral is present); "FACEBOOK_AD" /
+  // "FACEBOOK_POST" / "INSTAGRAM_AD" / "INSTAGRAM_POST" = customer tapped a
+  // Click-to-WhatsApp ad or an organic post's WhatsApp button, detected from
+  // WhatsApp's own `message.referral` payload (no separate Meta integration
+  // needed); "MANUAL" = added via the Clients page "Add a client" form;
+  // "IMPORTED" = added via the Google Sheet bulk import; "WEBSITE" = signed
+  // up or ordered on banglardoi.com first (requires the separate
+  // banglardoi.com -> ai-business-os sync, not yet built as of 2026-08-24).
+  source         String       @default("WHATSAPP_DIRECT")
+  sourceDetail   String? // e.g. the ad/post headline or URL from message.referral, when available
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 

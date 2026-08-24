@@ -55,6 +55,7 @@ async function importClientsFromSheet(formData: FormData) {
         email: email?.trim() || undefined,
         dateOfBirth: parsedDob && !isNaN(parsedDob.getTime()) ? parsedDob : undefined,
         tags: parseTags(tagsRaw),
+        source: "IMPORTED",
       },
     });
     imported++;
@@ -95,6 +96,7 @@ async function addClient(formData: FormData) {
       pinCode,
       interestedIn,
       tags: parseTags(tagsRaw),
+      source: "MANUAL",
     },
   });
 
@@ -197,6 +199,23 @@ function avatarColor(seed: string) {
   return AVATAR_COLORS[idx];
 }
 
+// Human-readable label + badge color for Client.source. Falls back to
+// treating any unrecognized value (or old rows from before this field
+// existed, which default to "WHATSAPP_DIRECT" at the DB level) sensibly.
+const SOURCE_LABELS: Record<string, { label: string; className: string }> = {
+  WHATSAPP_DIRECT: { label: "WhatsApp", className: "bg-emerald-50 text-emerald-700" },
+  FACEBOOK_AD: { label: "Facebook Ad", className: "bg-blue-50 text-blue-700" },
+  FACEBOOK_POST: { label: "Facebook Post", className: "bg-blue-50 text-blue-700" },
+  INSTAGRAM_AD: { label: "Instagram Ad", className: "bg-pink-50 text-pink-700" },
+  INSTAGRAM_POST: { label: "Instagram Post", className: "bg-pink-50 text-pink-700" },
+  WEBSITE: { label: "Website", className: "bg-violet-50 text-violet-700" },
+  MANUAL: { label: "Manual", className: "bg-gray-100 text-gray-600" },
+  IMPORTED: { label: "Imported", className: "bg-gray-100 text-gray-600" },
+};
+function formatSource(source: string) {
+  return SOURCE_LABELS[source] ?? { label: source, className: "bg-gray-100 text-gray-600" };
+}
+
 export default async function ClientsPage({
   searchParams,
 }: {
@@ -293,6 +312,7 @@ export default async function ClientsPage({
             <tr className="border-b border-gray-100 text-xs text-gray-500">
               <th className="px-4 py-3 font-medium">Name</th>
               <th className="px-4 py-3 font-medium">Phone</th>
+              <th className="px-4 py-3 font-medium">Source</th>
               <th className="px-4 py-3 font-medium">Address</th>
               <th className="px-4 py-3 font-medium">Pin Code</th>
               <th className="px-4 py-3 font-medium">Tags</th>
@@ -313,6 +333,14 @@ export default async function ClientsPage({
                   </div>
                 </td>
                 <td className="px-4 py-3 text-gray-600">{c.phone}</td>
+                <td className="px-4 py-3">
+                  <span
+                    title={c.sourceDetail ?? ""}
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${formatSource(c.source).className}`}
+                  >
+                    {formatSource(c.source).label}
+                  </span>
+                </td>
                 <td className="max-w-[180px] truncate px-4 py-3 text-gray-600" title={c.address ?? ""}>
                   {c.address || "—"}
                 </td>
