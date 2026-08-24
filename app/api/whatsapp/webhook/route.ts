@@ -841,6 +841,19 @@ export async function POST(req: NextRequest) {
     // same products) has already gone out.
     let upsellCarousel: { id: string; name: string; retailerId: string | null; imageUrl: string | null }[] = [];
 
+    // Janmashtami Special (Taal Pulp / Taal Bora) is a prose-only seasonal
+    // mention driven by Custom Instructions — it isn't a real Product record,
+    // so it can never appear in the featuredCarousel's hard-coded list below.
+    // Without this exception, the "do not add extra ones" constraint on that
+    // list silently overrides the Custom Instructions rule on every "what
+    // products do you have" style message (BROWSE_REQUEST_REGEX), which is
+    // exactly the discrepancy reported 2026-08-25 (Sandbox mentioned it,
+    // real WhatsApp never did, no matter how the Custom Instructions/
+    // Knowledge Base wording was tuned). Gate stays purely additive — the
+    // required carousel list itself is untouched.
+    const todayIndia = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    const janmashtamiPromoActive = todayIndia <= "2026-09-03";
+
     let photoNote: string;
     if (matchedProduct?.imageUrl || matchedProduct?.retailerId) {
       photoNote = `A photo of "${matchedProduct.name}" will be sent automatically right after this text reply — you do NOT need to say you can't share images; just answer naturally (you can casually mention a photo is coming if it fits).`;
@@ -854,7 +867,11 @@ export async function POST(req: NextRequest) {
       // list that doesn't match the photos underneath it, which reads as
       // broken/confusing. Never substitute, add, or reorder products here.
       const orderedNames = featuredCarousel.map((p, i) => `${i + 1}. ${p.name}`).join("\n");
-      photoNote = `A carousel of these exact products (with photos), in this exact order, will be sent automatically right after this text reply:\n${orderedNames}\n\nYour text reply must list these SAME products in this SAME order (a short numbered or bulleted list is fine) — do not substitute different products, add extra ones, or change the order. You do not need to describe each in detail; the carousel below your text will show photos and prices.`;
+      photoNote = `A carousel of these exact products (with photos), in this exact order, will be sent automatically right after this text reply:\n${orderedNames}\n\nYour text reply must list these SAME products in this SAME order (a short numbered or bulleted list is fine) — do not substitute different products, add extra ones, or change the order within that list. You do not need to describe each in detail; the carousel below your text will show photos and prices.${
+        janmashtamiPromoActive
+          ? ` After that required list, per your Custom Instructions you may add ONE short additional festive sentence naturally introducing the Janmashtami Special (Taal Pulp + Taal Bora) — this is a seasonal mention, not part of the carousel above, so it does not count as substituting or adding to that list. Skip it if you've already mentioned Janmashtami earlier in this conversation.`
+          : ""
+      }`;
     } else {
       photoNote = `No product/event photo is precomputed for this specific reply. If the customer is asking to see a photo of a specific product — including a product only mentioned earlier in this conversation, not necessarily repeated just now — use the send_product_photo tool with that product's exact name. You DO have this capability; never say you're generally unable to share images or photo links. Only if the tool itself reports no photo is saved should you honestly say you don't have one on hand right now.`;
     }
@@ -1436,7 +1453,11 @@ export async function POST(req: NextRequest) {
           return `${i + 1}. ${p.name}${price ? ` — ${price}` : ""}`;
         })
         .join("\n");
-      photoNote = `A carousel of these exact products (with photos), in this exact order, will be sent automatically right after this text reply:\n${orderedNames}\n\nYour text reply must list these SAME products, with these SAME real prices shown above, in this SAME order (a short numbered or bulleted list is fine) — do not substitute different products, invent or guess a different price, add extra ones, or change the order.`;
+      photoNote = `A carousel of these exact products (with photos), in this exact order, will be sent automatically right after this text reply:\n${orderedNames}\n\nYour text reply must list these SAME products, with these SAME real prices shown above, in this SAME order (a short numbered or bulleted list is fine) — do not substitute different products, invent or guess a different price, add extra ones, or change the order within that list.${
+        janmashtamiPromoActive
+          ? ` After that required list, per your Custom Instructions you may add ONE short additional festive sentence naturally introducing the Janmashtami Special (Taal Pulp + Taal Bora) — this is a seasonal mention, not part of the carousel above, so it does not count as substituting or adding to that list. Skip it if you've already mentioned Janmashtami earlier in this conversation.`
+          : ""
+      }`;
     }
 
     // Category-aware retrieval — real incident (2026-08-20, owner's own
