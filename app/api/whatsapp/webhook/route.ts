@@ -42,6 +42,7 @@ import {
   fetchLiveDeliveryQuote,
 } from "@/lib/business-rules";
 import { resolvePincodeAreaNames } from "@/lib/pincode";
+import { fetchBoostedQAChunk } from "@/lib/qa-retrieval";
 import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
 import { logAiUsage } from "@/lib/billing";
@@ -444,6 +445,18 @@ export async function POST(req: NextRequest) {
       ORDER BY dc.embedding <=> ${vectorLiteral}::vector ASC
       LIMIT 5
     `) as { content: string; documentTitle: string; documentId: string; distance: number }[];
+
+    // Trained-Q&A boost (see lib/qa-retrieval.ts for the full incident this
+    // fixes) — a customer's real phrasing can easily fail to rank a Trained
+    // Q&A into the plain top-5 above once the org has enough other
+    // documents, even when the Q&A is conceptually the right answer. This
+    // guarantees the single best-matching trained Q&A is considered too,
+    // appended (not replacing anything) so it never disturbs results[0],
+    // which the product/event photo matching just below still depends on.
+    const boostedQA = await fetchBoostedQAChunk(organization.id, vectorLiteral);
+    if (boostedQA && !results.some((r) => r.documentId === boostedQA.documentId)) {
+      results.push(boostedQA);
+    }
 
     // Precompute whether a product/event photo will actually accompany this
     // reply (same threshold check used below when sending) — the AI needs to

@@ -18,6 +18,7 @@ import {
   type CatalogProduct,
 } from "@/lib/llm";
 import { logAiUsage } from "@/lib/billing";
+import { fetchBoostedQAChunk } from "@/lib/qa-retrieval";
 
 // Sandbox tool execution never touches the real database — it just describes
 // what would happen, so staff can preview the skill without creating fake
@@ -80,13 +81,21 @@ export async function POST(req: NextRequest) {
     const vectorLiteral = toVectorLiteral(queryEmbedding);
 
     const results = (await prisma.$queryRaw`
-      SELECT dc.content as content, d.title as "documentTitle"
+      SELECT dc.content as content, d.title as "documentTitle", d.id as "documentId"
       FROM "DocumentChunk" dc
       JOIN "Document" d ON d.id = dc."documentId"
       WHERE dc."organizationId" = ${organizationId}
       ORDER BY dc.embedding <=> ${vectorLiteral}::vector ASC
       LIMIT 5
-    `) as { content: string; documentTitle: string }[];
+    `) as { content: string; documentTitle: string; documentId: string }[];
+
+    // Same Trained-Q&A boost as the live webhook (see lib/qa-retrieval.ts) —
+    // without this, the sandbox would give a rosier or gloomier preview than
+    // what a real customer actually gets, defeating its whole purpose.
+    const boostedQA = await fetchBoostedQAChunk(organizationId, vectorLiteral);
+    if (boostedQA && !results.some((r) => r.documentId === boostedQA.documentId)) {
+      results.push(boostedQA);
+    }
 
     // Same catalog list the live webhook now sends — without this, the sandbox
     // can't actually preview minimum-order enforcement or hallucination
