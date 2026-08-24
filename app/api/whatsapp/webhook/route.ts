@@ -184,15 +184,48 @@ export async function POST(req: NextRequest) {
     });
     let isNewConversation = false;
     if (!conversation) {
-      conversation = await prisma.conversation.create({
-        data: {
+      // No OPEN conversation for this client — before starting a brand-new,
+      // empty-looking thread, check whether they have an existing CLOSED
+      // conversation and reopen that instead of creating a separate row.
+      // Root-caused 2026-08-24 from the owner's own screenshots ("~pratima"
+      // and "Joydeep" conversations): once staff (or any future auto-close
+      // logic) closes a conversation, the customer's NEXT message used to
+      // always spawn a brand-new Conversation row — the full message
+      // history was still safely in the database, but silently orphaned
+      // under the old CLOSED row, so the Conversations page appeared to
+      // show the thread "starting mid-conversation" with no visible history
+      // before that point, and the configured greeting fired again as if
+      // talking to this customer for the very first time. Reopening the
+      // most recent existing conversation instead keeps one continuous
+      // thread per customer — matching how staff actually think about "a
+      // conversation with this customer," the same way WhatsApp itself
+      // works — and correctly leaves `isNewConversation` false so the
+      // greeting only ever fires for a genuinely brand-new client.
+      const previousConversation = await prisma.conversation.findFirst({
+        where: {
           organizationId: organization.id,
           clientId: client.id,
           channel: "WHATSAPP",
-          status: "OPEN",
         },
+        orderBy: { createdAt: "desc" },
       });
-      isNewConversation = true;
+
+      if (previousConversation) {
+        conversation = await prisma.conversation.update({
+          where: { id: previousConversation.id },
+          data: { status: "OPEN" },
+        });
+      } else {
+        conversation = await prisma.conversation.create({
+          data: {
+            organizationId: organization.id,
+            clientId: client.id,
+            channel: "WHATSAPP",
+            status: "OPEN",
+          },
+        });
+        isNewConversation = true;
+      }
     }
 
     // Customer sent a photo — most commonly a payment screenshot for staff to
