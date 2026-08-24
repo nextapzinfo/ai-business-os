@@ -113,7 +113,7 @@ export default async function ConversationDetailPage({ params }: { params: { id:
   const [conversation, approvedTemplates] = await Promise.all([
     prisma.conversation.findFirst({
       where: { id: params.id, organizationId: user.organizationId },
-      include: { client: true, messages: { orderBy: { createdAt: "asc" } } },
+      include: { client: true },
     }),
     prisma.messageTemplate.findMany({
       where: { organizationId: user.organizationId, status: "APPROVED" },
@@ -123,7 +123,32 @@ export default async function ConversationDetailPage({ params }: { params: { id:
 
   if (!conversation) redirect("/dashboard/conversations");
 
-  const threadMessages = conversation.messages.map((m) => ({
+  // Full WhatsApp-style history: pull every message from EVERY conversation
+  // this client has ever had on this channel, not just the single
+  // Conversation row `params.id` points at. Before the webhook's "reopen
+  // the previous conversation instead of creating a new one" fix
+  // (2026-08-24), closing a conversation and then getting a new message
+  // from the same customer always spawned a brand-new, separate
+  // Conversation row — so a client can have several historical rows behind
+  // the scenes even though staff experience it as one ongoing relationship.
+  // That fix stops NEW splits, but doesn't retroactively merge OLD ones, so
+  // the message list here is assembled across every conversation tied to
+  // this client instead of just this one row. Nothing is deleted or merged
+  // in the database — only what's displayed changes; each Conversation row
+  // keeps its own status/handoff/pause state for the action buttons above,
+  // which still operate on this specific conversation (`conversation.id`).
+  const allMessages = await prisma.message.findMany({
+    where: {
+      conversation: {
+        organizationId: user.organizationId,
+        clientId: conversation.clientId,
+        channel: conversation.channel,
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const threadMessages = allMessages.map((m) => ({
     id: m.id,
     sender: m.sender,
     content: m.content,
@@ -180,7 +205,7 @@ export default async function ConversationDetailPage({ params }: { params: { id:
 
       <div className="mt-2 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <form key={conversation.messages.length} action={sendManualReply} className="flex flex-1 gap-2">
+          <form key={allMessages.length} action={sendManualReply} className="flex flex-1 gap-2">
             <input type="hidden" name="conversationId" value={conversation.id} />
             <textarea
               name="text"
