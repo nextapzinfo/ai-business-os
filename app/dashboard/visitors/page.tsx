@@ -7,6 +7,8 @@ import {
   fetchTrafficSources,
   fetchDeviceBreakdown,
   fetchBrowserBreakdown,
+  fetchAgeBreakdown,
+  fetchGenderBreakdown,
   fetchEcommerceFunnel,
   type TrafficOverview,
   type TopPageRow,
@@ -50,12 +52,18 @@ export default async function VisitorsPage() {
   // fail without breaking the rest of the page — a GA4 hiccup on one metric
   // (or, e.g., banglardoi.com's tracking not being live yet so there's
   // simply no data) shouldn't take down the whole dashboard.
-  const [overview, topPages, sources, devices, browsers, funnel] = await Promise.all([
+  const [overview, topPages, sources, devices, browsers, ages, genders, funnel] = await Promise.all([
     fetchTrafficOverview(PERIOD_DAYS).catch((): TrafficOverview | null => null),
     fetchTopPages(PERIOD_DAYS).catch((): TopPageRow[] => []),
     fetchTrafficSources(PERIOD_DAYS).catch((): NamedCountRow[] => []),
     fetchDeviceBreakdown(PERIOD_DAYS).catch((): NamedCountRow[] => []),
     fetchBrowserBreakdown(PERIOD_DAYS).catch((): NamedCountRow[] => []),
+    // Age/Gender only return real (non-"Not available") rows once Google
+    // signals data collection is turned on in GA4 Admin (owner turned this on
+    // 2026-08-25) — see the comment on fetchAgeBreakdown/fetchGenderBreakdown
+    // in lib/ga4.ts for why a large "Not available" bucket is normal here.
+    fetchAgeBreakdown(PERIOD_DAYS).catch((): NamedCountRow[] => []),
+    fetchGenderBreakdown(PERIOD_DAYS).catch((): NamedCountRow[] => []),
     fetchEcommerceFunnel(PERIOD_DAYS).catch((): EcommerceFunnel | null => null),
   ]);
 
@@ -135,7 +143,23 @@ export default async function VisitorsPage() {
           rows={browsers.map((b) => ({ label: b.name, count: b.sessions }))}
           countLabel="sessions"
         />
+        <ListCard
+          title="Age"
+          rows={ages.map((a) => ({ label: a.name, count: a.sessions }))}
+          countLabel="visitors"
+        />
+        <ListCard
+          title="Gender"
+          rows={genders.map((g) => ({ label: g.name, count: g.sessions }))}
+          countLabel="visitors"
+        />
       </div>
+      {(ages.some((a) => a.name !== "Not available") || genders.some((g) => g.name !== "Not available")) ? null : (
+        <p className="text-xs text-gray-400">
+          Age/Gender needs a signed-in Google visitor with Ads Personalization on to show — this was just turned on,
+          so it may take a day or two to start showing real numbers instead of &quot;Not available&quot;.
+        </p>
+      )}
     </div>
   );
 }

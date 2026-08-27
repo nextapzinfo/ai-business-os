@@ -264,6 +264,42 @@ export async function fetchBrowserBreakdown(days: number, limit = 8): Promise<Na
   }));
 }
 
+// ── Age / Gender — requires "Google signals data collection" to be turned
+// ON in GA4 Admin → Data Collection (owner turned this on 2026-08-25). Only
+// covers visitors who are signed into a Google account with Ads
+// Personalization enabled, so a large "(not set)" bucket is normal and
+// expected — that's Google's own privacy limit, not a bug in this
+// integration. Data also only starts accumulating from the moment Google
+// signals was turned on — it can't backfill demographics for older
+// sessions, so this can look sparse/empty for the first day or two.
+// Uses activeUsers (not sessions) as the metric — the standard metric GA4's
+// own Demographics reports use for age/gender breakdowns.
+export async function fetchAgeBreakdown(days: number): Promise<NamedCountRow[]> {
+  const data = await callGa4Api("runReport", {
+    dateRanges: dateRangeFor(days),
+    dimensions: [{ name: "userAgeBracket" }],
+    metrics: [{ name: "activeUsers" }],
+    orderBys: [{ metric: { metricName: "activeUsers" }, desc: true }],
+  });
+  return shapeRows(data, ["userAgeBracket"], ["activeUsers"]).map((r) => ({
+    name: r.userAgeBracket && r.userAgeBracket !== "(not set)" ? r.userAgeBracket : "Not available",
+    sessions: Number(r.activeUsers) || 0,
+  }));
+}
+
+export async function fetchGenderBreakdown(days: number): Promise<NamedCountRow[]> {
+  const data = await callGa4Api("runReport", {
+    dateRanges: dateRangeFor(days),
+    dimensions: [{ name: "userGender" }],
+    metrics: [{ name: "activeUsers" }],
+    orderBys: [{ metric: { metricName: "activeUsers" }, desc: true }],
+  });
+  return shapeRows(data, ["userGender"], ["activeUsers"]).map((r) => ({
+    name: r.userGender && r.userGender !== "(not set)" ? r.userGender : "Not available",
+    sessions: Number(r.activeUsers) || 0,
+  }));
+}
+
 // ── Ecommerce funnel — product view → add to cart → checkout → purchase ──
 // Matches the 4 events banglardoi.com's gtag.js integration fires
 // (view_item/add_to_cart/begin_checkout/purchase — see lib/analytics.ts on
