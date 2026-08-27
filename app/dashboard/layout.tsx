@@ -21,6 +21,7 @@ const navItems: (NavItem & { verticals?: string[] })[] = [
   { href: "/dashboard/events", label: "Events" },
   { href: "/dashboard/orders", label: "Orders", verticals: ["RETAIL"] },
   { href: "/dashboard/visitors", label: "Website Visitors", verticals: ["RETAIL"] },
+  { href: "/dashboard/usage", label: "Hosting Usage", verticals: ["RETAIL"] },
   { href: "/dashboard/analytics", label: "Analytics" },
   { href: "/dashboard/training", label: "Training" },
   { href: "/dashboard/billing", label: "Billing" },

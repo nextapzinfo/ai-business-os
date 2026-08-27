@@ -17,6 +17,7 @@ import {
   Receipt,
   Truck,
   Radio,
+  Gauge,
   type LucideIcon,
 } from "lucide-react";
 
@@ -33,6 +34,7 @@ const ICONS: Record<string, LucideIcon> = {
   "/dashboard/events": PartyPopper,
   "/dashboard/orders": ShoppingBag,
   "/dashboard/visitors": Radio,
+  "/dashboard/usage": Gauge,
   "/dashboard/analytics": BarChart3,
   "/dashboard/training": GraduationCap,
   "/dashboard/billing": Receipt,

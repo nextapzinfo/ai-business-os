@@ -231,6 +231,53 @@ export async function fetchBanglarDoiFullCatalog(): Promise<BanglarDoiCatalog | 
 // reflects — pass 0 when the customer's cart total isn't known yet (still
 // returns a fully valid quote, e.g. the top/most-expensive bracket) and use
 // the returned `feeTiers` schedule to show the full ladder instead.
+// Raw Cloudinary usage-report shape (https://cloudinary.com/documentation/
+// admin_api#get_usage_report) — passed through close to as-is from
+// banglardoi.com's own /api/integrations/hosting-status, since the exact
+// fields present vary a bit by Cloudinary plan type. `credits` is the one
+// present on today's free/credit-based plans (usage vs. limit, both in
+// "credits" — 1 credit ≈ 1GB storage OR 1GB bandwidth OR 1,000
+// transformations, shared from one pool); `storage`/`bandwidth`/
+// `transformations` are per-metric breakdowns Cloudinary also includes.
+export type BanglarDoiCloudinaryUsage = {
+  plan?: string;
+  credits?: { usage: number; limit: number };
+  storage?: { usage: number; limit?: number };
+  bandwidth?: { usage: number; limit?: number };
+  transformations?: { usage: number; limit?: number };
+  last_updated?: string;
+} | null;
+
+export type BanglarDoiHostingStatus = {
+  database: { sizeBytes: number } | null;
+  cloudinary: BanglarDoiCloudinaryUsage;
+  checkedAt: string;
+};
+
+// Powers /dashboard/usage (added 2026-08-27, owner's own request: "kotota
+// bandwidth galo eta dekhte chai", right after the Vercel Blob outage). See
+// the long comment on banglardoi-app's /api/integrations/hosting-status for
+// why Vercel/Neon's own numbers aren't part of this call — that route only
+// reports what's actually fetchable on today's free plans (its own Postgres
+// size, and Cloudinary's real account usage); Vercel/Neon are quick-link
+// buttons on the dashboard page instead of numbers this can't get. Returns
+// null (rather than throwing) on any failure, same pattern as
+// fetchBanglarDoiFullCatalog, so a hiccup here never breaks the rest of the
+// dashboard page around it.
+export async function fetchBanglarDoiHostingStatus(): Promise<BanglarDoiHostingStatus | null> {
+  try {
+    const data = await banglarDoiFetch(`/api/integrations/hosting-status`);
+    return {
+      database: data.database ?? null,
+      cloudinary: data.cloudinary ?? null,
+      checkedAt: data.checkedAt ?? new Date().toISOString(),
+    };
+  } catch (err) {
+    console.error("fetchBanglarDoiHostingStatus failed:", err);
+    return null;
+  }
+}
+
 export async function fetchBanglarDoiDeliveryCheck(
   pincode: string,
   subtotalInPaise: number
