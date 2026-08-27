@@ -5,6 +5,7 @@ import { readSheetRange } from "@/lib/googleSheets";
 import { revalidatePath } from "next/cache";
 import { formatDate } from "@/lib/formatDate";
 import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
+import AddClientForm from "@/components/AddClientForm";
 
 // Vercel: importing many customer rows can take a moment.
 export const maxDuration = 60;
@@ -267,18 +268,7 @@ export default async function ClientsPage({
 
       <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-gray-900">Add a client</h3>
-        <form action={addClient} className="mt-3 flex flex-wrap gap-2">
-          <input name="name" placeholder="Name" required className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-          <input name="phone" placeholder="Phone (with country code)" required className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-          <input name="email" placeholder="Email (optional)" className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-          <input name="address" placeholder="Address (optional)" className="flex-1 basis-48 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-          <input name="pinCode" placeholder="Pin Code (optional)" className="flex-1 basis-28 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-          <input name="interestedIn" placeholder="Interested In (optional)" className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-          <input name="tags" placeholder="Tags, comma separated (optional)" className="flex-1 basis-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-          <button type="submit" className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
-            Add Client
-          </button>
-        </form>
+        <AddClientForm action={addClient} />
       </div>
 
       <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
