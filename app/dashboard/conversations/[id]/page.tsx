@@ -5,12 +5,18 @@ import { sendWhatsAppMessage, sendWhatsAppImageMessage, sendWhatsAppVideoMessage
 import { put } from "@vercel/blob";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft, Check, Pause, Play, RotateCcw } from "lucide-react";
 import { formatDateTime } from "@/lib/formatDate";
 import MessageThread from "@/components/MessageThread";
 import SendTemplateButton from "@/components/SendTemplateButton";
 import ConversationReplyBox from "@/components/ConversationReplyBox";
 
 export const dynamic = "force-dynamic";
+
+function initialOf(name: string) {
+  return (name?.trim()?.[0] ?? "?").toUpperCase();
+}
 
 // WhatsApp Cloud API's own per-media-type caps — reject oversized files before
 // spending a Blob upload on something Meta would just refuse anyway.
@@ -225,73 +231,84 @@ export default async function ConversationDetailPage({ params }: { params: { id:
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex-shrink-0 pb-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h1 className="text-[22px] font-semibold leading-tight text-gray-900">{conversation.client.name}</h1>
-            <p className="text-[13px] text-gray-500">
-              {conversation.client.phone} · {conversation.channel} · Status: {conversation.status}
+      {/* Everything below — header, handoff banner, thread, reply bar — is one
+          continuous rounded/overflow-hidden card, so it reads as a single
+          WhatsApp-style chat window instead of three separate dashboard
+          panels. Added 2026-08-28, owner's own request: "same exact same wts
+          app type chai". */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-200 shadow-sm">
+        <div className="flex flex-shrink-0 items-center gap-2.5 bg-primary px-3 py-2.5 text-white">
+          <Link
+            href="/dashboard/conversations"
+            className="-ml-1 flex-shrink-0 rounded-full p-1.5 hover:bg-white/10 lg:hidden"
+          >
+            <ArrowLeft size={20} />
+          </Link>
+          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-sm font-semibold">
+            {initialOf(conversation.client.name)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[15px] font-semibold leading-tight">{conversation.client.name}</p>
+            <p className="truncate text-[12px] text-white/70">
+              {conversation.client.phone} · {conversation.aiPaused ? "Staff Handling" : "AI Active"}
+              {conversation.status !== "OPEN" ? ` · ${conversation.status === "CLOSED" ? "Closed" : "Escalated"}` : ""}
             </p>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span
-              className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
-                conversation.aiPaused ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
-              }`}
+          <form action={toggleAiPaused}>
+            <input type="hidden" name="conversationId" value={conversation.id} />
+            <button
+              type="submit"
+              title={conversation.aiPaused ? "Resume AI" : "Pause AI (take over manually)"}
+              className="flex-shrink-0 rounded-full p-2 hover:bg-white/10"
             >
-              {conversation.aiPaused ? "Staff Handling" : "AI Active"}
-            </span>
-            <form action={toggleAiPaused}>
-              <input type="hidden" name="conversationId" value={conversation.id} />
-              <button
-                type="submit"
-                className={`flex h-9 items-center rounded-lg px-2.5 text-xs font-medium text-white ${
-                  conversation.aiPaused ? "bg-accent hover:bg-emerald-600" : "bg-amber-600 hover:bg-amber-700"
-                }`}
-              >
-                {conversation.aiPaused ? "▶ Resume" : "⏸ Pause"}
-              </button>
-            </form>
-            <form action={closeConversation}>
-              <input type="hidden" name="conversationId" value={conversation.id} />
-              <button type="submit" className="flex h-9 items-center rounded-lg bg-gray-600 px-2.5 text-xs font-medium text-white hover:bg-gray-700">
-                {conversation.status === "CLOSED" ? "↺ Reopen" : "✓ Closed"}
-              </button>
-            </form>
-          </div>
+              {conversation.aiPaused ? <Play size={18} /> : <Pause size={18} />}
+            </button>
+          </form>
+          <form action={closeConversation}>
+            <input type="hidden" name="conversationId" value={conversation.id} />
+            <button
+              type="submit"
+              title={conversation.status === "CLOSED" ? "Reopen conversation" : "Close conversation"}
+              className="flex-shrink-0 rounded-full p-2 hover:bg-white/10"
+            >
+              {conversation.status === "CLOSED" ? <RotateCcw size={18} /> : <Check size={18} />}
+            </button>
+          </form>
         </div>
+
         {conversation.handoffReason && (
-          <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-red-50 px-2.5 py-1.5 text-[12px] font-medium text-red-700">
+          <div className="flex flex-shrink-0 items-center gap-1.5 border-b border-red-100 bg-red-50 px-3 py-1.5 text-[12px] font-medium text-red-700">
             ⚠️ AI handed off: {conversation.handoffReason}
           </div>
         )}
+
+        <MessageThread messages={threadMessages} />
+
+        <ConversationReplyBox
+          action={sendManualReply}
+          conversationId={conversation.id}
+          quickReplies={quickReplies.map((q) => ({
+            id: q.id,
+            title: q.title,
+            mediaUrl: q.mediaUrl,
+            mediaType: q.mediaType,
+            captionText: q.captionText,
+          }))}
+          extraToolbar={
+            approvedTemplates.length > 0 ? (
+              <SendTemplateButton
+                conversationId={conversation.id}
+                templates={approvedTemplates.map((t) => ({ id: t.id, name: t.name, language: t.language }))}
+              />
+            ) : undefined
+          }
+        />
       </div>
 
-      <MessageThread messages={threadMessages} />
-
-      <div className="mt-2 flex-shrink-0">
-        <div className="flex items-start gap-2">
-          <ConversationReplyBox
-            action={sendManualReply}
-            conversationId={conversation.id}
-            quickReplies={quickReplies.map((q) => ({
-              id: q.id,
-              title: q.title,
-              mediaUrl: q.mediaUrl,
-              mediaType: q.mediaType,
-              captionText: q.captionText,
-            }))}
-          />
-          <SendTemplateButton
-            conversationId={conversation.id}
-            templates={approvedTemplates.map((t) => ({ id: t.id, name: t.name, language: t.language }))}
-          />
-        </div>
-        <p className="mt-1 text-[11px] text-gray-400">
-          Free-text/photo/video only delivers within 24 hours of the customer's last message; use Send
-          Template outside that window. Photo max 5MB, video max 16MB.
-        </p>
-      </div>
+      <p className="mt-1.5 flex-shrink-0 text-center text-[11px] text-gray-400">
+        Free-text/photo/video only delivers within 24 hours of the customer's last message; use Send Template
+        outside that window. Photo max 5MB, video max 16MB.
+      </p>
     </div>
   );
 }

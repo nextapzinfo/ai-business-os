@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Search, X, ThumbsDown } from "lucide-react";
+import { CheckCheck, Search, X, ThumbsDown } from "lucide-react";
 import { flagMessageWrong } from "@/app/dashboard/conversations/[id]/actions";
 
 type ThreadMessage = {
@@ -38,14 +38,18 @@ function renderWithLinks(text: string) {
   );
 }
 
-// Styled like a real WhatsApp chat (wallpaper + bubble shapes) so it's fast to
-// scan what's AI vs staff vs customer. No header bar here — the page above
-// already shows the client's name/phone/status, so a second one would just
-// eat vertical space without adding anything. Auto-scrolls to the newest
-// message on first load and whenever a new one arrives. Images render as a
-// fixed 190x190 thumbnail (inline style, not a Tailwind class, so it can't be
-// silently dropped by a build step) instead of stretching to the bubble's
-// full width — tap one to open it full-size in a lightbox.
+// Styled like a real WhatsApp chat (wallpaper + bubble shapes + a single
+// outgoing bubble color, same as the real app) — embedded directly inside the
+// same rounded card as the header/reply bar in the page above (no rounding or
+// border of its own here, the card wrapper supplies both), so the whole
+// Conversation view reads as one continuous WhatsApp-style window rather than
+// three separate panels. AI vs staff-sent is now called out with a small text
+// tag instead of a different bubble color, so the bubbles themselves stay
+// true to WhatsApp's real look. Auto-scrolls to the newest message on first
+// load and whenever a new one arrives. Images render as a fixed 190x190
+// thumbnail (inline style, not a Tailwind class, so it can't be silently
+// dropped by a build step) instead of stretching to the bubble's full width —
+// tap one to open it full-size in a lightbox.
 export default function MessageThread({ messages }: { messages: ThreadMessage[] }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
@@ -66,15 +70,14 @@ export default function MessageThread({ messages }: { messages: ThreadMessage[] 
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto rounded-xl border border-gray-300 bg-[#e5ddd5] px-3 py-3 shadow-sm">
+      <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto bg-[#e5ddd5] px-3 py-3">
         {messages.map((m) => {
           const sent = m.sender !== "CLIENT";
-          const sentBg = m.sender === "STAFF" ? "bg-[#dbeafe]" : "bg-[#d9fdd3]";
           return (
             <div key={m.id} className={`flex ${sent ? "justify-end" : "justify-start"}`}>
               <div
-                className={`max-w-[70%] overflow-hidden rounded-2xl shadow-sm ${
-                  sent ? `rounded-tr-none ${sentBg}` : "rounded-tl-none bg-white"
+                className={`max-w-[75%] overflow-hidden rounded-2xl shadow-sm ${
+                  sent ? "rounded-tr-none bg-[#d9fdd3]" : "rounded-tl-none bg-white"
                 }`}
               >
                 {m.imageUrl && m.mediaType === "VIDEO" ? (
@@ -109,10 +112,16 @@ export default function MessageThread({ messages }: { messages: ThreadMessage[] 
                   )
                 )}
                 <div className="px-2 py-1.5">
-                  {m.sender === "STAFF" && (
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-600">Staff</p>
+                  {sent && (
+                    <p
+                      className={`text-[10px] font-semibold uppercase tracking-wide ${
+                        m.sender === "STAFF" ? "text-blue-600" : "text-emerald-700"
+                      }`}
+                    >
+                      {m.sender === "STAFF" ? "You (Staff)" : "AI"}
+                    </p>
                   )}
-                  <p className="whitespace-pre-wrap text-[14px] text-gray-900">{renderWithLinks(m.content)}</p>
+                  <p className="whitespace-pre-wrap text-[14.5px] text-gray-900">{renderWithLinks(m.content)}</p>
                   <div className="mt-0.5 flex items-center justify-end gap-1.5">
                     {m.sender === "AI" &&
                       (m.flaggedWrong || flaggedLocally.has(m.id) ? (
@@ -128,7 +137,11 @@ export default function MessageThread({ messages }: { messages: ThreadMessage[] 
                         </button>
                       ))}
                     <span className="text-[11px] text-gray-500">{m.createdAt}</span>
-                    {sent && <Check size={12} className="flex-shrink-0 text-gray-500" />}
+                    {/* Double-check, like a real WhatsApp sent message — this app doesn't
+                        track actual delivered/read receipts, so it's shown in neutral gray
+                        (meaning "sent") rather than WhatsApp's blue "read" color, to avoid
+                        implying a read confirmation this app doesn't actually have. */}
+                    {sent && <CheckCheck size={14} className="flex-shrink-0 text-gray-400" />}
                   </div>
                 </div>
               </div>
