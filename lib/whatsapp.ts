@@ -63,6 +63,44 @@ export async function sendWhatsAppImageMessage(
   }
 }
 
+// Sends a video (by public URL) with an optional caption. Same shape as
+// sendWhatsAppImageMessage — added 2026-08-28 for staff-sent manual
+// attachments and the Quick Replies library (owner's request: wants to send
+// pics/videos from PC/mobile, or pre-saved attachments, in Conversations).
+export async function sendWhatsAppVideoMessage(
+  to: string,
+  videoUrl: string,
+  caption?: string
+): Promise<void> {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!accessToken || !phoneNumberId) {
+    throw new Error("WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID is not set");
+  }
+
+  const res = await fetch(`${WHATSAPP_API_BASE}/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "video",
+      video: {
+        link: videoUrl,
+        ...(caption ? { caption } : {}),
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`WhatsApp video send failed: ${res.status} ${errText}`);
+  }
+}
+
 // Sends a native WhatsApp Catalog "Interactive Product Message" — shows the
 // product's image/price/name straight from the connected Commerce Manager
 // catalog, plus (since "Add to cart" is turned on for the account in

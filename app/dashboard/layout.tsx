@@ -13,6 +13,7 @@ const navItems: (NavItem & { verticals?: string[] })[] = [
   { href: "/dashboard/agent", label: "Agent Studio" },
   { href: "/dashboard/clients", label: "Clients" },
   { href: "/dashboard/conversations", label: "Conversations" },
+  { href: "/dashboard/quick-replies", label: "Quick Replies" },
   { href: "/dashboard/reminders", label: "Reminders" },
   { href: "/dashboard/templates", label: "Templates" },
   { href: "/dashboard/broadcasts", label: "Broadcasts" },

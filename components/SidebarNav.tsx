@@ -18,6 +18,7 @@ import {
   Truck,
   Radio,
   Gauge,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 
@@ -26,6 +27,7 @@ const ICONS: Record<string, LucideIcon> = {
   "/dashboard/agent": Bot,
   "/dashboard/clients": Users,
   "/dashboard/conversations": MessageSquare,
+  "/dashboard/quick-replies": Zap,
   "/dashboard/reminders": Bell,
   "/dashboard/templates": FileText,
   "/dashboard/broadcasts": Megaphone,

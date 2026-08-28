@@ -9,6 +9,7 @@ type ThreadMessage = {
   sender: string;
   content: string;
   imageUrl?: string | null;
+  mediaType?: string | null; // IMAGE or VIDEO — null/IMAGE both render as a photo (older rows predate this field, they're always photos)
   flaggedWrong?: boolean;
   createdAt: string; // pre-formatted on the server (IST) — Server Components can't pass Date objects to Client Components
 };
@@ -76,24 +77,36 @@ export default function MessageThread({ messages }: { messages: ThreadMessage[] 
                   sent ? `rounded-tr-none ${sentBg}` : "rounded-tl-none bg-white"
                 }`}
               >
-                {m.imageUrl && (
-                  <button
-                    type="button"
-                    onClick={() => setLightbox(m.imageUrl!)}
-                    className="group relative block overflow-hidden"
-                    style={{ width: 190, height: 190 }}
-                  >
-                    {/* Inline style (not a Tailwind class) on purpose — guarantees the
-                        fixed thumbnail box can never be dropped by a CSS build step. */}
-                    <img
-                      src={m.imageUrl}
-                      alt=""
-                      style={{ width: 190, height: 190, objectFit: "cover", display: "block" }}
-                    />
-                    <span className="absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-full bg-black/50 px-1.5 py-0.5 text-[10px] text-white opacity-90 group-hover:opacity-100">
-                      <Search size={10} /> Enlarge
-                    </span>
-                  </button>
+                {m.imageUrl && m.mediaType === "VIDEO" ? (
+                  // Video gets its own native player (controls, no autoplay) instead of
+                  // the tap-to-enlarge lightbox images use — a <video controls> element
+                  // is already fully interactive on its own, so a second "enlarge" step
+                  // would just be friction.
+                  <video
+                    src={m.imageUrl}
+                    controls
+                    style={{ width: 190, height: 190, objectFit: "cover", display: "block", background: "#000" }}
+                  />
+                ) : (
+                  m.imageUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setLightbox(m.imageUrl!)}
+                      className="group relative block overflow-hidden"
+                      style={{ width: 190, height: 190 }}
+                    >
+                      {/* Inline style (not a Tailwind class) on purpose — guarantees the
+                          fixed thumbnail box can never be dropped by a CSS build step. */}
+                      <img
+                        src={m.imageUrl}
+                        alt=""
+                        style={{ width: 190, height: 190, objectFit: "cover", display: "block" }}
+                      />
+                      <span className="absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-full bg-black/50 px-1.5 py-0.5 text-[10px] text-white opacity-90 group-hover:opacity-100">
+                        <Search size={10} /> Enlarge
+                      </span>
+                    </button>
+                  )
                 )}
                 <div className="px-2 py-1.5">
                   {m.sender === "STAFF" && (

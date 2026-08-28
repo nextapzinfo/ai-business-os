@@ -67,6 +67,7 @@ model Organization {
   whatsAppCostLogs WhatsAppCostLog[]
   deliveryZones    DeliveryZone[]
   campaigns        Campaign[]
+  quickReplies     QuickReply[]
 }
 
 // Configures how the WhatsApp AI presents itself and behaves — replaces the
@@ -227,7 +228,8 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   sender         String // CLIENT, AI, STAFF
   content        String
-  imageUrl       String? // set when this message included a photo (template header image, product/event photo)
+  imageUrl       String? // set when this message included a photo OR video (template header image, product/event photo, staff-sent media) — name kept as-is to avoid touching every existing read site; mediaType below says which
+  mediaType      String? // IMAGE or VIDEO when imageUrl is set from a staff-sent attachment/Quick Reply; null for the older photo-only paths (they're always images)
   noKnowledgeMatch    Boolean  @default(false) // set on an AI message when the RAG search found zero relevant Knowledge Base chunks — surfaced on the Analytics/Training pages as a knowledge gap
   answeredQuestion    String?  // the customer's question this AI message was answering — set for AI messages, used by Analytics/Training so they don't have to hunt for the preceding message
   flaggedWrong        Boolean  @default(false) // staff marked this AI reply as wrong from the conversation thread
@@ -236,6 +238,24 @@ model Message {
   createdAt      DateTime     @default(now())
 
   @@index([conversationId])
+}
+
+// A saved, reusable attachment (photo/video + optional ready-made caption)
+// staff can send into a Conversation with one click instead of re-uploading
+// the same file from their PC/phone every time — e.g. a price-list photo or
+// a standard intro video. Added 2026-08-28, owner's own request: "Conversation
+// e pic/video pathate chai, or some pre attachment quick reply hisebe".
+model QuickReply {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  title          String // staff-facing label only, e.g. "Price List" — never sent to the customer
+  mediaUrl       String
+  mediaType      String // IMAGE or VIDEO
+  captionText    String? // sent as the WhatsApp caption alongside the media; editable per-send before sending
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
 }
 
 model Reminder {
