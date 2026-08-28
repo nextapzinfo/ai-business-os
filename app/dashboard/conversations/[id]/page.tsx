@@ -6,7 +6,7 @@ import { put } from "@vercel/blob";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Check, Pause, Play, RotateCcw } from "lucide-react";
+import { ArrowLeft, Bot, Headphones, RotateCcw, X } from "lucide-react";
 import { formatDateTime } from "@/lib/formatDate";
 import MessageThread from "@/components/MessageThread";
 import SendTemplateButton from "@/components/SendTemplateButton";
@@ -73,13 +73,16 @@ async function sendManualReply(formData: FormData) {
       where: { id: quickReplyId, organizationId: user.organizationId },
     });
     if (qr) {
+      // qr.mediaUrl/mediaType can both be null now — a text-only Quick Reply
+      // (2026-08-28). mediaUrl staying null naturally skips the IMAGE/VIDEO
+      // send branches below and falls through to the plain-text send instead.
       mediaUrl = qr.mediaUrl;
-      mediaType = qr.mediaType as "IMAGE" | "VIDEO";
+      mediaType = qr.mediaType as "IMAGE" | "VIDEO" | null;
       if (!caption) caption = qr.captionText ?? "";
     }
   }
 
-  if (!mediaUrl && !text) return; // nothing to actually send
+  if (!mediaUrl && !caption) return; // nothing to actually send — `caption` (not raw `text`) so a text-only Quick Reply whose text came from captionText, not the textarea, still counts
 
   let sendError: string | null = null;
   try {
@@ -88,7 +91,7 @@ async function sendManualReply(formData: FormData) {
     } else if (mediaUrl) {
       await sendWhatsAppImageMessage(conversation.client.phone, mediaUrl, caption || undefined);
     } else {
-      await sendWhatsAppMessage(conversation.client.phone, text);
+      await sendWhatsAppMessage(conversation.client.phone, caption);
     }
   } catch (err) {
     sendError = err instanceof Error ? err.message : "Unknown error";
@@ -254,14 +257,21 @@ export default async function ConversationDetailPage({ params }: { params: { id:
               {conversation.status !== "OPEN" ? ` · ${conversation.status === "CLOSED" ? "Closed" : "Escalated"}` : ""}
             </p>
           </div>
+          {/* Labeled, not just an icon — the plain Play/Pause + Check/Reopen icon
+              pair (2026-08-28) read as unrecognizable to the owner ("I cant
+              understand 2 icon on top... Play button and write sign)"). Each
+              button now names what it actually does: this one is the AI
+              handoff toggle — "AI" (AI is replying, tap to take the chat over
+              yourself) or "Me" (you're handling it, tap to hand back to AI). */}
           <form action={toggleAiPaused}>
             <input type="hidden" name="conversationId" value={conversation.id} />
             <button
               type="submit"
-              title={conversation.aiPaused ? "Resume AI" : "Pause AI (take over manually)"}
-              className="flex-shrink-0 rounded-full p-2 hover:bg-white/10"
+              title={conversation.aiPaused ? "You're handling this chat — tap to hand it back to the AI" : "AI is replying — tap to take over and hand it off to yourself"}
+              className="flex flex-shrink-0 items-center gap-1 rounded-full bg-white/10 px-2.5 py-1.5 text-[11px] font-medium hover:bg-white/20"
             >
-              {conversation.aiPaused ? <Play size={18} /> : <Pause size={18} />}
+              {conversation.aiPaused ? <Headphones size={14} /> : <Bot size={14} />}
+              {conversation.aiPaused ? "Me" : "AI"}
             </button>
           </form>
           <form action={closeConversation}>
@@ -269,9 +279,10 @@ export default async function ConversationDetailPage({ params }: { params: { id:
             <button
               type="submit"
               title={conversation.status === "CLOSED" ? "Reopen conversation" : "Close conversation"}
-              className="flex-shrink-0 rounded-full p-2 hover:bg-white/10"
+              className="flex flex-shrink-0 items-center gap-1 rounded-full bg-white/10 px-2.5 py-1.5 text-[11px] font-medium hover:bg-white/20"
             >
-              {conversation.status === "CLOSED" ? <RotateCcw size={18} /> : <Check size={18} />}
+              {conversation.status === "CLOSED" ? <RotateCcw size={14} /> : <X size={14} />}
+              {conversation.status === "CLOSED" ? "Reopen" : "Close"}
             </button>
           </form>
         </div>
@@ -297,6 +308,7 @@ export default async function ConversationDetailPage({ params }: { params: { id:
           extraToolbar={
             approvedTemplates.length > 0 ? (
               <SendTemplateButton
+                compact
                 conversationId={conversation.id}
                 templates={approvedTemplates.map((t) => ({ id: t.id, name: t.name, language: t.language }))}
               />
@@ -304,11 +316,6 @@ export default async function ConversationDetailPage({ params }: { params: { id:
           }
         />
       </div>
-
-      <p className="mt-1.5 flex-shrink-0 text-center text-[11px] text-gray-400">
-        Free-text/photo/video only delivers within 24 hours of the customer's last message; use Send Template
-        outside that window. Photo max 5MB, video max 16MB.
-      </p>
     </div>
   );
 }

@@ -1,13 +1,13 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { Camera, Loader2, Mic, Paperclip, Send, Smile, X, Zap } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Camera, ImageIcon, Loader2, Paperclip, Send, Smile, X, Zap } from "lucide-react";
 
 type QuickReplyOption = {
   id: string;
   title: string;
-  mediaUrl: string;
-  mediaType: string; // IMAGE or VIDEO
+  mediaUrl: string | null; // null for a text-only Quick Reply (2026-08-28)
+  mediaType: string | null; // IMAGE or VIDEO — null exactly when mediaUrl is null
   captionText: string | null;
 };
 
@@ -15,16 +15,21 @@ type QuickReplyOption = {
 // or a saved Quick Reply, all through the one form/send button. Added
 // 2026-08-28, owner's own request: "Conversation e ami Pic / video from my
 // pc/mob .. or some pre attachment thakbe quick reply hisebe -- send korte
-// chai". Restyled 2026-08-28 (same day, owner's follow-up request: "same
-// exact same wts app type chai") into a genuine WhatsApp-look input bar —
-// pill-shaped text field with an emoji icon, paperclip + camera to its
-// right, and a round send button that swaps to a (visual-only, no voice
-// message support) mic icon when there's nothing to send yet. Pulled into
-// its own Client Component (same reasoning as AddClientForm, 2026-08-27)
-// because a Server Action form's plain uncontrolled inputs don't
-// remount/reset on their own — this one additionally needs local state for
-// the file preview and the Quick Reply picker, which a Server Component
-// can't hold at all.
+// chai". Restyled 2026-08-28 (same day) into a genuine WhatsApp-look input
+// bar, then refined again the same day per the owner's own follow-up
+// corrections after seeing it live: no separate mic icon (this app has no
+// voice-message feature — the send button is now always a plain send/paper-
+// plane icon, just grayed out with nothing to send), no separate camera icon
+// sitting in the pill (folded into the paperclip's own attach-type menu
+// instead, "when click on attachment then attachment type option will be
+// there"), and Quick Reply + Send Template are now compact icon "signs" *in*
+// this one WhatsApp-style row rather than a second, separate slim row above
+// it ("Quick Reply and Template sign only there- so that part will more
+// thin"). Pulled into its own Client Component (same reasoning as
+// AddClientForm, 2026-08-27) because a Server Action form's plain
+// uncontrolled inputs don't remount/reset on their own — this one
+// additionally needs local state for the file preview, the attach menu, and
+// the Quick Reply picker, which a Server Component can't hold at all.
 export default function ConversationReplyBox({
   action,
   conversationId,
@@ -34,24 +39,40 @@ export default function ConversationReplyBox({
   action: (formData: FormData) => Promise<void>;
   conversationId: string;
   quickReplies: QuickReplyOption[];
-  extraToolbar?: React.ReactNode; // e.g. SendTemplateButton — app-specific, not part of stock WhatsApp UI, so it's rendered in its own slim utility row above the WhatsApp-authentic input row instead of inside it
+  extraToolbar?: React.ReactNode; // e.g. a compact SendTemplateButton — app-specific, not part of stock WhatsApp UI, rendered as one more small icon inside the input pill alongside Quick Reply
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   // The canonical field actually submitted as "file" — never clicked directly.
-  // Both the paperclip (gallery/file picker) and camera (direct capture on
-  // mobile) inputs below are separate, unnamed "trigger" inputs; whichever one
-  // the customer uses copies its chosen File into this one via the
-  // DataTransfer trick, so the server action only ever sees a single "file"
-  // field no matter which control was used to pick it.
+  // Both the gallery (file picker) and camera (direct capture on mobile)
+  // inputs below are separate, unnamed "trigger" inputs, now only ever opened
+  // from the attach-type menu rather than their own dedicated icons; whichever
+  // one is used copies its chosen File into this one via the DataTransfer
+  // trick, so the server action only ever sees a single "file" field no
+  // matter which control was used to pick it.
   const fileInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const attachMenuRef = useRef<HTMLDivElement>(null);
+  const quickReplyMenuRef = useRef<HTMLDivElement>(null);
   const [filePreview, setFilePreview] = useState<{ name: string; kind: "IMAGE" | "VIDEO" } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
   const [selectedQuickReply, setSelectedQuickReply] = useState<QuickReplyOption | null>(null);
   const [sending, setSending] = useState(false);
-  const [hasText, setHasText] = useState(false); // tracked separately from the uncontrolled textarea so the send/mic icon can react live without controlling (and risking cursor jumps in) the field itself
+  const [hasText, setHasText] = useState(false); // tracked separately from the uncontrolled textarea so the send button's enabled/disabled look can react live without controlling (and risking cursor jumps in) the field itself
+
+  // Close whichever small popup (attach-type menu, Quick Reply list) is open
+  // when the owner taps anywhere else — same pattern SendTemplateButton
+  // already used for its own dropdown.
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (attachMenuRef.current && !attachMenuRef.current.contains(e.target as Node)) setAttachOpen(false);
+      if (quickReplyMenuRef.current && !quickReplyMenuRef.current.contains(e.target as Node)) setPickerOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   function setFileFromPicker(file: File | undefined) {
     if (!file) return;
@@ -98,47 +119,6 @@ export default function ConversationReplyBox({
 
   return (
     <div className="flex-shrink-0 bg-[#f0f2f5] px-2.5 py-2">
-      {/* Slim utility row for this app's own extras (Quick Reply picker, Send
-          Template) — kept visually separate from the WhatsApp-authentic input
-          row below so that row can look/feel exactly like the real app. */}
-      {(quickReplies.length > 0 || extraToolbar) && (
-        <div className="mb-1.5 flex flex-wrap items-center gap-1.5 px-0.5">
-          {quickReplies.length > 0 && (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setPickerOpen((v) => !v)}
-                className="flex h-7 items-center gap-1 rounded-full border border-gray-300 bg-white px-2.5 text-[11px] font-medium text-gray-600 hover:bg-gray-50"
-              >
-                <Zap size={12} /> Quick Reply
-              </button>
-              {pickerOpen && (
-                <div className="absolute bottom-full left-0 z-10 mb-2 max-h-64 w-64 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
-                  {quickReplies.map((qr) => (
-                    <button
-                      key={qr.id}
-                      type="button"
-                      onClick={() => pickQuickReply(qr)}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-gray-50"
-                    >
-                      <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded bg-gray-100">
-                        {qr.mediaType === "VIDEO" ? (
-                          <span className="text-sm">🎬</span>
-                        ) : (
-                          <img src={qr.mediaUrl} alt="" className="h-full w-full object-cover" />
-                        )}
-                      </span>
-                      <span className="truncate font-medium text-gray-800">{qr.title}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {extraToolbar}
-        </div>
-      )}
-
       {(filePreview || selectedQuickReply) && (
         <div className="mb-1.5 flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600">
           {filePreview && (
@@ -152,7 +132,7 @@ export default function ConversationReplyBox({
           )}
           {selectedQuickReply && (
             <>
-              <span>{selectedQuickReply.mediaType === "VIDEO" ? "🎬" : "📎"}</span>
+              <span>{selectedQuickReply.mediaType === "VIDEO" ? "🎬" : selectedQuickReply.mediaType === "IMAGE" ? "📎" : "💬"}</span>
               <span className="flex-1 truncate">Quick Reply: {selectedQuickReply.title}</span>
               <button type="button" onClick={clearQuickReply} className="text-gray-400 hover:text-red-500">
                 <X size={13} />
@@ -183,7 +163,8 @@ export default function ConversationReplyBox({
         <input ref={fileInputRef} type="file" name="file" className="hidden" />
 
         {/* The pill-shaped field — matches the real WhatsApp input bar: emoji
-            icon inside on the left, paperclip + camera inside on the right. */}
+            icon on the left, everything else (Quick Reply, Send Template,
+            Attach) as small icon "signs" on the right, in one row. */}
         <div className="flex flex-1 items-center gap-1 rounded-3xl bg-white px-2 py-1.5 shadow-sm">
           <button
             type="button"
@@ -201,8 +182,84 @@ export default function ConversationReplyBox({
             onChange={(e) => setHasText(e.target.value.trim().length > 0)}
             className="max-h-24 flex-1 resize-none bg-transparent py-1 text-[14.5px] leading-snug text-gray-900 outline-none placeholder:text-gray-400"
           />
-          <label title="Attach a photo or video" className="flex-shrink-0 cursor-pointer p-1 text-gray-400 hover:text-gray-600">
-            <Paperclip size={19} />
+
+          {quickReplies.length > 0 && (
+            <div ref={quickReplyMenuRef} className="relative flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setPickerOpen((v) => !v)}
+                title="Quick Reply"
+                className="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600"
+              >
+                <Zap size={19} />
+              </button>
+              {pickerOpen && (
+                <div className="absolute bottom-full right-0 z-10 mb-2 max-h-64 w-64 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
+                  {quickReplies.map((qr) => (
+                    <button
+                      key={qr.id}
+                      type="button"
+                      onClick={() => pickQuickReply(qr)}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-gray-50"
+                    >
+                      <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded bg-gray-100">
+                        {qr.mediaType === "VIDEO" ? (
+                          <span className="text-sm">🎬</span>
+                        ) : qr.mediaUrl ? (
+                          <img src={qr.mediaUrl} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="text-sm">💬</span>
+                        )}
+                      </span>
+                      <span className="truncate font-medium text-gray-800">{qr.title}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {extraToolbar}
+
+          {/* Attach — a single paperclip that opens an attachment-type menu
+              (Photo/Video from gallery, or Camera) instead of a separate
+              dedicated camera icon sitting in the pill. Added 2026-08-28,
+              owner's own request after seeing the camera icon live: "no need
+              camera Icon there... when click on attachment then attachment
+              type option will be there." */}
+          <div ref={attachMenuRef} className="relative flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setAttachOpen((v) => !v)}
+              title="Attach a photo or video (photo max 5MB, video max 16MB)"
+              className="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600"
+            >
+              <Paperclip size={19} />
+            </button>
+            {attachOpen && (
+              <div className="absolute bottom-full right-0 z-10 mb-2 w-44 rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => {
+                    galleryInputRef.current?.click();
+                    setAttachOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                >
+                  <ImageIcon size={15} className="text-purple-500" /> Photo / Video
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    cameraInputRef.current?.click();
+                    setAttachOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                >
+                  <Camera size={15} className="text-pink-500" /> Camera
+                </button>
+              </div>
+            )}
             <input
               ref={galleryInputRef}
               type="file"
@@ -210,9 +267,6 @@ export default function ConversationReplyBox({
               onChange={handleGalleryChange}
               className="hidden"
             />
-          </label>
-          <label title="Take a photo now" className="flex-shrink-0 cursor-pointer p-1 text-gray-400 hover:text-gray-600">
-            <Camera size={19} />
             <input
               ref={cameraInputRef}
               type="file"
@@ -221,18 +275,22 @@ export default function ConversationReplyBox({
               onChange={handleCameraChange}
               className="hidden"
             />
-          </label>
+          </div>
         </div>
 
+        {/* Always a plain send icon — no mic. This app has no voice-message
+            feature, so a mic control (even a purely visual/disabled one)
+            would be misleading. Added 2026-08-28, owner's own request: "Voice
+            icon no need, bcoz, amader ei feature ta akhono nei". */}
         <button
           type="submit"
           disabled={sending || !hasContent}
-          title={hasContent ? "Send" : "Type a message or attach a photo/video to send — voice messages aren't supported"}
+          title={hasContent ? "Send" : "Type a message, or attach/pick something to send"}
           className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full text-white transition-colors disabled:cursor-not-allowed ${
             hasContent ? "bg-accent hover:bg-emerald-600" : "bg-gray-300"
           }`}
         >
-          {sending ? <Loader2 size={18} className="animate-spin" /> : hasContent ? <Send size={18} /> : <Mic size={18} />}
+          {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
         </button>
       </form>
     </div>

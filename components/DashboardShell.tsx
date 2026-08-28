@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import SidebarNav, { type NavItem } from "@/components/SidebarNav";
 import SignOutButton from "@/components/SignOutButton";
@@ -25,24 +26,37 @@ export default function DashboardShell({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  // One conversation open on mobile is meant to feel like a real full-screen
+  // WhatsApp chat, not a page inside this dashboard — added 2026-08-28, owner's
+  // own request: "Top URL, after that AI business OS bar -- no need this - so
+  // screen will be more large." The generic "AI Business OS" mobile top bar
+  // (and the padding it reserves in <main>) is skipped for exactly this one
+  // route; back navigation still works via the chat's own back arrow in its
+  // header, which returns to the Conversations list where the top bar (and
+  // its hamburger menu) is back. ConversationsSplitView mirrors this same
+  // pathname check to size the chat column to the freed-up space.
+  const isConversationDetail = pathname?.startsWith("/dashboard/conversations/") ?? false;
 
   return (
     <div className="flex min-h-screen bg-gray-50">
       {/* Mobile-only top bar — desktop keeps the sidebar permanently visible so this is redundant there */}
-      <div className="fixed inset-x-0 top-0 z-30 flex h-12 items-center gap-2 border-b border-black/10 bg-primary-dark px-3 print:hidden lg:hidden">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-white hover:bg-white/10"
-          aria-label="Open menu"
-        >
-          <Menu size={20} />
-        </button>
-        <div className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-md bg-accent text-[10px] font-bold text-white">
-          AI
+      {!isConversationDetail && (
+        <div className="fixed inset-x-0 top-0 z-30 flex h-12 items-center gap-2 border-b border-black/10 bg-primary-dark px-3 print:hidden lg:hidden">
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-white hover:bg-white/10"
+            aria-label="Open menu"
+          >
+            <Menu size={20} />
+          </button>
+          <div className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-md bg-accent text-[10px] font-bold text-white">
+            AI
+          </div>
+          <span className="truncate text-sm font-semibold text-white">AI Business OS</span>
         </div>
-        <span className="truncate text-sm font-semibold text-white">AI Business OS</span>
-      </div>
+      )}
 
       {/* Backdrop — mobile only, only rendered while the drawer is open */}
       {open && (
@@ -89,7 +103,11 @@ export default function DashboardShell({
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 p-4 pt-14 print:p-0 lg:p-8">{children}</main>
+      <main
+        className={`min-w-0 flex-1 print:p-0 lg:p-8 ${isConversationDetail ? "p-0" : "p-4 pt-14"}`}
+      >
+        {children}
+      </main>
     </div>
   );
 }

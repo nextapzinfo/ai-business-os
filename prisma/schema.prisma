@@ -68,6 +68,7 @@ model Organization {
   deliveryZones    DeliveryZone[]
   campaigns        Campaign[]
   quickReplies     QuickReply[]
+  clientGroups     ClientGroup[]
 }
 
 // Configures how the WhatsApp AI presents itself and behaves — replaces the
@@ -148,8 +149,42 @@ model Client {
   broadcastRecipients  BroadcastRecipient[]
   productInterests     ClientProductInterest[]
   orders               Order[]
+  groupMemberships     ClientGroupMember[]
 
   @@index([organizationId])
+}
+
+// A reusable, hand-picked customer segment for Broadcasts — added
+// 2026-08-28, owner's own request: "ar akbar select kore ami jdi group banie
+// rakhi then next time taderke abar select korte hobe na" (once I've
+// selected and saved a group, I shouldn't have to select them again next
+// time). Deliberately separate from Client.tags (used as the dynamic
+// "category/interest" filter on the same page) — a saved group is a fixed
+// snapshot of specific clients picked once (e.g. "Janmashtami campaign
+// responders"), while a tag filter always reflects whoever currently has
+// that tag. Broadcasts itself doesn't reference this directly; the
+// Broadcasts page just uses a saved group to pre-select `clientIds` in the
+// existing recipient checkbox list.
+model ClientGroup {
+  id             String              @id @default(cuid())
+  organizationId String
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  name           String
+  createdAt      DateTime            @default(now())
+  members        ClientGroupMember[]
+
+  @@index([organizationId])
+}
+
+model ClientGroupMember {
+  id       String      @id @default(cuid())
+  groupId  String
+  group    ClientGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  clientId String
+  client   Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, clientId])
+  @@index([groupId])
 }
 
 // Uploaded knowledge base source files (GST rules, ITR docs, etc.)
@@ -250,9 +285,15 @@ model QuickReply {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   title          String // staff-facing label only, e.g. "Price List" — never sent to the customer
-  mediaUrl       String
-  mediaType      String // IMAGE or VIDEO
-  captionText    String? // sent as the WhatsApp caption alongside the media; editable per-send before sending
+  // mediaUrl/mediaType are optional as of 2026-08-28 — owner's own request:
+  // "Quick reply te - Only text o without pic add kora jabe" (should be able
+  // to add a Quick Reply with just text, no picture). Both null together
+  // means this is a text-only Quick Reply; captionText then holds the actual
+  // message text sent (same field either way — it was always "the text sent
+  // alongside/instead of the media").
+  mediaUrl       String? // IMAGE or VIDEO file, or null for a text-only Quick Reply
+  mediaType      String? // IMAGE or VIDEO — null exactly when mediaUrl is null
+  captionText    String? // sent as the WhatsApp caption alongside the media (or as the whole message, for a text-only Quick Reply); editable per-send before sending
   createdAt      DateTime     @default(now())
 
   @@index([organizationId])

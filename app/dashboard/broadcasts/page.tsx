@@ -116,7 +116,7 @@ export default async function BroadcastsPage() {
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const [approvedTemplates, clients, broadcasts] = await Promise.all([
+  const [approvedTemplates, clients, broadcasts, clientGroups] = await Promise.all([
     prisma.messageTemplate.findMany({
       where: { organizationId: user.organizationId, status: "APPROVED" },
       orderBy: { createdAt: "desc" },
@@ -133,7 +133,26 @@ export default async function BroadcastsPage() {
         recipients: true,
       },
     }),
+    // Saved reusable recipient segments (2026-08-28) — see actions.ts.
+    prisma.clientGroup.findMany({
+      where: { organizationId: user.organizationId },
+      include: { members: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
+
+  // Every distinct tag currently in use across this org's customers — reused
+  // here as a "category/interest" quick-filter (2026-08-28, owner's own
+  // request: "ami jdi chai catagory hisebe or Interest hisebe boradcast
+  // korbo"). Client.tags already exists (set on the Clients page's Add/Edit
+  // forms) — no new field needed, this just surfaces it here too.
+  const availableTags = Array.from(new Set<string>(clients.flatMap((c) => c.tags))).sort();
+
+  const groupOptions = clientGroups.map((g) => ({
+    id: g.id,
+    name: g.name,
+    clientIds: g.members.map((m) => m.clientId),
+  }));
 
   return (
     <div>
@@ -166,7 +185,7 @@ export default async function BroadcastsPage() {
             </div>
 
             <h4 className="mb-1.5 mt-3 text-xs font-semibold text-gray-900">Recipients</h4>
-            <ClientCheckboxList clients={clients} />
+            <ClientCheckboxList clients={clients} tags={availableTags} groups={groupOptions} />
 
             <button type="submit" className="mt-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-light">
               Send Broadcast

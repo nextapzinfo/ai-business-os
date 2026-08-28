@@ -24,25 +24,34 @@ async function addQuickReply(formData: FormData) {
   const title = (formData.get("title") as string)?.trim();
   const captionText = ((formData.get("captionText") as string) || "").trim();
   const file = formData.get("file") as File | null;
-  if (!title || !file || file.size === 0) return;
+  const hasFile = !!file && file.size > 0;
+  // A Quick Reply now needs a title plus EITHER a file OR some text — added
+  // 2026-08-28, owner's own request: "Quick reply te - Only text o without
+  // pic add kora jabe." A text-only entry with no captionText either would
+  // just be a blank message, so that combination is still rejected.
+  if (!title || (!hasFile && !captionText)) return;
 
-  const isVideo = file.type.startsWith("video/");
-  const cap = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
-  if (file.size > cap) {
-    console.error(`Quick Reply upload too large: ${file.size} bytes (cap ${cap})`);
-    return;
-  }
+  let blobUrl: string | null = null;
+  let mediaType: string | null = null;
+  if (hasFile && file) {
+    const isVideo = file.type.startsWith("video/");
+    const cap = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+    if (file.size > cap) {
+      console.error(`Quick Reply upload too large: ${file.size} bytes (cap ${cap})`);
+      return;
+    }
 
-  let blobUrl: string;
-  try {
-    const blob = await put(`quick-replies/${user.organizationId}-${file.name}`, file, {
-      access: "public",
-      addRandomSuffix: true,
-    });
-    blobUrl = blob.url;
-  } catch (err) {
-    console.error("Quick Reply media upload failed:", err);
-    return;
+    try {
+      const blob = await put(`quick-replies/${user.organizationId}-${file.name}`, file, {
+        access: "public",
+        addRandomSuffix: true,
+      });
+      blobUrl = blob.url;
+      mediaType = isVideo ? "VIDEO" : "IMAGE";
+    } catch (err) {
+      console.error("Quick Reply media upload failed:", err);
+      return;
+    }
   }
 
   const quickReply = await prisma.quickReply.create({
@@ -50,7 +59,7 @@ async function addQuickReply(formData: FormData) {
       organizationId: user.organizationId,
       title,
       mediaUrl: blobUrl,
-      mediaType: isVideo ? "VIDEO" : "IMAGE",
+      mediaType,
       captionText: captionText || null,
     },
   });
@@ -99,10 +108,12 @@ async function deleteQuickReply(formData: FormData) {
   });
   if (!quickReply) return;
 
-  try {
-    await del(quickReply.mediaUrl);
-  } catch (err) {
-    console.error("Quick Reply blob delete failed:", err);
+  if (quickReply.mediaUrl) {
+    try {
+      await del(quickReply.mediaUrl);
+    } catch (err) {
+      console.error("Quick Reply blob delete failed:", err);
+    }
   }
 
   await prisma.quickReply.delete({ where: { id: quickReplyId } });
@@ -130,9 +141,10 @@ export default async function QuickRepliesPage() {
     <div>
       <h1 className="text-xl font-semibold text-gray-900">Quick Replies</h1>
       <p className="mt-1 max-w-2xl text-sm text-gray-500">
-        Save photos/videos you send often (price list, catalog, intro video) with a ready-made caption —
-        pick one from a Conversation to send it in one tap, instead of uploading the same file again every
-        time. These are only used from the Conversations reply box; the AI does not use them.
+        Save photos/videos (or just text) you send often — a price list, catalog, intro video, or a
+        ready-made reply — with an optional caption. Pick one from a Conversation to send it in one tap,
+        instead of typing or uploading the same thing again every time. These are only used from the
+        Conversations reply box; the AI does not use them.
       </p>
 
       <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
@@ -149,17 +161,19 @@ export default async function QuickRepliesPage() {
               type="file"
               name="file"
               accept="image/*,video/*"
-              required
               className="flex-1 basis-48 rounded-lg border border-gray-300 px-3 py-2 text-sm"
             />
           </div>
           <textarea
             name="captionText"
-            placeholder="Ready-made caption sent alongside it (optional, editable per-send)"
+            placeholder="Caption sent alongside the file — or, if you leave the file blank above, this is the whole text-only reply"
             rows={2}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
           />
-          <p className="text-[11px] text-gray-400">Photo max 5MB, video max 16MB (WhatsApp's own limits).</p>
+          <p className="text-[11px] text-gray-400">
+            A file is optional — leave it blank for a text-only Quick Reply (just fill in the text above
+            instead). Photo max 5MB, video max 16MB (WhatsApp's own limits).
+          </p>
           <button
             type="submit"
             className="self-start rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light"
@@ -173,18 +187,22 @@ export default async function QuickRepliesPage() {
       <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {quickReplies.map((q) => (
           <div key={q.id} className="flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white">
-            <div className="flex h-36 items-center justify-center bg-gray-50">
-              {q.mediaType === "VIDEO" ? (
-                <video src={q.mediaUrl} controls className="h-full w-full object-cover" />
-              ) : (
-                <img src={q.mediaUrl} alt={q.title} className="h-full w-full object-cover" />
-              )}
-            </div>
+            {q.mediaUrl ? (
+              <div className="flex h-36 items-center justify-center bg-gray-50">
+                {q.mediaType === "VIDEO" ? (
+                  <video src={q.mediaUrl} controls className="h-full w-full object-cover" />
+                ) : (
+                  <img src={q.mediaUrl} alt={q.title} className="h-full w-full object-cover" />
+                )}
+              </div>
+            ) : (
+              <div className="flex h-20 items-center justify-center bg-gray-50 text-3xl">💬</div>
+            )}
             <div className="flex flex-1 flex-col gap-1 p-3">
               <div className="flex items-start justify-between gap-2">
                 <span className="font-medium text-gray-900">{q.title}</span>
                 <span className="flex-shrink-0 rounded-full bg-accent-light px-2 py-0.5 text-xs font-semibold text-accent">
-                  {q.mediaType === "VIDEO" ? "Video" : "Photo"}
+                  {q.mediaType === "VIDEO" ? "Video" : q.mediaType === "IMAGE" ? "Photo" : "Text"}
                 </span>
               </div>
               <p className="line-clamp-2 text-xs text-gray-500">{q.captionText || "No caption"}</p>
