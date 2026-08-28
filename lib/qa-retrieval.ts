@@ -34,7 +34,24 @@ import { prisma } from "@/lib/prisma";
 // judges relevance itself" (the model already only answers from what's in
 // the reference material — a merely-plausible-but-wrong QA chunk in that
 // mix costs nothing, it just won't get used).
-const QA_DISTANCE_THRESHOLD = 0.55;
+//
+// Third incident (2026-08-28): owner reported "তালের পাল্প এর দাম ?" got the
+// wrong Taler-Bora-flavored "coming soon" answer (separate Knowledge-doc
+// staleness issue, fixed directly in the Knowledge tab same day). While
+// verifying that fix in the Test Sandbox, found a related but DISTINCT
+// failure: short/garbled real-world phrasings of the product name — e.g.
+// "Taler pulp pp" (an actual customer message, 28/8 10:44am) — sometimes
+// don't even clear THIS threshold, so the boost never fires and the model
+// falls back to the plain top-5 general search, which favors generic
+// product-description chunks over the specific pricing Q&A. Same root
+// cause class as the first incident above (embedding distance for a
+// short/noisy real customer message doesn't reliably land close to the
+// trained Q&A's cleaner example phrasings), just below a different
+// threshold. Loosened 0.55 -> 0.68: per the reasoning above, a
+// wrongly-included QA chunk is harmless (the model still judges relevance
+// itself from the full reference material), so widening the net only
+// costs a slightly bigger prompt, never a wrong answer on its own.
+const QA_DISTANCE_THRESHOLD = 0.68;
 
 // Second incident (2026-08-24, same day): even after the fix above shipped,
 // "May I know about ur misti" still failed — but this time an exact,
