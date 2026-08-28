@@ -3,9 +3,8 @@ import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { readSheetRange } from "@/lib/googleSheets";
 import { revalidatePath } from "next/cache";
-import { formatDate } from "@/lib/formatDate";
-import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
 import AddClientForm from "@/components/AddClientForm";
+import ClientRow from "@/components/ClientRow";
 
 // Vercel: importing many customer rows can take a moment.
 export const maxDuration = 60;
@@ -190,16 +189,6 @@ async function deleteClient(formData: FormData) {
   revalidatePath("/dashboard/clients");
 }
 
-function initialOf(name: string) {
-  return (name?.trim()?.[0] ?? "?").toUpperCase();
-}
-
-const AVATAR_COLORS = ["bg-emerald-500", "bg-sky-500", "bg-amber-500", "bg-violet-500", "bg-rose-500"];
-function avatarColor(seed: string) {
-  const idx = seed.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % AVATAR_COLORS.length;
-  return AVATAR_COLORS[idx];
-}
-
 // Human-readable label + badge color for Client.source. Falls back to
 // treating any unrecognized value (or old rows from before this field
 // existed, which default to "WHATSAPP_DIRECT" at the DB level) sensibly.
@@ -296,123 +285,54 @@ export default async function ClientsPage({
         </p>
       </div>
 
+      {/* Every field below is directly editable in place (2026-08-28, owner's
+          own request — see ClientRow.tsx for the full reasoning), so this
+          table is naturally wider than a phone screen. `overflow-hidden`
+          above (kept for the rounded corners) was clipping the table
+          entirely on mobile with no way to reach it — owner's own report:
+          "Client : Mobile e sob dakha jachhe na - Source r pore ar asche
+          na" (on mobile, everything after Source isn't showing). Fix: the
+          rounding/border stays on this outer div, and a nested
+          `overflow-x-auto` div lets the table itself scroll horizontally
+          instead of being cut off. */}
       <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-gray-100 text-xs text-gray-500">
-              <th className="px-4 py-3 font-medium">Name</th>
-              <th className="px-4 py-3 font-medium">Phone</th>
-              <th className="px-4 py-3 font-medium">Source</th>
-              <th className="px-4 py-3 font-medium">Address</th>
-              <th className="px-4 py-3 font-medium">Pin Code</th>
-              <th className="px-4 py-3 font-medium">Tags</th>
-              <th className="px-4 py-3 font-medium">Interested In</th>
-              <th className="px-4 py-3 font-medium">Added</th>
-              <th className="px-4 py-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {clients.map((c) => (
-              <tr key={c.id} className="border-b border-gray-50 align-top last:border-0">
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white ${avatarColor(c.name)}`}>
-                      {initialOf(c.name)}
-                    </div>
-                    <span className="font-medium text-gray-900">{c.name}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-gray-600">{c.phone}</td>
-                <td className="px-4 py-3">
-                  <span
-                    title={c.sourceDetail ?? ""}
-                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${formatSource(c.source).className}`}
-                  >
-                    {formatSource(c.source).label}
-                  </span>
-                </td>
-                <td className="max-w-[180px] truncate px-4 py-3 text-gray-600" title={c.address ?? ""}>
-                  {c.address || "—"}
-                </td>
-                <td className="px-4 py-3 text-gray-600">{c.pinCode || "—"}</td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-1">
-                    {c.tags.length > 0
-                      ? c.tags.map((t) => (
-                          <span key={t} className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
-                            {t}
-                          </span>
-                        ))
-                      : <span className="text-gray-400">—</span>}
-                  </div>
-                </td>
-                <td className="max-w-[200px] px-4 py-3">
-                  <div className="flex flex-wrap gap-1">
-                    {c.interestedIn && (
-                      <span
-                        title="Entered manually when the client was added"
-                        className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700"
-                      >
-                        {c.interestedIn}
-                      </span>
-                    )}
-                    {c.productInterests.map((pi) => (
-                      <span
-                        key={pi.id}
-                        title={pi.note ?? ""}
-                        className="rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-700"
-                      >
-                        {pi.product.name}
-                      </span>
-                    ))}
-                    {!c.interestedIn && c.productInterests.length === 0 && <span className="text-gray-400">—</span>}
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-gray-500">{formatDate(c.createdAt)}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-1.5">
-                    <details className="relative">
-                      <summary className="cursor-pointer select-none rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">
-                        Edit
-                      </summary>
-                      <form
-                        action={updateClient}
-                        className="absolute right-0 z-10 mt-1 flex w-64 flex-col gap-1.5 rounded-lg border border-gray-200 bg-white p-3 shadow-lg"
-                      >
-                        <input type="hidden" name="clientId" value={c.id} />
-                        <input name="name" defaultValue={c.name} required placeholder="Name" className="rounded border border-gray-300 px-2 py-1 text-xs" />
-                        <input name="phone" defaultValue={c.phone} required placeholder="Phone" className="rounded border border-gray-300 px-2 py-1 text-xs" />
-                        <input name="email" defaultValue={c.email ?? ""} placeholder="Email" className="rounded border border-gray-300 px-2 py-1 text-xs" />
-                        <input name="address" defaultValue={c.address ?? ""} placeholder="Address" className="rounded border border-gray-300 px-2 py-1 text-xs" />
-                        <input name="pinCode" defaultValue={c.pinCode ?? ""} placeholder="Pin Code" className="rounded border border-gray-300 px-2 py-1 text-xs" />
-                        <input name="interestedIn" defaultValue={c.interestedIn ?? ""} placeholder="Interested In" className="rounded border border-gray-300 px-2 py-1 text-xs" />
-                        <input name="tags" defaultValue={c.tags.join(", ")} placeholder="Tags, comma separated" className="rounded border border-gray-300 px-2 py-1 text-xs" />
-                        <button type="submit" className="mt-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-light">
-                          Save Changes
-                        </button>
-                      </form>
-                    </details>
-                    <form action={deleteClient}>
-                      <input type="hidden" name="clientId" value={c.id} />
-                      <ConfirmSubmitButton
-                        label="Delete"
-                        confirmText={`Delete "${c.name}"? This can't be undone. (Clients with conversation/reminder history can't be deleted.)`}
-                        className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
-                      />
-                    </form>
-                  </div>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1000px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 text-xs text-gray-500">
+                <th className="px-4 py-3 font-medium">Name</th>
+                <th className="px-4 py-3 font-medium">Phone</th>
+                <th className="px-4 py-3 font-medium">Source</th>
+                <th className="px-4 py-3 font-medium">Email</th>
+                <th className="px-4 py-3 font-medium">Address</th>
+                <th className="px-4 py-3 font-medium">Pin Code</th>
+                <th className="px-4 py-3 font-medium">Tags</th>
+                <th className="px-4 py-3 font-medium">Interested In</th>
+                <th className="px-4 py-3 font-medium">Added</th>
+                <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
-            ))}
-            {clients.length === 0 && (
-              <tr>
-                <td className="px-4 py-6 text-gray-500" colSpan={8}>
-                  {q ? "No clients match your search." : "No clients yet — add your first one above."}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {clients.map((c) => (
+                <ClientRow
+                  key={c.id}
+                  client={c}
+                  sourceLabel={formatSource(c.source)}
+                  sourceDetail={c.sourceDetail}
+                  updateClient={updateClient}
+                  deleteClient={deleteClient}
+                />
+              ))}
+              {clients.length === 0 && (
+                <tr>
+                  <td className="px-4 py-6 text-gray-500" colSpan={10}>
+                    {q ? "No clients match your search." : "No clients yet — add your first one above."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

@@ -55,12 +55,22 @@ export default function ConversationReplyBox({
   const textRef = useRef<HTMLTextAreaElement>(null);
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const quickReplyMenuRef = useRef<HTMLDivElement>(null);
+  const slashMenuRef = useRef<HTMLDivElement>(null);
   const [filePreview, setFilePreview] = useState<{ name: string; kind: "IMAGE" | "VIDEO" } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [selectedQuickReply, setSelectedQuickReply] = useState<QuickReplyOption | null>(null);
   const [sending, setSending] = useState(false);
   const [hasText, setHasText] = useState(false); // tracked separately from the uncontrolled textarea so the send button's enabled/disabled look can react live without controlling (and risking cursor jumps in) the field itself
+  // WhatsApp-style "/" slash-command Quick Reply lookup — added 2026-08-28,
+  // owner's own request: "Quick reply add korarjonno Wts app r moto - "/"
+  // diye Lebel r 1st letter type korlei oi message gulo cholo asbe - like
+  // "/V" dile V die ja ja quick reply ami add kore rekhechi seta dakhabe, r
+  // ota send kora jabe" (typing "/" then a letter should show matching
+  // Quick Replies by their label, pickable and sendable). null = the
+  // message doesn't currently start with "/"; "" = just "/" was typed (show
+  // every Quick Reply); anything else = the text typed after the "/".
+  const [slashQuery, setSlashQuery] = useState<string | null>(null);
 
   // Close whichever small popup (attach-type menu, Quick Reply list) is open
   // when the owner taps anywhere else — same pattern SendTemplateButton
@@ -69,6 +79,7 @@ export default function ConversationReplyBox({
     function handleClickOutside(e: MouseEvent) {
       if (attachMenuRef.current && !attachMenuRef.current.contains(e.target as Node)) setAttachOpen(false);
       if (quickReplyMenuRef.current && !quickReplyMenuRef.current.contains(e.target as Node)) setPickerOpen(false);
+      if (slashMenuRef.current && !slashMenuRef.current.contains(e.target as Node)) setSlashQuery(null);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -115,6 +126,32 @@ export default function ConversationReplyBox({
     setSelectedQuickReply(null);
   }
 
+  // Selecting a Quick Reply from the "/" slash menu always overwrites
+  // whatever "/query" text is currently typed with the Quick Reply's own
+  // caption (unlike the Zap-icon pickQuickReply above, which only fills the
+  // caption in if the box was already empty) — the "/query" text was never
+  // meant to be sent as-is, it was just how the customer typed to search.
+  function pickQuickReplyFromSlash(qr: QuickReplyOption) {
+    clearFile();
+    setSelectedQuickReply(qr);
+    setSlashQuery(null);
+    if (textRef.current) {
+      textRef.current.value = qr.captionText ?? "";
+      setHasText(!!qr.captionText?.trim());
+    }
+  }
+
+  function handleTextChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const val = e.target.value;
+    setHasText(val.trim().length > 0);
+    setSlashQuery(val.startsWith("/") ? val.slice(1) : null);
+  }
+
+  const slashMatches =
+    slashQuery !== null
+      ? quickReplies.filter((qr) => qr.title.toLowerCase().startsWith(slashQuery.toLowerCase()))
+      : [];
+
   const hasContent = hasText || !!filePreview || !!selectedQuickReply;
 
   return (
@@ -154,6 +191,7 @@ export default function ConversationReplyBox({
             clearFile();
             clearQuickReply();
             setHasText(false);
+            setSlashQuery(null);
           }
         }}
         className="flex items-end gap-2"
@@ -174,14 +212,45 @@ export default function ConversationReplyBox({
           >
             <Smile size={20} />
           </button>
-          <textarea
-            ref={textRef}
-            name="text"
-            placeholder="Message"
-            rows={1}
-            onChange={(e) => setHasText(e.target.value.trim().length > 0)}
-            className="max-h-24 flex-1 resize-none bg-transparent py-1 text-[14.5px] leading-snug text-gray-900 outline-none placeholder:text-gray-400"
-          />
+          <div ref={slashMenuRef} className="relative min-w-0 flex-1">
+            <textarea
+              ref={textRef}
+              name="text"
+              placeholder='Message, or type "/" for a Quick Reply'
+              rows={1}
+              onChange={handleTextChange}
+              className="max-h-24 w-full resize-none bg-transparent py-1 text-[14.5px] leading-snug text-gray-900 outline-none placeholder:text-gray-400"
+            />
+            {/* "/" slash-command Quick Reply lookup, WhatsApp-style — added
+                2026-08-28, see the slashQuery state comment above. */}
+            {slashQuery !== null && quickReplies.length > 0 && (
+              <div className="absolute bottom-full left-0 z-10 mb-2 max-h-56 w-72 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
+                {slashMatches.length > 0 ? (
+                  slashMatches.map((qr) => (
+                    <button
+                      key={qr.id}
+                      type="button"
+                      onClick={() => pickQuickReplyFromSlash(qr)}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-gray-50"
+                    >
+                      <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded bg-gray-100">
+                        {qr.mediaType === "VIDEO" ? (
+                          <span className="text-sm">🎬</span>
+                        ) : qr.mediaUrl ? (
+                          <img src={qr.mediaUrl} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="text-sm">💬</span>
+                        )}
+                      </span>
+                      <span className="truncate font-medium text-gray-800">/{qr.title}</span>
+                    </button>
+                  ))
+                ) : (
+                  <p className="px-2 py-1.5 text-xs text-gray-400">No Quick Reply starts with "{slashQuery}"</p>
+                )}
+              </div>
+            )}
+          </div>
 
           {quickReplies.length > 0 && (
             <div ref={quickReplyMenuRef} className="relative flex-shrink-0">

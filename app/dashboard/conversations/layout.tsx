@@ -40,6 +40,7 @@ export default async function ConversationsLayout({ children }: { children: Reac
   const items = sorted.map((c) => ({
     id: c.id,
     clientName: c.client.name,
+    clientPhone: c.client.phone, // added 2026-08-28 — see the search bar in ConversationList.tsx
     channel: c.channel,
     status: c.status,
     aiPaused: c.aiPaused,

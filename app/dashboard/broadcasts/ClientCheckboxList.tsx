@@ -4,7 +4,14 @@ import { useState, useTransition } from "react";
 import { Tag, Users, X } from "lucide-react";
 import { saveClientGroup, deleteClientGroup } from "./actions";
 
-type ClientOption = { id: string; name: string; phone: string; tags: string[] };
+type ClientOption = {
+  id: string;
+  name: string;
+  phone: string;
+  tags: string[];
+  pinCode: string | null;
+  interestedIn: string | null;
+};
 type GroupOption = { id: string; name: string; clientIds: string[] };
 
 // Recipient picker for the Broadcasts form. Beyond the plain checkbox list
@@ -39,11 +46,39 @@ export default function ClientCheckboxList({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [groupName, setGroupName] = useState("");
   const [pending, startTransition] = useTransition();
+  // Free-text search across the customer list itself — added 2026-08-28,
+  // owner's own request: "Broadcast e PIN code die o search kora jabe" and
+  // "Broadcast e INTEREST die o search kora jabe. (ja ja interest ami debo
+  // - segulo die o select kora jabe)" (should be able to search by PIN code
+  // too, and by whichever free-text "Interested In" note I've set on a
+  // customer too). Deliberately separate from the tag chips above — Tags
+  // are a fixed, clickable set of category/interest labels, while this is a
+  // plain search box over name/phone/PIN/interestedIn for finding
+  // customers the chips/groups don't already cover. Narrows which
+  // customers are LISTED below; the selection itself (and Select all) only
+  // ever applies to whatever's currently visible in that narrowed list.
+  const [search, setSearch] = useState("");
 
-  const allSelected = clients.length > 0 && selected.size === clients.length;
+  const filteredClients = (() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return clients;
+    return clients.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.phone.includes(q) ||
+        (c.pinCode ?? "").toLowerCase().includes(q) ||
+        (c.interestedIn ?? "").toLowerCase().includes(q)
+    );
+  })();
+
+  const allSelected = filteredClients.length > 0 && filteredClients.every((c) => selected.has(c.id));
 
   function toggleAll(checked: boolean) {
-    setSelected(checked ? new Set(clients.map((c) => c.id)) : new Set());
+    setSelected((prev) => {
+      const next = new Set(prev);
+      filteredClients.forEach((c) => (checked ? next.add(c.id) : next.delete(c.id)));
+      return next;
+    });
   }
 
   function toggleOne(id: string, checked: boolean) {
@@ -146,12 +181,20 @@ export default function ClientCheckboxList({
         </div>
       )}
 
+      <input
+        type="text"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search by name, phone, PIN code, or interest..."
+        className="mb-1.5 w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs"
+      />
       <label className="mb-1.5 flex items-center gap-2 text-xs text-gray-700">
         <input type="checkbox" checked={allSelected} onChange={(e) => toggleAll(e.target.checked)} />
-        Select all ({clients.length} customers)
+        Select all ({filteredClients.length} customer{filteredClients.length === 1 ? "" : "s"}
+        {search.trim() ? ` matching "${search.trim()}"` : ""})
       </label>
       <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1.5">
-        {clients.map((c) => (
+        {filteredClients.map((c) => (
           <label key={c.id} className="flex items-center gap-2 rounded px-1.5 py-1 text-xs text-gray-700 hover:bg-gray-50">
             <input
               type="checkbox"
@@ -160,11 +203,23 @@ export default function ClientCheckboxList({
               checked={selected.has(c.id)}
               onChange={(e) => toggleOne(c.id, e.target.checked)}
             />
-            {c.name} ({c.phone})
+            {c.name} ({c.phone}){c.pinCode ? ` · ${c.pinCode}` : ""}
           </label>
         ))}
-        {clients.length === 0 && <p className="p-1.5 text-xs text-gray-500">No customers yet.</p>}
+        {filteredClients.length === 0 && (
+          <p className="p-1.5 text-xs text-gray-500">
+            {search.trim() ? "No customers match your search." : "No customers yet."}
+          </p>
+        )}
       </div>
+      {/* Hidden inputs keep every SELECTED client's id in the submitted form,
+          even ones filtered out of view above — search only narrows what's
+          listed, never what's already checked. */}
+      {Array.from(selected)
+        .filter((id) => !filteredClients.some((c) => c.id === id))
+        .map((id) => (
+          <input key={id} type="hidden" name="clientIds" value={id} />
+        ))}
 
       {selected.size > 0 && (
         <div className="mt-1.5 flex items-center gap-1.5">

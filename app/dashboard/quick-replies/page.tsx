@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { put, del } from "@vercel/blob";
 import { formatDate } from "@/lib/formatDate";
 import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
+import AddQuickReplyForm from "@/components/AddQuickReplyForm";
 
 // A small library of reusable photo/video attachments (with an optional
 // ready-made caption) staff can send from Conversations with one click,
@@ -149,38 +150,7 @@ export default async function QuickRepliesPage() {
 
       <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-gray-900">Add a Quick Reply</h3>
-        <form action={addQuickReply} className="mt-3 flex flex-col gap-2">
-          <div className="flex flex-wrap gap-2">
-            <input
-              name="title"
-              placeholder="Label (e.g. Price List) — only staff see this"
-              required
-              className="flex-1 basis-48 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            />
-            <input
-              type="file"
-              name="file"
-              accept="image/*,video/*"
-              className="flex-1 basis-48 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            />
-          </div>
-          <textarea
-            name="captionText"
-            placeholder="Caption sent alongside the file — or, if you leave the file blank above, this is the whole text-only reply"
-            rows={2}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-          />
-          <p className="text-[11px] text-gray-400">
-            A file is optional — leave it blank for a text-only Quick Reply (just fill in the text above
-            instead). Photo max 5MB, video max 16MB (WhatsApp's own limits).
-          </p>
-          <button
-            type="submit"
-            className="self-start rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light"
-          >
-            Add Quick Reply
-          </button>
-        </form>
+        <AddQuickReplyForm action={addQuickReply} />
       </div>
 
       <h3 className="mt-6 text-sm font-semibold text-gray-900">Saved Quick Replies ({quickReplies.length})</h3>
