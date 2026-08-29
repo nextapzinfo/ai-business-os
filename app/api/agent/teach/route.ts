@@ -13,6 +13,7 @@ import {
 import { processKnowledgeContent } from "@/app/dashboard/agent/actions";
 import { logAudit } from "@/lib/audit";
 import { logAiUsage } from "@/lib/billing";
+import { fetchBanglarDoiFullCatalog, isBanglarDoiIntegrationEnabled } from "@/lib/banglardoi";
 
 // Teach AI chat (Training page) — lets the owner update products/knowledge by
 // chatting naturally, same idea as Meta's own built-in Business Agent chat.
@@ -57,6 +58,29 @@ export async function POST(req: NextRequest) {
         },
       });
       if (!product) {
+        // Added 2026-08-29 — root cause of "Taal Bora" being unfixable from
+        // Teach AI even though it's a real, launched, priced product: this
+        // lookup only ever checked the local Product table, but a RETAIL org
+        // with the live banglardoi.com integration on sources its REAL
+        // catalog straight from banglardoi.com instead (see lib/banglardoi.ts
+        // / app/api/whatsapp/webhook/route.ts) — most real products, this one
+        // included, simply have no local Product row to find. Before giving
+        // up, check the live catalog too so the owner isn't told a real,
+        // active product "doesn't exist."
+        const organization = await prisma.organization.findUnique({ where: { id: organizationId } });
+        if (organization?.vertical === "RETAIL" && isBanglarDoiIntegrationEnabled()) {
+          const liveCatalog = await fetchBanglarDoiFullCatalog();
+          const liveMatch = liveCatalog?.products.find((p) =>
+            p.name.toLowerCase().includes(productName.toLowerCase())
+          );
+          if (liveMatch) {
+            const priceText =
+              liveMatch.variants.length > 0
+                ? liveMatch.variants.map((v) => `${v.label}: ${v.price}`).join(", ")
+                : liveMatch.pricePerPiece;
+            return `"${liveMatch.name}" is a REAL, currently live product on banglardoi.com (not in the local Products list here) — current price: ${priceText}. Its price/description live on banglardoi.com's own Admin → Products page and can't be edited from this chat. Tell the owner this plainly, quote them the live price above so they know it's correct, and if the issue is that the AI itself was giving a wrong/stale answer about this product (e.g. an old "coming soon" note), offer to fix that by saving a corrected Trained Q&A with add_qa_pair instead — that's what actually controls what the AI says, separately from the real catalog price.`;
+          }
+        }
         return `No product found matching "${productName}" — tell the owner honestly you couldn't find it, and ask them to check the exact name on the Products page.`;
       }
 
