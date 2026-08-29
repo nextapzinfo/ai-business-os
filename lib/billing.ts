@@ -1,13 +1,18 @@
 import { prisma } from "@/lib/prisma";
 
-// gpt-4o-mini published per-token pricing (USD) — verified via web search,
-// July 2026. If OpenAI changes this, update here; historical AiUsageLog rows
-// keep whatever cost was computed at the time, so past days stay accurate.
-export const GPT4O_MINI_INPUT_RATE_USD = 0.15 / 1_000_000;
-export const GPT4O_MINI_OUTPUT_RATE_USD = 0.6 / 1_000_000;
+// GPT-5.6 Luna published per-token pricing (USD) — verified via web search,
+// Aug 2026 (post the Jul 30, 2026 price cut). Switched from gpt-4o-mini to
+// Luna 2026-08-29 (owner's own request, see lib/llm.ts's OPENAI_MODEL
+// comment) — if the model changes again (e.g. mixing in Terra for complex
+// replies later), update these rates in the SAME commit, or this function
+// will silently keep billing every call at Luna's rate even for a different,
+// more expensive model. Historical AiUsageLog rows keep whatever cost was
+// computed at the time, so past days stay accurate regardless.
+export const LUNA_INPUT_RATE_USD = 0.2 / 1_000_000;
+export const LUNA_OUTPUT_RATE_USD = 1.2 / 1_000_000;
 
 export function calcOpenAiCostUsd(promptTokens: number, completionTokens: number): number {
-  return promptTokens * GPT4O_MINI_INPUT_RATE_USD + completionTokens * GPT4O_MINI_OUTPUT_RATE_USD;
+  return promptTokens * LUNA_INPUT_RATE_USD + completionTokens * LUNA_OUTPUT_RATE_USD;
 }
 
 // Logs the REAL cost of one OpenAI call, computed from the actual token counts

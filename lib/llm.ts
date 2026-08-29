@@ -1,5 +1,14 @@
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 
+// Switched from gpt-4o-mini to GPT-5.6 Luna (2026-08-29, owner's own request —
+// "age Luna tai koro, kichu use kore dekhi kamon kaj korche, dorkar hole mix
+// korbo" — try Luna alone first, mix in Terra for complex cases later only if
+// needed). Luna is OpenAI's smallest GPT-5.6 tier, priced close to
+// gpt-4o-mini after the Jul 30, 2026 price cut (~1.5x, see lib/billing.ts).
+// If this ever changes again, update lib/billing.ts's rate constants in the
+// SAME commit, or the Billing page will silently report the wrong cost.
+const OPENAI_MODEL = "gpt-5.6-luna";
+
 type SourceChunk = { title: string; content: string };
 
 // Prior turns of the SAME conversation, oldest first — without this, every
@@ -143,7 +152,7 @@ const DEFAULT_TERMINOLOGY: { from: string; to: string }[] = [
 // Prompt instructions ("never say X, always say Y") are a strong hint to the
 // model, not a guarantee — with several swap rules plus tone/language/custom
 // instructions all competing for the model's attention, an occasional miss is
-// normal, especially on a smaller model like gpt-4o-mini. This runs AFTER the
+// normal, especially on a smaller model like Luna. This runs AFTER the
 // model replies, doing a real find-and-replace — first the platform-wide
 // DEFAULT_TERMINOLOGY above, then this business's own Brand Language pairs —
 // so a swap like "পণ্য" → "মিষ্টি" is 100% guaranteed in what the customer
@@ -844,7 +853,7 @@ export async function askAI(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: OPENAI_MODEL,
       max_tokens: 1024,
       messages: [
         { role: "system", content: systemPrompt },
@@ -1311,7 +1320,7 @@ async function callChat(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: OPENAI_MODEL,
       max_tokens: 1024,
       messages,
       ...(tools.length > 0 ? { tools, tool_choice: "auto" } : {}),
@@ -1450,7 +1459,7 @@ Respond ONLY with a JSON object with exactly these four string fields (empty str
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: OPENAI_MODEL,
       max_tokens: 600,
       response_format: { type: "json_object" },
       messages: [
