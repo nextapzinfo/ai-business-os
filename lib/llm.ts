@@ -7,6 +7,19 @@ const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 // gpt-4o-mini after the Jul 30, 2026 price cut (~1.5x, see lib/billing.ts).
 // If this ever changes again, update lib/billing.ts's rate constants in the
 // SAME commit, or the Billing page will silently report the wrong cost.
+//
+// INCIDENT (2026-08-29, live within hours of this deploy): Luna rejects the
+// legacy `max_tokens` chat-completion parameter — "Unsupported parameter:
+// 'max_tokens' is not supported with this model. Use 'max_completion_tokens'
+// instead." (confirmed directly from Vercel's own logs on
+// /api/whatsapp/webhook, HTTP 400 from OpenAI). This silently broke EVERY
+// reply — the WhatsApp webhook and the Teach AI chat both swallow the error
+// and just show/send nothing ("Sorry, something went wrong" / no reply at
+// all). Fixed by switching all 3 chat-completion call sites in this file
+// from `max_tokens` to `max_completion_tokens`, which OpenAI's Chat
+// Completions API accepts on BOTH older models (gpt-4o-mini included) and
+// newer ones (Luna/Terra/Sol, o-series) — so this is now safe across any
+// future model swap too, not just a one-off patch for Luna.
 const OPENAI_MODEL = "gpt-5.6-luna";
 
 type SourceChunk = { title: string; content: string };
@@ -854,7 +867,7 @@ export async function askAI(
     },
     body: JSON.stringify({
       model: OPENAI_MODEL,
-      max_tokens: 1024,
+      max_completion_tokens: 1024,
       messages: [
         { role: "system", content: systemPrompt },
         ...history,
@@ -1321,7 +1334,7 @@ async function callChat(
     },
     body: JSON.stringify({
       model: OPENAI_MODEL,
-      max_tokens: 1024,
+      max_completion_tokens: 1024,
       messages,
       ...(tools.length > 0 ? { tools, tool_choice: "auto" } : {}),
     }),
@@ -1460,7 +1473,7 @@ Respond ONLY with a JSON object with exactly these four string fields (empty str
     },
     body: JSON.stringify({
       model: OPENAI_MODEL,
-      max_tokens: 600,
+      max_completion_tokens: 600,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
