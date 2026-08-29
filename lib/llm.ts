@@ -371,7 +371,16 @@ export type CatalogProduct = {
   price?: string | null;
   description?: string | null;
   category?: string | null;
-  variants?: { label: string; price: string; minOrderQty: number }[];
+  // compareAtPrice — a REAL, admin-set "was" price on this exact pack (e.g.
+  // banglardoi.com's own "400 gm x 3: ₹960, Was ₹1050" bundle-pack pricing),
+  // not something ever computed by this app. Added 2026-08-29 after a real
+  // incident: a customer asked about a bulk discount on Special Taal Pulp,
+  // and the AI said it would "check with the team" even though the exact
+  // pack they were asking about (3x) already had a real, live discount on
+  // the website — the AI simply had no way to know, since this field wasn't
+  // being passed through. See buildSystemPrompt's catalogNote below for how
+  // it's surfaced once present.
+  variants?: { label: string; price: string; minOrderQty: number; compareAtPrice?: string | null }[];
   // "What's inside this pack" — only present for a Combo/Gift Box product
   // (banglardoi-app's ProductBundleItem, added 2026-08-20). Only ever set
   // when the live banglardoi.com catalog was used (a local-DB-only
@@ -728,7 +737,12 @@ function buildSystemPrompt(
             // it's exact rather than inferred.
             if (p.variants && p.variants.length > 0) {
               const variantText = p.variants
-                .map((v) => `${v.label}: ${v.price}${v.minOrderQty > 1 ? ` (min order ${v.minOrderQty})` : ""}`)
+                .map(
+                  (v) =>
+                    `${v.label}: ${v.price}${
+                      v.compareAtPrice ? ` (a REAL existing discount off ${v.compareAtPrice} — mention this proactively if the customer asks about buying more or a discount, don't say you'll check with the team)` : ""
+                    }${v.minOrderQty > 1 ? ` (min order ${v.minOrderQty})` : ""}`
+                )
                 .join(", ");
               return `${p.name} [${variantText}]`;
             }

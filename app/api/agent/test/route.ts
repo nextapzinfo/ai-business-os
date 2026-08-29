@@ -19,6 +19,7 @@ import {
 } from "@/lib/llm";
 import { logAiUsage } from "@/lib/billing";
 import { fetchBoostedQAChunk } from "@/lib/qa-retrieval";
+import { fetchBanglarDoiFullCatalog, isBanglarDoiIntegrationEnabled } from "@/lib/banglardoi";
 
 // Sandbox tool execution never touches the real database — it just describes
 // what would happen, so staff can preview the skill without creating fake
@@ -101,10 +102,48 @@ export async function POST(req: NextRequest) {
     // can't actually preview minimum-order enforcement or hallucination
     // stripping, since both depend on this being populated (see webhook
     // route.ts for the full explanation of why this matters).
-    const catalogProducts: CatalogProduct[] = await prisma.product.findMany({
+    const localCatalogProducts: CatalogProduct[] = await prisma.product.findMany({
       where: { organizationId },
       select: { name: true, price: true, description: true },
     });
+
+    // Prefer banglardoi.com's own live, structured catalog here too — same
+    // logic as app/api/whatsapp/webhook/route.ts. Added 2026-08-29: this
+    // sandbox was ALWAYS using only the bare local Product table above
+    // (name/price/description, no variants, no compareAtPrice, no bundle
+    // contents), even for RETAIL orgs with the live integration on — so it
+    // could never actually preview real per-pack pricing, bulk-discount
+    // "was" prices, or Combo/Gift contents the way a real WhatsApp customer
+    // sees them. That's exactly why testing "besi nile discount hobe?" here
+    // gave a "let me check with the team" answer instead of surfacing the
+    // real, already-discounted 3-pack: the sandbox had no variant data at
+    // all to work with, live or otherwise. Kept as a getServerSession-scoped
+    // read (no caller-supplied organizationId) rather than trusting the
+    // request body, matching this route's existing auth pattern.
+    let catalogProducts: CatalogProduct[] = localCatalogProducts;
+    const organization = await prisma.organization.findUnique({ where: { id: organizationId } });
+    if (organization?.vertical === "RETAIL" && isBanglarDoiIntegrationEnabled()) {
+      const liveCatalog = await fetchBanglarDoiFullCatalog();
+      if (liveCatalog && liveCatalog.products.length > 0) {
+        catalogProducts = liveCatalog.products.map((p) => ({
+          name: p.name,
+          price: p.variants.length > 0 ? p.variants.map((v) => `${v.label}: ${v.price}`).join(", ") : p.pricePerPiece,
+          description: p.description,
+          category: p.category,
+          variants: p.variants.map((v) => ({
+            label: v.label,
+            price: v.price,
+            minOrderQty: v.minOrderQty,
+            compareAtPrice: v.compareAtPrice,
+          })),
+          bundleItems: p.bundleItems.map((b) => ({
+            quantity: b.quantity,
+            name: b.name,
+            variantLabel: b.variantLabel,
+          })),
+        }));
+      }
+    }
 
     const tools: ToolDefinition[] = [REQUEST_HANDOFF_TOOL, SEND_PRODUCT_PHOTO_TOOL];
     if (body.skillSaveAddress) tools.push(SAVE_ADDRESS_TOOL);

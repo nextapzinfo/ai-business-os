@@ -1408,7 +1408,15 @@ export async function POST(req: NextRequest) {
               : p.pricePerPiece,
           description: p.description,
           category: p.category,
-          variants: p.variants.map((v) => ({ label: v.label, price: v.price, minOrderQty: v.minOrderQty })),
+          variants: p.variants.map((v) => ({
+            label: v.label,
+            price: v.price,
+            minOrderQty: v.minOrderQty,
+            // Real "was" price for this exact pack (e.g. a 3-pack bundled
+            // below 3x the single price) — see CatalogProduct's own comment
+            // in lib/llm.ts for the 2026-08-29 incident this fixes.
+            compareAtPrice: v.compareAtPrice,
+          })),
           bundleItems: p.bundleItems.map((b) => ({
             quantity: b.quantity,
             name: b.name,
