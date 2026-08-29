@@ -22,6 +22,19 @@ const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 // future model swap too, not just a one-off patch for Luna.
 const OPENAI_MODEL = "gpt-5.6-luna";
 
+// SAME 2026-08-29 incident, second half — fixing max_tokens above unblocked
+// plain replies but NOT tool-calling ones (save address, record order, send
+// product photo, human handoff, Teach AI's Test Sandbox — anything that
+// passes `tools`), which kept failing with a DIFFERENT 400: "Function tools
+// with reasoning_effort are not supported for gpt-5.6-luna in
+// /v1/chat/completions. To use function tools, use /v1/responses or set
+// reasoning_effort to 'none'." Luna is a reasoning-capable model, so OpenAI
+// defaults it to some non-"none" reasoning effort unless told otherwise, and
+// that default is incompatible with function tools on this endpoint. Fix:
+// explicitly pass "none" on every call site (not just the tool-calling one)
+// — Luna is meant to answer fast/cheap here, not spend tokens reasoning.
+const OPENAI_REASONING_EFFORT = "none";
+
 type SourceChunk = { title: string; content: string };
 
 // Prior turns of the SAME conversation, oldest first — without this, every
@@ -868,6 +881,9 @@ export async function askAI(
     body: JSON.stringify({
       model: OPENAI_MODEL,
       max_completion_tokens: 1024,
+      // See OPENAI_REASONING_EFFORT's own comment above — required on every
+      // Luna/tool-capable call site, harmless here too.
+      reasoning_effort: OPENAI_REASONING_EFFORT,
       messages: [
         { role: "system", content: systemPrompt },
         ...history,
@@ -1335,6 +1351,10 @@ async function callChat(
     body: JSON.stringify({
       model: OPENAI_MODEL,
       max_completion_tokens: 1024,
+      // See OPENAI_REASONING_EFFORT's own comment above — this call site is
+      // exactly the one the 2026-08-29 "reasoning_effort" incident hit,
+      // since it's the only one that passes tools.
+      reasoning_effort: OPENAI_REASONING_EFFORT,
       messages,
       ...(tools.length > 0 ? { tools, tool_choice: "auto" } : {}),
     }),
@@ -1474,6 +1494,8 @@ Respond ONLY with a JSON object with exactly these four string fields (empty str
     body: JSON.stringify({
       model: OPENAI_MODEL,
       max_completion_tokens: 600,
+      // See OPENAI_REASONING_EFFORT's own comment above.
+      reasoning_effort: OPENAI_REASONING_EFFORT,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
