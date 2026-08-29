@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { usePathname } from "next/navigation";
 import ConversationList, { type ConversationListItem } from "@/components/ConversationList";
 
@@ -42,7 +43,16 @@ export default function ConversationsSplitView({
         <div className="flex-shrink-0 border-b border-gray-100 px-3 py-2.5">
           <h2 className="text-sm font-semibold text-gray-900">Conversations</h2>
         </div>
-        <ConversationList conversations={conversations} />
+        {/* Suspense boundary required by Next.js around any component
+           calling useSearchParams() (ConversationList reads a `?phone=`
+           param — see the Clients-page "no conversation yet" link, request
+           3 — to prefill the search box) — without it `next build` fails
+           with "useSearchParams() should be wrapped in a suspense
+           boundary". fallback={null} is fine here: the read is synchronous
+           once mounted, so this never actually shows. */}
+        <Suspense fallback={null}>
+          <ConversationList conversations={conversations} />
+        </Suspense>
       </div>
 
       <div

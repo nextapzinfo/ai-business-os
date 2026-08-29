@@ -46,11 +46,18 @@ export type BanglarDoiDeliveryQuote = {
   meetsMinOrder: boolean;
   freeDeliveryThresholdInPaise: number | null;
   feeTiers: BanglarDoiDeliveryFeeTier[];
-  // Real estimate from banglardoi.com — the zone's own configured value, or
-  // its DEFAULT_ESTIMATED_DELIVERY_DAYS fallback (currently 3 days) when the
-  // zone didn't set one. Lets the AI state an actual delivery-time estimate
-  // instead of inventing one.
-  estimatedDeliveryDays: number;
+  // Real estimate from banglardoi.com — the zone's own free-text value
+  // (e.g. "1-2 days"), or its DEFAULT_ESTIMATED_DELIVERY_TEXT fallback
+  // (currently "3 days") when the zone didn't set one. Lets the AI state an
+  // actual delivery-time estimate instead of inventing one.
+  //
+  // Was a plain `number` (days) before 2026-08-29 — banglardoi.com's owner
+  // wanted to type free-text ranges like "1-2 days" into the admin field
+  // instead of a single integer, so the JSON field of the same name now
+  // carries a ready-to-quote string instead of a bare count. Every caller
+  // that used to append "day"/"days" itself (business-rules.ts,
+  // app/api/whatsapp/webhook/route.ts) was updated to use this value as-is.
+  estimatedDeliveryDays: string;
   // false means this PIN didn't match any admin-configured Delivery Zone on
   // banglardoi.com — the numbers above are still a real, valid quote (the
   // website's own flat fallback rate), but nobody has actually confirmed we
@@ -292,9 +299,13 @@ export async function fetchBanglarDoiDeliveryCheck(
     meetsMinOrder: data.meetsMinOrder,
     freeDeliveryThresholdInPaise: data.freeDeliveryThresholdInPaise ?? null,
     feeTiers: Array.isArray(data.feeTiers) ? data.feeTiers : [],
-    // Falls back to 3 (banglardoi-app's own DEFAULT_ESTIMATED_DELIVERY_DAYS)
-    // on an older deployment that doesn't send this field yet.
-    estimatedDeliveryDays: typeof data.estimatedDeliveryDays === "number" ? data.estimatedDeliveryDays : 3,
+    // Falls back to "3 days" (banglardoi-app's own
+    // DEFAULT_ESTIMATED_DELIVERY_TEXT) on an older deployment that either
+    // doesn't send this field yet, or still sends the pre-2026-08-29 plain
+    // number — either way, that's not a ready-to-quote string, so treat it
+    // the same as "not sent" rather than coercing a number to a string
+    // (`String(3)` -> "3" would read oddly next to a real "1-2 days").
+    estimatedDeliveryDays: typeof data.estimatedDeliveryDays === "string" ? data.estimatedDeliveryDays : "3 days",
     // Defaults true (older banglardoi.com deployments before this field
     // existed always meant "a real zone" as far as this app knew) — only an
     // explicit `false` from the website should ever trigger the

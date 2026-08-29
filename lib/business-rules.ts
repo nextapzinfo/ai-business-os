@@ -589,7 +589,7 @@ export async function buildBusinessRulesNote(
           quote.freeDeliveryThresholdInPaise ? ` (FREE above ₹${quote.freeDeliveryThresholdInPaise / 100})` : ""
         }\n`;
   note += `  Cash on Delivery: ${quote.codAllowed ? "available" : "NOT available — prepaid/online payment only"} for this PIN\n`;
-  note += `  Estimated standard delivery time: ${quote.estimatedDeliveryDays} day${quote.estimatedDeliveryDays === 1 ? "" : "s"} (via our own delivery — never state a different number of days for standard delivery)\n`;
+  note += `  Estimated standard delivery time: ${quote.estimatedDeliveryDays} (via our own delivery — never state a different estimate for standard delivery)\n`;
   note += `  Instant/express delivery: we can arrange this through a courier partner, but the exact charge is NOT known here — do not invent or estimate a number. If the customer wants instant delivery, tell them our team will confirm the exact instant-delivery charge, and call request_human_handoff so staff can follow up with it.\n`;
 
   if (campaign) {

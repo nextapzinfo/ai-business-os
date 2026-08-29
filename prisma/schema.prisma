@@ -62,6 +62,7 @@ model Organization {
   clientProductInterests ClientProductInterest[]
   events           Event[]
   orders           Order[]
+  clientOrders     ClientOrder[]
   conversationInsights ConversationInsight[]
   aiUsageLogs      AiUsageLog[]
   whatsAppCostLogs WhatsAppCostLog[]
@@ -137,8 +138,8 @@ model Client {
   // WhatsApp's own `message.referral` payload (no separate Meta integration
   // needed); "MANUAL" = added via the Clients page "Add a client" form;
   // "IMPORTED" = added via the Google Sheet bulk import; "WEBSITE" = signed
-  // up or ordered on banglardoi.com first (requires the separate
-  // banglardoi.com -> ai-business-os sync, not yet built as of 2026-08-24).
+  // up or ordered on banglardoi.com first (built 2026-08-29 — see
+  // websiteOrders below for the actual order data that sync now carries).
   source         String       @default("WHATSAPP_DIRECT")
   sourceDetail   String? // e.g. the ad/post headline or URL from message.referral, when available
   createdAt      DateTime     @default(now())
@@ -150,6 +151,12 @@ model Client {
   productInterests     ClientProductInterest[]
   orders               Order[]
   groupMemberships     ClientGroupMember[]
+  // Real banglardoi.com website orders, pushed in by that repo's
+  // notifyAiBusinessOsOrderSync() — deliberately a DIFFERENT relation/model
+  // from `orders` (Order[]) above, which is this app's own in-WhatsApp
+  // manually-tracked order flow (free-text items, no real line-item data).
+  // See ClientOrder below for why these are kept separate.
+  websiteOrders        ClientOrder[]
 
   @@index([organizationId])
 }
@@ -480,6 +487,62 @@ model Order {
 
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([clientId])
+}
+
+// A real order placed on banglardoi.com (Banglar Doi's own ecommerce site),
+// pushed in by that repo's src/lib/ai-business-os-sync.ts
+// (notifyAiBusinessOsOrderSync) right after checkout — see
+// app/api/integrations/banglardoi/order-sync/route.ts for the receiving
+// end. Added 2026-08-29 per the owner's request to see a customer's real
+// website order history (items/qty/price, not just a source tag) on their
+// Client row.
+//
+// Deliberately a SEPARATE model from Order above, not a reuse of it — that
+// one is this app's own in-WhatsApp order flow: free-text `items`, a
+// PENDING/CONFIRMED/FULFILLED/CANCELLED status vocabulary staff set by
+// hand, and amounts staff type in themselves. Folding banglardoi.com's real
+// structured order data into it would either force a redundant "source"
+// column onto every existing WhatsApp order or risk misreading a
+// banglardoi.com order's actual PENDING_PAYMENT/CONFIRMED/SHIPPED/DELIVERED
+// status against Order's own different vocabulary. Keeping them apart means
+// neither model's meaning has to bend to accommodate the other.
+model ClientOrder {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  clientId       String
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  // banglardoi.com's own human-readable order number (e.g. "BD-10293") —
+  // the natural upsert key so a later sync call for the SAME order (a
+  // status change once it ships, say) updates this row in place instead of
+  // creating a duplicate. Unique across the whole table, not just per
+  // client, matching banglardoi.com's own Order.orderNumber uniqueness.
+  orderNumber    String   @unique
+  // banglardoi.com's own order status string (PENDING_PAYMENT, CONFIRMED,
+  // SHIPPED, DELIVERED, CANCELLED, ...), passed through as-is rather than
+  // remapped into this app's unrelated Order.status vocabulary above.
+  status         String
+  // Grand total in ₹ (banglardoi.com stores/computes in paise internally;
+  // converted to rupees before being sent, matching how this app already
+  // shows every other ₹ amount — see Order.totalAmount above).
+  totalInRupees  Float
+  // The order's own placed-at timestamp from banglardoi.com (order.createdAt
+  // there) — kept distinct from createdAt/updatedAt below, which instead
+  // reflect when THIS ROW was first synced/last updated here.
+  placedAt       DateTime
+  // Structured line items: [{ productName, variantLabel, quantity,
+  // unitPriceInRupees, totalPriceInRupees }] — banglardoi.com's real
+  // per-item breakdown, not a free-text summary (contrast with Order.items
+  // above). Json rather than a child table since this is always written
+  // and read as one whole snapshot per order, never queried per-item.
+  itemsJson      Json
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@index([organizationId])
   @@index([clientId])

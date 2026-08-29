@@ -6,6 +6,23 @@ import { formatDate } from "@/lib/formatDate";
 
 type ProductInterest = { id: string; note: string | null; product: { name: string } };
 
+export type ClientOrderItem = {
+  productName: string;
+  variantLabel: string | null;
+  quantity: number;
+  unitPriceInRupees: number;
+  totalPriceInRupees: number;
+};
+
+export type ClientOrderData = {
+  id: string;
+  orderNumber: string;
+  status: string;
+  totalInRupees: number;
+  placedAt: Date;
+  items: ClientOrderItem[];
+};
+
 export type ClientRowData = {
   id: string;
   name: string;
@@ -17,6 +34,9 @@ export type ClientRowData = {
   interestedIn: string | null;
   createdAt: Date;
   productInterests: ProductInterest[];
+  // Real banglardoi.com order history (request 2, 2026-08-29) — see
+  // ClientOrder in schema.prisma.
+  orders: ClientOrderData[];
 };
 
 function initialOf(name: string) {
@@ -52,21 +72,32 @@ const cellInputClass =
 // pattern as flagMessageWrong / saveClientGroup elsewhere in this app)
 // rather than a native <form>, since a <form> can't validly wrap just part
 // of a <tr> without wrapping the whole <table>.
+//
+// Phone is NOT one of the directly-editable fields above, unlike every
+// other cell (request 3, 2026-08-29) — it's the join key ai-business-os
+// uses to match this Client against banglardoi.com website activity and
+// WhatsApp conversations, so an accidental edit here would silently break
+// that matching. It's plain read-only text instead, styled as a link (like
+// Source's badge, but clickable) that jumps straight into this client's
+// WhatsApp conversation — the existing one if they have one, or the
+// Conversations list with their number pre-searched if not (see
+// conversationHref below).
 export default function ClientRow({
   client,
   sourceLabel,
   sourceDetail,
+  conversationId,
   updateClient,
   deleteClient,
 }: {
   client: ClientRowData;
   sourceLabel: { label: string; className: string };
   sourceDetail: string | null;
+  conversationId: string | null;
   updateClient: (formData: FormData) => Promise<void>;
   deleteClient: (formData: FormData) => Promise<void>;
 }) {
   const [name, setName] = useState(client.name);
-  const [phone, setPhone] = useState(client.phone);
   const [email, setEmail] = useState(client.email ?? "");
   const [address, setAddress] = useState(client.address ?? "");
   const [pinCode, setPinCode] = useState(client.pinCode ?? "");
@@ -74,12 +105,25 @@ export default function ClientRow({
   const [interestedIn, setInterestedIn] = useState(client.interestedIn ?? "");
   const [pending, startTransition] = useTransition();
   const [justSaved, setJustSaved] = useState(false);
+  const [ordersOpen, setOrdersOpen] = useState(false);
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+
+  // No conversation yet for this client — land on the plain list with their
+  // number already in the search box (ConversationList reads this) rather
+  // than a dead link. See request 3's write-up for why: nothing will match
+  // yet, but that's still a better landing spot than a broken /[id] route.
+  const conversationHref = conversationId
+    ? `/dashboard/conversations/${conversationId}`
+    : `/dashboard/conversations?phone=${encodeURIComponent(client.phone)}`;
 
   function handleSave() {
     const fd = new FormData();
     fd.append("clientId", client.id);
     fd.append("name", name);
-    fd.append("phone", phone);
+    // Phone is submitted read-only, unchanged from what's already saved —
+    // updateClient still requires it (and the field exists for import/manual
+    // add elsewhere), it's just never editable from this row any more.
+    fd.append("phone", client.phone);
     fd.append("email", email);
     fd.append("address", address);
     fd.append("pinCode", pinCode);
@@ -93,6 +137,7 @@ export default function ClientRow({
   }
 
   return (
+    <>
     <tr className="border-b border-gray-50 align-top last:border-0">
       <td className="px-4 py-2">
         <div className="flex items-center gap-2">
@@ -103,7 +148,13 @@ export default function ClientRow({
         </div>
       </td>
       <td className="px-4 py-2">
-        <input value={phone} onChange={(e) => setPhone(e.target.value)} className={`${cellInputClass} min-w-[120px]`} />
+        <a
+          href={conversationHref}
+          title="Open WhatsApp conversation"
+          className="min-w-[120px] whitespace-nowrap px-1.5 py-1 text-sm text-primary underline underline-offset-2 hover:text-primary-light"
+        >
+          {client.phone}
+        </a>
       </td>
       <td className="px-4 py-2">
         <span title={sourceDetail ?? ""} className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${sourceLabel.className}`}>
@@ -136,6 +187,19 @@ export default function ClientRow({
           )}
         </div>
       </td>
+      <td className="px-4 py-2">
+        {client.orders.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => setOrdersOpen((v) => !v)}
+            className="whitespace-nowrap rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 hover:bg-gray-200"
+          >
+            Orders ({client.orders.length}) {ordersOpen ? "▲" : "▼"}
+          </button>
+        ) : (
+          <span className="text-xs text-gray-400">—</span>
+        )}
+      </td>
       <td className="whitespace-nowrap px-4 py-2 text-gray-500">{formatDate(client.createdAt)}</td>
       <td className="px-4 py-2">
         <div className="flex items-center gap-1.5">
@@ -160,5 +224,53 @@ export default function ClientRow({
         </div>
       </td>
     </tr>
+    {ordersOpen && client.orders.length > 0 && (
+      <tr className="border-b border-gray-50 bg-gray-50/60 last:border-0">
+        {/* 11 columns total (Name/Phone/Source/Email/Address/Pin/Tags/
+           Interested In/Orders/Added/Actions) — this panel spans all of
+           them so it reads as "attached to" the row above rather than
+           sitting in one narrow cell. */}
+        <td colSpan={11} className="px-4 py-2">
+          <div className="space-y-1.5">
+            {client.orders.map((order) => (
+              <div key={order.id} className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => setExpandedOrderId((cur) => (cur === order.id ? null : order.id))}
+                  className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-0.5 px-3 py-1.5 text-left text-xs hover:bg-gray-50"
+                >
+                  <span className="font-medium text-gray-800">{order.orderNumber}</span>
+                  <span className="text-gray-500">{formatDate(order.placedAt)}</span>
+                  <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                    {order.status}
+                  </span>
+                  <span className="font-medium text-gray-800">₹{order.totalInRupees.toFixed(2)}</span>
+                </button>
+                {expandedOrderId === order.id && (
+                  <div className="border-t border-gray-100 bg-gray-50/50 px-3 py-2">
+                    {order.items.length > 0 ? (
+                      <div className="space-y-1">
+                        {order.items.map((item, idx) => (
+                          <div key={idx} className="flex items-center justify-between gap-2 text-xs text-gray-600">
+                            <span>
+                              {item.productName}
+                              {item.variantLabel ? ` (${item.variantLabel})` : ""} × {item.quantity}
+                            </span>
+                            <span>₹{item.totalPriceInRupees.toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400">No item details for this order.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </td>
+      </tr>
+    )}
+    </>
   );
 }

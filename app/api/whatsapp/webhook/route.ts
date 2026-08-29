@@ -1256,7 +1256,7 @@ export async function POST(req: NextRequest) {
                 `  Items: ₹${estimatedTotal}\n` +
                 `  Delivery: ${deliveryFee === 0 ? "FREE" : `₹${deliveryFee}`}\n` +
                 `  Grand total: ₹${grandTotal}\n` +
-                `  Estimated delivery: ${quote.estimatedDeliveryDays} day${quote.estimatedDeliveryDays === 1 ? "" : "s"}\n`;
+                `  Estimated delivery: ${quote.estimatedDeliveryDays}\n`;
 
               // Free-delivery upsell nudge — owner's own instruction: "er
               // sathe customer ke to bolbe apni ar 400/- r jinish nile

@@ -206,6 +206,27 @@ function formatSource(source: string) {
   return SOURCE_LABELS[source] ?? { label: source, className: "bg-gray-100 text-gray-600" };
 }
 
+// ClientOrder.itemsJson is stored as a plain JSON array (see
+// app/api/integrations/banglardoi/order-sync/route.ts) — reshaped into a
+// typed array here the same way parseFeeTiers-style helpers elsewhere in
+// this codebase guard against malformed/legacy rows rather than trusting
+// `Json` at face value.
+function parseOrderItems(raw: unknown): { productName: string; variantLabel: string | null; quantity: number; unitPriceInRupees: number; totalPriceInRupees: number }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(
+      (i): i is Record<string, unknown> =>
+        typeof i === "object" && i !== null && typeof (i as Record<string, unknown>).productName === "string"
+    )
+    .map((i) => ({
+      productName: String(i.productName),
+      variantLabel: typeof i.variantLabel === "string" ? i.variantLabel : null,
+      quantity: Number(i.quantity) || 0,
+      unitPriceInRupees: Number(i.unitPriceInRupees) || 0,
+      totalPriceInRupees: Number(i.totalPriceInRupees) || 0,
+    }));
+}
+
 export default async function ClientsPage({
   searchParams,
 }: {
@@ -233,9 +254,37 @@ export default async function ClientsPage({
         include: { product: { select: { name: true } } },
         orderBy: { updatedAt: "desc" },
       },
+      // Most recent conversation only (request 3 — clicking a client's phone
+      // number jumps straight into their WhatsApp chat). Conversation has no
+      // updatedAt column; a client's conversation is reopened/reused across
+      // many days rather than a fresh row per chat (see
+      // conversations/layout.tsx), so in practice there's rarely more than
+      // one anyway — createdAt desc + take 1 is "most recent" either way.
+      conversations: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true } },
+      // Real banglardoi.com order history (request 2) — synced in by
+      // src/lib/ai-business-os-sync.ts on that repo's side; see ClientOrder
+      // in schema.prisma for why this is a separate model from the existing
+      // (unrelated, in-WhatsApp) Order.
+      websiteOrders: {
+        orderBy: { placedAt: "desc" },
+        select: { id: true, orderNumber: true, status: true, totalInRupees: true, placedAt: true, itemsJson: true },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
+
+  const clientRows = clients.map((c) => ({
+    ...c,
+    conversationId: c.conversations[0]?.id ?? null,
+    orders: c.websiteOrders.map((o) => ({
+      id: o.id,
+      orderNumber: o.orderNumber,
+      status: o.status,
+      totalInRupees: o.totalInRupees,
+      placedAt: o.placedAt,
+      items: parseOrderItems(o.itemsJson),
+    })),
+  }));
 
   return (
     <div>
@@ -308,24 +357,26 @@ export default async function ClientsPage({
                 <th className="px-4 py-3 font-medium">Pin Code</th>
                 <th className="px-4 py-3 font-medium">Tags</th>
                 <th className="px-4 py-3 font-medium">Interested In</th>
+                <th className="px-4 py-3 font-medium">Orders</th>
                 <th className="px-4 py-3 font-medium">Added</th>
                 <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {clients.map((c) => (
+              {clientRows.map((c) => (
                 <ClientRow
                   key={c.id}
                   client={c}
                   sourceLabel={formatSource(c.source)}
                   sourceDetail={c.sourceDetail}
+                  conversationId={c.conversationId}
                   updateClient={updateClient}
                   deleteClient={deleteClient}
                 />
               ))}
-              {clients.length === 0 && (
+              {clientRows.length === 0 && (
                 <tr>
-                  <td className="px-4 py-6 text-gray-500" colSpan={10}>
+                  <td className="px-4 py-6 text-gray-500" colSpan={11}>
                     {q ? "No clients match your search." : "No clients yet — add your first one above."}
                   </td>
                 </tr>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { AlertCircle, Search } from "lucide-react";
 
 export type ConversationListItem = {
@@ -36,9 +36,19 @@ function avatarColor(seed: string) {
 // search bar — searchable by Name or phone number — to open that
 // particular customer's chat). Filters client-side, since the full list is
 // already fetched and sorted server-side (see conversations/layout.tsx).
+//
+// Also reads an initial `?phone=` query param (added 2026-08-29, request 3
+// on the Clients page — clicking a client's phone number when they have no
+// conversation yet links here with their phone in the URL instead of being
+// a dead link) — pre-fills the search box with it so the owner lands here
+// with the number already searched, even though nothing will match until
+// that client actually messages in. Read once via useState's lazy
+// initializer, not a useEffect, so it's there on the very first render
+// instead of flashing empty then filling in.
 export default function ConversationList({ conversations }: { conversations: ConversationListItem[] }) {
   const pathname = usePathname();
-  const [query, setQuery] = useState("");
+  const searchParams = useSearchParams();
+  const [query, setQuery] = useState(() => searchParams.get("phone") ?? "");
 
   const filtered = (() => {
     const q = query.trim().toLowerCase();
