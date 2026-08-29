@@ -1408,6 +1408,13 @@ export async function POST(req: NextRequest) {
               : p.pricePerPiece,
           description: p.description,
           category: p.category,
+          // Added 2026-08-29 — these were already being fetched from the
+          // live catalog but silently dropped right here before ever
+          // reaching CatalogProduct/the AI. See CatalogProduct's own comment
+          // in lib/llm.ts.
+          bestSeller: p.bestSeller,
+          shelfLifeInfo: p.shelfLifeInfo,
+          storageInfo: p.storageInfo,
           variants: p.variants.map((v) => ({
             label: v.label,
             price: v.price,

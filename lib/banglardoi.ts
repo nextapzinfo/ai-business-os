@@ -170,6 +170,12 @@ export type BanglarDoiCatalogProduct = {
   category: string | null;
   featured: boolean;
   bestSeller: boolean;
+  // Added 2026-08-29 (owner request: AI should read shelf life/storage info
+  // from the website, same as description/featured/bestSeller) — real,
+  // admin-set Product fields shown on the live product page, now returned by
+  // banglardoi.com's own /api/integrations/product-catalog alongside them.
+  shelfLifeInfo: string | null;
+  storageInfo: string | null;
   pricePerPiece: string | null;
   variants: BanglarDoiCatalogVariant[];
   bundleItems: BanglarDoiBundleItem[];

@@ -387,6 +387,18 @@ export type CatalogProduct = {
   // fallback never sets this) — see buildSystemPrompt's bundleNote below
   // for how the AI is told about it.
   bundleItems?: { quantity: number; name: string; variantLabel?: string | null }[];
+  // Added 2026-08-29 (owner request: "Product r inside e Description, shelf
+  // life, Storage info, Best Seller kina - egolo to read korte hobe from
+  // website") — real incident: even though `description` was already fetched
+  // from banglardoi.com's live catalog into this type, catalogNote below only
+  // ever regex-scraped a "Minimum Order" number out of it and threw the rest
+  // away, so the AI never actually saw a product's real description text;
+  // `bestSeller`/`shelfLifeInfo`/`storageInfo` weren't even being carried
+  // through the webhook/test-sandbox mapping at all. Only ever set when the
+  // live banglardoi.com catalog was used, same as variants/bundleItems.
+  bestSeller?: boolean;
+  shelfLifeInfo?: string | null;
+  storageInfo?: string | null;
 };
 
 // Pulls a "Minimum Order: N piece(s)" style line out of a product's
@@ -790,6 +802,37 @@ function buildSystemPrompt(
           .join("; ")}.`
       : "";
 
+  // Added 2026-08-29 (owner request: "Product r inside e Description, shelf
+  // life, Storage info, Best Seller kina - egolo to read korte hobe from
+  // website") — `description` was already being fetched from banglardoi.com
+  // into CatalogProduct, but catalogNote above only ever regex-scraped a
+  // "Minimum Order" number out of it and threw the actual descriptive text
+  // away; `bestSeller`/`shelfLifeInfo`/`storageInfo` weren't even reaching
+  // this type at all until now (see CatalogProduct's own comment). Kept as
+  // its own separate note rather than folded into catalogNote's compact
+  // name+price list, since these are answers to specific questions ("koto
+  // din thake?", "kibhabe rakhte hobe?", "ki diye toiri?") rather than a hard
+  // pricing constraint — bulking every product's full description into the
+  // always-short catalogNote would make it far too long. Only lists products
+  // that actually have at least one of these fields set, so this stays empty
+  // for organizations without the live banglardoi.com catalog wired in.
+  const productsWithDetails = catalogProducts.filter(
+    (p) => (p.description && p.description.trim()) || p.shelfLifeInfo?.trim() || p.storageInfo?.trim() || p.bestSeller
+  );
+  const productDetailsNote =
+    productsWithDetails.length > 0
+      ? `\n\nReal additional details for these products, straight from their own banglardoi.com product page — use this to answer questions about what a product is/tastes like, how long it keeps, or how to store it, and to proactively mention when something is a customer favorite (e.g. when a browsing customer asks for a suggestion); never invent any of this for a product not listed here, and never contradict what's written below: ${productsWithDetails
+          .map((p) => {
+            const bits: string[] = [];
+            if (p.description && p.description.trim()) bits.push(`Description: ${p.description.trim()}`);
+            if (p.shelfLifeInfo?.trim()) bits.push(`Shelf Life: ${p.shelfLifeInfo.trim()}`);
+            if (p.storageInfo?.trim()) bits.push(`Storage: ${p.storageInfo.trim()}`);
+            if (p.bestSeller) bits.push("This is one of our Best Sellers");
+            return `${p.name} — ${bits.join("; ")}`;
+          })
+          .join(" | ")}.`
+      : "";
+
   // Added after a real incident: "Baked Rosogolla" is priced as "৳30/pc (min
   // order 5 pcs = ৳150)" — a customer asked to confirm "1 pc ৳150?" and the
   // model answered "১ পিসের দাম ৳150" (the price of 1 piece is ৳150),
@@ -860,7 +903,7 @@ Keep it looking like a real WhatsApp message a person would type, not a formatte
 
 Today's date is ${todayInIndia()} (India, Asia/Kolkata timezone). Use this to resolve any relative dates the customer mentions (tomorrow, next Monday, in 3 days, etc.) into an exact date.
 
-Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions. If a source titled "EXACT CURRENT INFO — [product name]" is present, that is the ground-truth, freshly-fetched record for the product this conversation is currently about — trust it over any other source AND over anything you yourself said earlier in this same conversation, for that product's price, description, or minimum order quantity. If you notice you stated a different number for this product earlier in the conversation, this fresh record is correct and your earlier statement was wrong — correct yourself plainly rather than repeating the old number for consistency. Other similar-sounding products' details must never be substituted in its place.${toolsNote}${customInstructionsNote}${businessRulesNoteText}${brandLanguageNote}${photoInstructionNote}${catalogNote}${categoriesNote}${bundleNote}${priceFormatNote}
+Answer factual questions ONLY using the reference material below. If the answer is not contained in the material, say clearly that you don't know and suggest they ask the business directly — never invent facts, prices, or details that aren't in the material. Always mention which source(s) (by title) you used to answer factual questions. If a source titled "EXACT CURRENT INFO — [product name]" is present, that is the ground-truth, freshly-fetched record for the product this conversation is currently about — trust it over any other source AND over anything you yourself said earlier in this same conversation, for that product's price, description, or minimum order quantity. If you notice you stated a different number for this product earlier in the conversation, this fresh record is correct and your earlier statement was wrong — correct yourself plainly rather than repeating the old number for consistency. Other similar-sounding products' details must never be substituted in its place.${toolsNote}${customInstructionsNote}${businessRulesNoteText}${brandLanguageNote}${photoInstructionNote}${catalogNote}${categoriesNote}${bundleNote}${productDetailsNote}${priceFormatNote}
 
 Reference material:
 ${contextBlock}`;

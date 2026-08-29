@@ -130,6 +130,12 @@ export async function POST(req: NextRequest) {
           price: p.variants.length > 0 ? p.variants.map((v) => `${v.label}: ${v.price}`).join(", ") : p.pricePerPiece,
           description: p.description,
           category: p.category,
+          // Added 2026-08-29 — mirrors the same fix in the live webhook
+          // route (see its own comment): these were fetched from the live
+          // catalog but never carried through to the sandbox's preview.
+          bestSeller: p.bestSeller,
+          shelfLifeInfo: p.shelfLifeInfo,
+          storageInfo: p.storageInfo,
           variants: p.variants.map((v) => ({
             label: v.label,
             price: v.price,
