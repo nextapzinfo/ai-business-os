@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import {
   askAIWithTools,
+  describeCustomerPhotoForAI,
   SAVE_ADDRESS_TOOL,
   SET_REMINDER_TOOL,
   RECORD_INTEREST_TOOL,
@@ -117,7 +118,11 @@ export async function POST(req: NextRequest) {
     // screen (built from Interactive Product Messages we sent — see
     // sendWhatsAppProductMessage). Structured event, no free text attached.
     const isOrder = message.type === "order";
-    const text =
+    // Was `const` — now reassignable so a recognized PRODUCT photo (see the
+    // `isImage` block below) can hand its vision-derived description into
+    // the exact same RAG/AI pipeline used for typed questions, instead of
+    // needing a second answer-generation path.
+    let text =
       isImage || isOrder
         ? ""
         : message.type === "button"
@@ -248,12 +253,24 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Customer sent a photo — most commonly a payment screenshot for staff to
-    // verify (manual-confirm flow, no payment gateway). This never goes
-    // through RAG/AI question-answering (there's no text to search against);
-    // it's just stored so it shows up in Conversations for a human to look at,
-    // plus a short FIXED acknowledgment (not an OpenAI call — no point paying
-    // for a reply here) so the customer knows it was received.
+    // Customer sent a photo. Most commonly this IS a payment screenshot for
+    // staff to verify (manual-confirm flow, no payment gateway) — but not
+    // always: owners report customers also send a screenshot of a PRODUCT
+    // (e.g. a copy of the website's product page) expecting the AI to answer
+    // about it just like a typed question. Root-caused 2026-08-30 from the
+    // owner's own screenshot: customer typed "দাম কত" (what's the price),
+    // then sent a Taal'r Pulp screenshot, and the AI just replied with the
+    // generic "team will verify" line below — because this code used to
+    // ALWAYS treat every photo as a payment screenshot and never actually
+    // looked at it. Now a small vision call (describeCustomerPhotoForAI)
+    // looks at the photo first: if it recognizes a payment/transaction
+    // screenshot (or the vision call fails for any reason), behavior is
+    // unchanged — store it and send the same fixed acknowledgment, no OpenAI
+    // answer-generation call needed. Otherwise its description of what the
+    // photo shows becomes `text` below and flows into the exact same
+    // RAG + product-matching + askAIWithTools pipeline used for typed
+    // questions, so a product screenshot gets a real, specific answer
+    // instead of a canned "we'll check" reply.
     if (isImage) {
       const mediaId = message.image?.id as string | undefined;
       let imageUrl: string | null = null;
@@ -272,6 +289,11 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Log the ACTUAL incoming message (the photo itself, with whatever
+      // caption the customer typed, if any) exactly once — this is the row
+      // staff see in Conversations. Whatever description the AI derives from
+      // it below is only ever used internally as a search query, never as a
+      // second logged CLIENT bubble.
       await prisma.message.create({
         data: {
           conversationId: conversation.id,
@@ -281,7 +303,33 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      if (!conversation.aiPaused) {
+      if (conversation.aiPaused) {
+        await logAudit({
+          organizationId: organization.id,
+          action: "WHATSAPP_IMAGE_RECEIVED",
+          metadata: { clientId: client.id, hasImageUrl: !!imageUrl },
+        });
+        return NextResponse.json({ status: "image-received" });
+      }
+
+      let visionDescription: string | null = null;
+      if (imageUrl) {
+        try {
+          const { description, usage } = await describeCustomerPhotoForAI(
+            imageUrl,
+            (message.image?.caption as string) || undefined
+          );
+          visionDescription = description;
+          await logAiUsage(organization.id, "webhook_reply", usage);
+        } catch (err) {
+          console.error("Image vision analysis failed:", err);
+        }
+      }
+
+      if (!visionDescription) {
+        // Couldn't tell what it is (vision call failed) or it WAS recognized
+        // as a payment/transaction screenshot — original fixed-ack behavior,
+        // unchanged, no OpenAI answer call.
         const ackText = "আপনার ছবি/স্ক্রিনশট পেয়েছি। আমাদের টিম শীঘ্রই যাচাই করে জানাবে। ধন্যবাদ!";
         try {
           await sendWhatsAppMessage(from, ackText);
@@ -291,15 +339,29 @@ export async function POST(req: NextRequest) {
         } catch (err) {
           console.error("Image ack send failed:", err);
         }
+
+        await logAudit({
+          organizationId: organization.id,
+          action: "WHATSAPP_IMAGE_RECEIVED",
+          metadata: { clientId: client.id, hasImageUrl: !!imageUrl },
+        });
+
+        return NextResponse.json({ status: "image-received" });
       }
+
+      // Recognized as product/text content, not a payment screenshot — don't
+      // return; fall through into the normal RAG/AI pipeline below using the
+      // vision-derived description as the effective question. Combine with
+      // any preceding un-answered typed question isn't needed here since the
+      // conversation `history` fetched below already includes the
+      // customer's prior "দাম কত"-style message, so the model still sees it.
+      text = visionDescription;
 
       await logAudit({
         organizationId: organization.id,
         action: "WHATSAPP_IMAGE_RECEIVED",
-        metadata: { clientId: client.id, hasImageUrl: !!imageUrl },
+        metadata: { clientId: client.id, hasImageUrl: !!imageUrl, recognizedAsProduct: true },
       });
-
-      return NextResponse.json({ status: "image-received" });
     }
 
     // Customer completed a WhatsApp Catalog cart checkout ("Send order" from
@@ -407,9 +469,15 @@ export async function POST(req: NextRequest) {
       .reverse()
       .map((m) => ({ role: m.sender === "CLIENT" ? "user" : "assistant", content: m.content }));
 
-    await prisma.message.create({
-      data: { conversationId: conversation.id, sender: "CLIENT", content: text },
-    });
+    // For a recognized product PHOTO, the actual incoming message (the image
+    // itself) was already logged above in the `isImage` block — `text` here
+    // is only the AI's own vision-derived description, not something the
+    // customer typed, so it must not be logged as a second CLIENT bubble.
+    if (!isImage) {
+      await prisma.message.create({
+        data: { conversationId: conversation.id, sender: "CLIENT", content: text },
+      });
+    }
 
     // First message of a brand-new conversation: send the configured greeting
     // (if any) word-for-word before the AI's normal RAG-based answer.

@@ -1501,6 +1501,78 @@ export async function askAIWithTools(
   return { answer: (second.message.content as string) ?? "", usage: { promptTokens, completionTokens } };
 }
 
+// ---- Customer-sent photo understanding (added 2026-08-30) ----
+// Root cause of the owner's report "eta AI kano bhujte parche na": a customer
+// sent a SCREENSHOT of the Taal'r Pulp product (after typing "দাম কত" / "what's
+// the price") and the AI just replied with the generic "team will verify"
+// acknowledgment — because the webhook route NEVER actually looked at the
+// image. It was hard-coded to assume every incoming photo is a payment
+// screenshot for staff to eyeball (see the big comment above the `isImage`
+// block in app/api/whatsapp/webhook/route.ts), which is true most of the
+// time, but not always — customers also screenshot a product page, a price
+// list, or a competitor's post and expect the AI to answer about it just like
+// it would if they'd typed the product name.
+//
+// This one vision call decides which case it is. Kept deliberately narrow
+// (small max_completion_tokens, no tools, no RAG context) — its ONLY job is
+// to look at the picture and either (a) recognize it's a payment/transaction
+// screenshot (UPI/bKash/bank app, a receipt, a QR code, etc.) and return
+// null so the webhook falls back to the existing fixed "team will verify"
+// acknowledgment, or (b) describe what product/text is actually shown so the
+// webhook can feed that description into the SAME RAG + product-matching +
+// askAIWithTools pipeline already used for typed questions — no separate
+// answer-generation path to maintain.
+export async function describeCustomerPhotoForAI(
+  imageUrl: string,
+  caption?: string | null
+): Promise<{ description: string | null; usage: TokenUsage }> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+
+  const instructions =
+    `A customer on WhatsApp just sent this photo${caption ? ` with the caption "${caption}"` : ""}.\n\n` +
+    `First decide: is this a PAYMENT/TRANSACTION screenshot (a UPI/bKash/Google Pay/bank app screen, a payment receipt, a transaction ID, or a QR code)?\n\n` +
+    `If YES, reply with EXACTLY the single word: PAYMENT\n\n` +
+    `If NO — e.g. it's a screenshot of a product, a product page, a price list, a social media post, or anything else — reply with ONE short line describing what the customer is showing and, if guessable, what they most likely want to know (for example: "Customer sent a screenshot of the Taal'r Pulp product page, likely asking its price."). Do not answer the question yourself and do not invent a price — just describe what's in the photo so someone else can look it up.`;
+
+  const res = await fetch(OPENAI_CHAT_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      max_completion_tokens: 150,
+      reasoning_effort: OPENAI_REASONING_EFFORT,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: instructions },
+            { type: "image_url", image_url: { url: imageUrl } },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenAI photo analysis failed: ${res.status} ${errText}`);
+  }
+
+  const data = await res.json();
+  const usage = extractUsage(data);
+  const raw = (data.choices?.[0]?.message?.content as string) ?? "";
+  const trimmed = raw.trim();
+
+  if (!trimmed || trimmed.toUpperCase().startsWith("PAYMENT")) {
+    return { description: null, usage };
+  }
+  return { description: trimmed, usage };
+}
+
 // ---- Self-analysis (nightly batch, see /api/cron/self-analysis) ----
 // The AI reviews a transcript of its OWN closed conversation and self-critiques.
 // This is intentionally NOT run per-chat (that's an extra OpenAI call every
