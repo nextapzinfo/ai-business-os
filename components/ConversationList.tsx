@@ -13,6 +13,7 @@ export type ConversationListItem = {
   aiPaused: boolean;
   handoffReason: string | null;
   lastMessage: string;
+  isUnread: boolean; // computed in conversations/layout.tsx — newest message is from the customer and staff hasn't opened this chat since
 };
 
 function initialOf(name: string) {
@@ -88,7 +89,19 @@ export default function ConversationList({ conversations }: { conversations: Con
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-1">
-                <span className="truncate text-sm font-medium text-gray-900">{c.clientName}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {c.isUnread && (
+                    <span
+                      className="h-2 w-2 flex-shrink-0 animate-unread-blink rounded-full bg-red-500"
+                      title="Unread message"
+                    />
+                  )}
+                  <span
+                    className={`truncate text-sm text-gray-900 ${c.isUnread ? "font-semibold" : "font-medium"}`}
+                  >
+                    {c.clientName}
+                  </span>
+                </span>
                 <span
                   className={`h-2 w-2 flex-shrink-0 rounded-full ${c.aiPaused ? "bg-amber-500" : "bg-emerald-500"}`}
                   title={c.aiPaused ? "Staff Handling" : "AI Active"}
@@ -99,7 +112,9 @@ export default function ConversationList({ conversations }: { conversations: Con
                   <AlertCircle size={11} className="flex-shrink-0" /> Needs you — {c.handoffReason}
                 </p>
               ) : (
-                <p className="truncate text-xs text-gray-500">{c.lastMessage}</p>
+                <p className={`truncate text-xs ${c.isUnread ? "font-medium text-gray-800" : "text-gray-500"}`}>
+                  {c.lastMessage}
+                </p>
               )}
             </div>
           </a>

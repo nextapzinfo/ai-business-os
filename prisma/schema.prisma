@@ -64,6 +64,7 @@ model Organization {
   orders           Order[]
   clientOrders     ClientOrder[]
   conversationInsights ConversationInsight[]
+  handoffInsights      HandoffInsight[]
   aiUsageLogs      AiUsageLog[]
   whatsAppCostLogs WhatsAppCostLog[]
   deliveryZones    DeliveryZone[]
@@ -99,6 +100,19 @@ model AgentProfile {
   followUpHours        Int      @default(24) // how long to wait with no customer reply before sending the follow-up template
   followUpTemplateId   String?  // MessageTemplate.id to send — loose reference (not a hard FK) so a deleted template doesn't break the profile
   skillSelfAnalysis    Boolean  @default(false) // when true, the nightly cron asks the AI to self-critique each newly-closed conversation
+  // Added 2026-08-30, owner's own request: "AI katha bolar por CUStomer ar
+  // kono katha bolche na. kintu AI o ar kichu bolche na - ekahne ami
+  // followup kortei pari - seta ami nije korchi... amar behaviour dekhe
+  // seirokom bhave 10 min or 30 min pore conversation chalie jabe." — a
+  // FAST, same-session nudge (minutes, not the hours/once-a-day AI Follow-up
+  // above) sent as natural free text, mirroring what the owner does by hand:
+  // if the AI's own last message goes unanswered, gently check back in
+  // shortly after instead of waiting. Deliberately separate from
+  // skillFollowUp/followUpHours above (different cron, different cadence,
+  // different message style — free text here vs. an approved template
+  // there) rather than reusing those fields.
+  skillQuickFollowUp   Boolean  @default(false)
+  quickFollowUpMinutes Int      @default(30) // owner chooses 10 or 30 in Agent Studio — see AgentStudioClient.tsx
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -240,6 +254,9 @@ model Conversation {
   aiPaused       Boolean      @default(false) // true once staff "intervenes" — AI stops auto-replying until resumed
   handoffReason  String?      // set by the AI itself (request_human_handoff tool) when it escalates — cleared when staff replies or resumes AI; distinguishes an AI-initiated escalation from a staff manually pausing
   lastFollowUpAt DateTime?    // set when the AI Follow-up cron sends a nudge template — prevents sending more than once
+  lastQuickFollowUpAt DateTime? // set when the quick-follow-up cron sends its free-text nudge (see AgentProfile.skillQuickFollowUp) — compared against the latest message's own createdAt (not just "is this set") so a NEW unanswered AI message later in the same conversation can still trigger another nudge
+  lastReadAt     DateTime?    // set to now() every time staff opens this conversation's detail page (2026-08-30, owner's own request: unread conversations should blink in the list). Single shared value, not per-staff-user — this app has one staff view, not per-agent inboxes. A conversation is "unread" whenever its latest message is from CLIENT and is newer than this (or this is still null, e.g. a brand-new conversation nobody has opened yet) — see conversations/layout.tsx's `isUnread` computation.
+  aiPausedAt     DateTime?    // set when staff pauses the AI (handoff starts), cleared when AI resumes — used only to slice out exactly the messages sent during THIS handoff window (see toggleAiPaused in conversations/[id]/page.tsx) so the immediate self-training review below only looks at what staff actually said this time, not the whole conversation history.
   lastProductId  String?      // last Product this conversation clearly resolved to (RAG match or send_product_photo tool) — lets a context-only "pic ache?" follow-up (no product name repeated) still find the right product. Loose reference, not a hard FK, so a deleted product doesn't break the conversation.
   lastTopicDocumentId String? // last Document (knowledge doc / Event) this conversation clearly resolved to — same loose-reference, "current message first, then memory" pattern as lastProductId above, but for topic/document-level continuity instead of a single product (topic-continuity fix, Aug 2026). Lets a generic follow-up like "kiki ache?" or "ar ki ki pabo?" that repeats no distinctive word still anchor to the document/Event just discussed, instead of falling through to whatever RAG's fuzzy top-5 search happens to guess. Loose reference, not a hard FK, so a deleted document doesn't break the conversation.
 
@@ -260,6 +277,7 @@ model Conversation {
 
   messages Message[]
   insight  ConversationInsight?
+  handoffInsights HandoffInsight[]
 
   @@index([organizationId])
 }
@@ -649,6 +667,40 @@ model ConversationInsight {
   createdAt          DateTime     @default(now())
 
   @@index([organizationId])
+}
+
+// Immediate self-training suggestion generated the moment staff transfers a
+// conversation back to the AI after manually replying during a handoff
+// (2026-08-30, owner's own request, verbatim: "ami handsoff kore katha
+// bollam abar ai ke transfer korlam, sei 2-3 te line ami kano bollam seta ai
+// self assesment kore train hobe" — the AI should self-assess and learn from
+// those specific staff-written lines right away, not wait for the once-
+// nightly self-review above, which only ever looks at CLOSED conversations
+// and could be days away). Reuses the exact same analyzeConversationForInsights
+// call and 4-field shape as ConversationInsight above, but is a SEPARATE
+// model rather than another row in that table, because
+// ConversationInsight.conversationId is @unique (one review per conversation
+// EVER) — a single long-running conversation can go through many separate
+// staff-handoff cycles over its life, each worth its own review here.
+// Gated on the same AgentProfile.skillSelfAnalysis toggle as the nightly
+// job (Agent Studio → Skills → "AI Self-Review") rather than a second
+// separate setting — one on/off switch for "does the AI review its own/
+// staff's conversation turns", not two.
+model HandoffInsight {
+  id                 String       @id @default(cuid())
+  organizationId     String
+  organization       Organization @relation(fields: [organizationId], references: [id])
+  conversationId     String
+  conversation       Conversation @relation(fields: [conversationId], references: [id])
+  mistakes           String? // what the AI thinks it/staff got wrong in this handoff window, in its own words
+  unanswered         String? // questions the AI couldn't answer that staff ended up handling
+  suggestedKnowledge String? // what staff's own reply suggests should be added to the Knowledge Base
+  suggestedRules     String? // a new Custom Instruction rule this handoff suggests might help
+  status             String       @default("PENDING") // PENDING (needs owner review), REVIEWED
+  createdAt          DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([conversationId])
 }
 
 // One row per real OpenAI API call (webhook replies, sandbox tests, nightly

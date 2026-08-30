@@ -2,7 +2,14 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { formatDateTime } from "@/lib/formatDate";
 import Link from "next/link";
-import { applyCorrection, dismissFlag, reviewInsight, addInsightKnowledge } from "./actions";
+import {
+  applyCorrection,
+  dismissFlag,
+  reviewInsight,
+  addInsightKnowledge,
+  reviewHandoffInsight,
+  addHandoffInsightKnowledge,
+} from "./actions";
 import TeachAIChat from "@/components/TeachAIChat";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +23,7 @@ export default async function TrainingPage() {
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const [flaggedMessages, insights] = await Promise.all([
+  const [flaggedMessages, insights, handoffInsights] = await Promise.all([
     prisma.message.findMany({
       where: {
         conversation: { organizationId: user.organizationId },
@@ -28,6 +35,15 @@ export default async function TrainingPage() {
       take: 30,
     }),
     prisma.conversationInsight.findMany({
+      where: { organizationId: user.organizationId, status: "PENDING" },
+      include: { conversation: { include: { client: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
+    // Immediate per-handoff suggestions (2026-08-30) — see HandoffInsight's
+    // own comment in schema.prisma for why this is a separate table/query
+    // from conversationInsight above rather than the same list.
+    prisma.handoffInsight.findMany({
       where: { organizationId: user.organizationId, status: "PENDING" },
       include: { conversation: { include: { client: true } } },
       orderBy: { createdAt: "desc" },
@@ -154,6 +170,78 @@ export default async function TrainingPage() {
                   </form>
                 )}
                 <form action={reviewInsight}>
+                  <input type="hidden" name="insightId" value={ins.id} />
+                  <button
+                    type="submit"
+                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50"
+                  >
+                    Mark Reviewed
+                  </button>
+                </form>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <h3 className="text-sm font-semibold text-gray-900">Handoff Self-Training ({handoffInsights.length})</h3>
+        <p className="mt-1 text-xs text-gray-500">
+          Generated the moment staff hands a conversation back to the AI after replying manually (only if
+          "AI Self-Review" is enabled in Agent Studio → Skills — same toggle as above). Reviews just the
+          staff-written lines from that handoff, not the whole conversation. Just suggestions — nothing here
+          is applied automatically.
+        </p>
+        <div className="mt-3 flex flex-col divide-y divide-gray-100">
+          {handoffInsights.length === 0 && <p className="py-3 text-xs text-gray-400">No suggestions waiting.</p>}
+          {handoffInsights.map((ins) => (
+            <div key={ins.id} className="py-3">
+              <div className="flex items-center justify-between gap-2">
+                <Link href={`/dashboard/conversations/${ins.conversationId}`} className="min-w-0 hover:underline">
+                  <p className="truncate text-xs font-medium text-gray-500">{ins.conversation.client.name}</p>
+                </Link>
+                <span className="flex-shrink-0 text-[11px] text-gray-400">{formatDateTime(ins.createdAt)}</span>
+              </div>
+              {ins.mistakes && (
+                <p className="mt-1.5 text-xs">
+                  <span className="font-medium text-gray-700">Mistakes: </span>
+                  {ins.mistakes}
+                </p>
+              )}
+              {ins.unanswered && (
+                <p className="mt-1 text-xs">
+                  <span className="font-medium text-gray-700">Unanswered: </span>
+                  {ins.unanswered}
+                </p>
+              )}
+              {ins.suggestedKnowledge && (
+                <p className="mt-1 text-xs">
+                  <span className="font-medium text-gray-700">Add to Knowledge: </span>
+                  {ins.suggestedKnowledge}
+                </p>
+              )}
+              {ins.suggestedRules && (
+                <p className="mt-1 text-xs">
+                  <span className="font-medium text-gray-700">Suggested rule: </span>
+                  {ins.suggestedRules}
+                </p>
+              )}
+              {!ins.mistakes && !ins.unanswered && !ins.suggestedKnowledge && !ins.suggestedRules && (
+                <p className="mt-1 text-xs text-gray-400">No issues found — this handoff went fine.</p>
+              )}
+              <div className="mt-2 flex gap-2">
+                {ins.suggestedKnowledge && (
+                  <form action={addHandoffInsightKnowledge}>
+                    <input type="hidden" name="insightId" value={ins.id} />
+                    <button
+                      type="submit"
+                      className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-light"
+                    >
+                      Add Suggestion to Knowledge Base
+                    </button>
+                  </form>
+                )}
+                <form action={reviewHandoffInsight}>
                   <input type="hidden" name="insightId" value={ins.id} />
                   <button
                     type="submit"

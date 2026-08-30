@@ -147,8 +147,42 @@ export async function fetchRealtimeVisitors(): Promise<{ totalActiveUsers: numbe
 }
 
 // ── Historical / period reports ─────────────────────────────────────────
-function dateRangeFor(days: number) {
-  return [{ startDate: `${days}daysAgo`, endDate: "today" }];
+// Accepts either a plain "last N days" shorthand (used by the dashboard's
+// default 7-day view and the Live panel) or an explicit {startDate, endDate}
+// pair — added 2026-08-30 for the report-download feature's Day/Week/Custom
+// date-range picker (owner's own request: "report download option
+// (days/weekly/customezied date from to)"). GA4's Data API accepts either
+// its own relative shorthand ("7daysAgo") or plain "YYYY-MM-DD" strings in
+// the exact same dateRanges field, so this is a pure input-normalization
+// change — every report query below is otherwise untouched.
+export type Ga4DateRangeInput = number | { startDate: string; endDate: string };
+
+function dateRangeFor(range: Ga4DateRangeInput) {
+  if (typeof range === "number") {
+    return [{ startDate: `${range}daysAgo`, endDate: "today" }];
+  }
+  return [{ startDate: range.startDate, endDate: range.endDate }];
+}
+
+// Small date helpers for the Day/Week/Custom report picker on
+// /dashboard/visitors — kept here (rather than duplicated in the page) so
+// the page's on-screen figures and its "Download Report" link always
+// resolve the exact same explicit {startDate, endDate} pair, instead of the
+// page using GA4's relative "7daysAgo" shorthand for one and explicit dates
+// for the other and risking an off-by-one mismatch between what's on screen
+// and what's in the downloaded file.
+export function todayInIndia(): string {
+  // en-CA locale formats as YYYY-MM-DD, which doubles as a clean ISO date string.
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
+export function daysAgoInIndia(days: number): string {
+  const now = new Date();
+  // Shift by the requested number of days in UTC ms, then re-format in the
+  // India timezone the same way todayInIndia does — good enough for whole-day
+  // granularity, which is all a date-only report range ever needs.
+  const shifted = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  return shifted.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 
 export type TrafficOverview = {
@@ -160,10 +194,10 @@ export type TrafficOverview = {
   byDate: { date: string; sessions: number; screenPageViews: number }[];
 };
 
-export async function fetchTrafficOverview(days: number): Promise<TrafficOverview> {
+export async function fetchTrafficOverview(range: Ga4DateRangeInput): Promise<TrafficOverview> {
   const [totalsData, byDateData] = await Promise.all([
     callGa4Api("runReport", {
-      dateRanges: dateRangeFor(days),
+      dateRanges: dateRangeFor(range),
       metrics: [
         { name: "sessions" },
         { name: "totalUsers" },
@@ -173,7 +207,7 @@ export async function fetchTrafficOverview(days: number): Promise<TrafficOvervie
       ],
     }),
     callGa4Api("runReport", {
-      dateRanges: dateRangeFor(days),
+      dateRanges: dateRangeFor(range),
       dimensions: [{ name: "date" }],
       metrics: [{ name: "sessions" }, { name: "screenPageViews" }],
       orderBys: [{ dimension: { dimensionName: "date" } }],
@@ -206,9 +240,9 @@ export async function fetchTrafficOverview(days: number): Promise<TrafficOvervie
 
 export type TopPageRow = { path: string; title: string; views: number };
 
-export async function fetchTopPages(days: number, limit = 10): Promise<TopPageRow[]> {
+export async function fetchTopPages(range: Ga4DateRangeInput, limit = 10): Promise<TopPageRow[]> {
   const data = await callGa4Api("runReport", {
-    dateRanges: dateRangeFor(days),
+    dateRanges: dateRangeFor(range),
     dimensions: [{ name: "pagePath" }, { name: "pageTitle" }],
     metrics: [{ name: "screenPageViews" }],
     orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
@@ -223,9 +257,9 @@ export async function fetchTopPages(days: number, limit = 10): Promise<TopPageRo
 
 export type NamedCountRow = { name: string; sessions: number };
 
-export async function fetchTrafficSources(days: number, limit = 10): Promise<NamedCountRow[]> {
+export async function fetchTrafficSources(range: Ga4DateRangeInput, limit = 10): Promise<NamedCountRow[]> {
   const data = await callGa4Api("runReport", {
-    dateRanges: dateRangeFor(days),
+    dateRanges: dateRangeFor(range),
     dimensions: [{ name: "sessionSourceMedium" }],
     metrics: [{ name: "sessions" }],
     orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
@@ -237,9 +271,9 @@ export async function fetchTrafficSources(days: number, limit = 10): Promise<Nam
   }));
 }
 
-export async function fetchDeviceBreakdown(days: number): Promise<NamedCountRow[]> {
+export async function fetchDeviceBreakdown(range: Ga4DateRangeInput): Promise<NamedCountRow[]> {
   const data = await callGa4Api("runReport", {
-    dateRanges: dateRangeFor(days),
+    dateRanges: dateRangeFor(range),
     dimensions: [{ name: "deviceCategory" }],
     metrics: [{ name: "sessions" }],
     orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
@@ -250,9 +284,9 @@ export async function fetchDeviceBreakdown(days: number): Promise<NamedCountRow[
   }));
 }
 
-export async function fetchBrowserBreakdown(days: number, limit = 8): Promise<NamedCountRow[]> {
+export async function fetchBrowserBreakdown(range: Ga4DateRangeInput, limit = 8): Promise<NamedCountRow[]> {
   const data = await callGa4Api("runReport", {
-    dateRanges: dateRangeFor(days),
+    dateRanges: dateRangeFor(range),
     dimensions: [{ name: "browser" }],
     metrics: [{ name: "sessions" }],
     orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
@@ -274,9 +308,9 @@ export async function fetchBrowserBreakdown(days: number, limit = 8): Promise<Na
 // sessions, so this can look sparse/empty for the first day or two.
 // Uses activeUsers (not sessions) as the metric — the standard metric GA4's
 // own Demographics reports use for age/gender breakdowns.
-export async function fetchAgeBreakdown(days: number): Promise<NamedCountRow[]> {
+export async function fetchAgeBreakdown(range: Ga4DateRangeInput): Promise<NamedCountRow[]> {
   const data = await callGa4Api("runReport", {
-    dateRanges: dateRangeFor(days),
+    dateRanges: dateRangeFor(range),
     dimensions: [{ name: "userAgeBracket" }],
     metrics: [{ name: "activeUsers" }],
     orderBys: [{ metric: { metricName: "activeUsers" }, desc: true }],
@@ -287,9 +321,9 @@ export async function fetchAgeBreakdown(days: number): Promise<NamedCountRow[]> 
   }));
 }
 
-export async function fetchGenderBreakdown(days: number): Promise<NamedCountRow[]> {
+export async function fetchGenderBreakdown(range: Ga4DateRangeInput): Promise<NamedCountRow[]> {
   const data = await callGa4Api("runReport", {
-    dateRanges: dateRangeFor(days),
+    dateRanges: dateRangeFor(range),
     dimensions: [{ name: "userGender" }],
     metrics: [{ name: "activeUsers" }],
     orderBys: [{ metric: { metricName: "activeUsers" }, desc: true }],
@@ -314,9 +348,9 @@ export type EcommerceFunnel = {
   totalRevenue: number;
 };
 
-export async function fetchEcommerceFunnel(days: number): Promise<EcommerceFunnel> {
+export async function fetchEcommerceFunnel(range: Ga4DateRangeInput): Promise<EcommerceFunnel> {
   const data = await callGa4Api("runReport", {
-    dateRanges: dateRangeFor(days),
+    dateRanges: dateRangeFor(range),
     metrics: [
       { name: "itemsViewed" },
       { name: "addToCarts" },

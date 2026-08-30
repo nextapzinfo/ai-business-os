@@ -1585,3 +1585,61 @@ Respond ONLY with a JSON object with exactly these four string fields (empty str
     return { result: null, usage }; // malformed JSON from the model — skip this conversation, cron continues to the next
   }
 }
+
+// Added 2026-08-30 for the Quick Follow-up cron (see AgentProfile.
+// skillQuickFollowUp) — a short, natural check-in when the customer hasn't
+// replied to the AI's last message in a while, mirroring what the owner
+// described doing by hand. Deliberately a SEPARATE, much simpler call from
+// askAI's full reply pipeline (no RAG search, catalog, business rules, or
+// tools) — this isn't answering a question, it's just re-engaging, so it
+// only needs the recent chat history for tone/context, not the whole
+// product catalog. Plain text response (not JSON) — the model's raw output
+// IS the message to send, trimmed of any quote marks it tends to wrap
+// around a short line.
+export async function generateFollowUpNudge(
+  transcript: { sender: string; content: string }[],
+  businessName?: string | null
+): Promise<{ message: string | null; usage: { promptTokens: number; completionTokens: number } }> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+
+  const recent = transcript.slice(-8);
+  if (recent.length === 0) return { message: null, usage: { promptTokens: 0, completionTokens: 0 } };
+
+  const transcriptText = recent.map((m) => `${m.sender}: ${m.content}`).join("\n");
+
+  const systemPrompt = `You are the WhatsApp assistant for ${
+    businessName?.trim() || "this business"
+  }. The customer hasn't replied to your last message in a while. Write ONE short, warm, natural check-in message to send them now, in the same language and style as the conversation below (match Bengali/English/Banglish mixing if that's what they were using).
+
+Rules: don't repeat your last message word for word, don't re-list products/prices already given, don't be pushy or apologize for "bothering" them, and don't ask more than one question. Keep it brief — one or two sentences, like a real person casually checking back in. Respond with ONLY the message text itself, nothing else (no quotes, no explanation).`;
+
+  const res = await fetch(OPENAI_CHAT_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      max_completion_tokens: 150,
+      reasoning_effort: OPENAI_REASONING_EFFORT,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Conversation so far:\n${transcriptText}` },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenAI quick-follow-up call failed: ${res.status} ${errText}`);
+  }
+
+  const data = await res.json();
+  const usage = extractUsage(data);
+  const raw = (data.choices[0].message.content as string) ?? "";
+  const message = raw.trim().replace(/^["']|["']$/g, "");
+
+  return { message: message || null, usage };
+}

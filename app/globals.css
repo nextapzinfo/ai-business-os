@@ -44,3 +44,20 @@ button:disabled {
   cursor: not-allowed;
   transform: none;
 }
+
+/* Unread-conversation indicator dot in ConversationList.tsx (2026-08-30,
+   owner's own request: "Kono unread message thakle pase blink korbe"). Plain
+   opacity fade rather than Tailwind's built-in animate-pulse, which also
+   scales — a scaling dot next to text looks jittery at this small size. */
+@keyframes unread-blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+
+.animate-unread-blink {
+  animation: unread-blink 1s ease-in-out infinite;
+}

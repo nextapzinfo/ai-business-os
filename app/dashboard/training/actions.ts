@@ -123,3 +123,62 @@ export async function addInsightKnowledge(formData: FormData) {
 
   revalidatePath("/dashboard/training");
 }
+
+// Owner reviewed an immediate handoff self-training suggestion (2026-08-30)
+// — marks it handled so it drops off the queue. Separate action from
+// reviewInsight above only because it targets a different table
+// (HandoffInsight, not ConversationInsight — see that model's own comment
+// in schema.prisma for why they're split).
+export async function reviewHandoffInsight(formData: FormData) {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const insightId = formData.get("insightId") as string;
+  if (!insightId) return;
+
+  const insight = await prisma.handoffInsight.findFirst({
+    where: { id: insightId, organizationId: user.organizationId },
+  });
+  if (!insight) return;
+
+  await prisma.handoffInsight.update({ where: { id: insightId }, data: { status: "REVIEWED" } });
+  revalidatePath("/dashboard/training");
+}
+
+// One-click version of applyCorrection, sourced from a handoff self-training
+// suggestion's suggestedKnowledge field. Mirrors addInsightKnowledge above
+// exactly, just against HandoffInsight instead of ConversationInsight.
+export async function addHandoffInsightKnowledge(formData: FormData) {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const insightId = formData.get("insightId") as string;
+  if (!insightId) return;
+
+  const insight = await prisma.handoffInsight.findFirst({
+    where: { id: insightId, organizationId: user.organizationId },
+  });
+  if (!insight || !insight.suggestedKnowledge?.trim()) return;
+
+  const document = await prisma.document.create({
+    data: {
+      organizationId: user.organizationId,
+      title: "AI Handoff Self-Training suggestion",
+      fileUrl: "training-correction",
+      status: "PENDING",
+    },
+  });
+
+  await processKnowledgeContent(user.organizationId, document.id, insight.suggestedKnowledge.trim());
+
+  await prisma.handoffInsight.update({ where: { id: insightId }, data: { status: "REVIEWED" } });
+
+  await logAudit({
+    organizationId: user.organizationId,
+    userId: user.id,
+    action: "HANDOFF_INSIGHT_KNOWLEDGE_ADDED",
+    metadata: { insightId, documentId: document.id },
+  });
+
+  revalidatePath("/dashboard/training");
+}

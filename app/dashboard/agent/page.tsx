@@ -49,6 +49,8 @@ export default async function AgentStudioPage() {
     followUpHours: profile?.followUpHours ?? 24,
     followUpTemplateId: profile?.followUpTemplateId ?? "",
     skillSelfAnalysis: profile?.skillSelfAnalysis ?? false,
+    skillQuickFollowUp: profile?.skillQuickFollowUp ?? false,
+    quickFollowUpMinutes: profile?.quickFollowUpMinutes ?? 30,
   };
 
   const initialDocuments = documents.map((d) => ({

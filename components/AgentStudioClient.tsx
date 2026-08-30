@@ -679,6 +679,39 @@ export default function AgentStudioClient({
               </div>
 
               <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-gray-900">Quick Follow-up</h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  If the customer doesn't reply to the AI's last message (and the AI hasn't sent anything
+                  since), send one short, natural check-in as a normal message — not a template. Checked
+                  every few minutes, so this is fast — unlike AI Follow-up above, which only runs once a
+                  day. Only fires while a staff member isn't actively handling the chat.
+                </p>
+                <label className="mt-3 flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={form.skillQuickFollowUp}
+                    onChange={(e) => update("skillQuickFollowUp", e.target.checked)}
+                  />
+                  Send a quick follow-up
+                </label>
+                {form.skillQuickFollowUp && (
+                  <div className="mt-3 flex flex-col gap-3 border-t border-gray-100 pt-3">
+                    <label className="text-xs font-medium text-gray-600">
+                      Wait this long with no reply before checking in
+                      <select
+                        value={form.quickFollowUpMinutes}
+                        onChange={(e) => update("quickFollowUpMinutes", Number(e.target.value))}
+                        className={inputClass}
+                      >
+                        <option value={10}>10 minutes</option>
+                        <option value={30}>30 minutes</option>
+                      </select>
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
                 <h3 className="text-sm font-semibold text-gray-900">AI Self-Review</h3>
                 <p className="mt-1 text-xs text-gray-500">
                   Once a day, the AI reviews conversations you've marked Closed and honestly critiques its own

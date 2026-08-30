@@ -28,6 +28,8 @@ export type AgentProfileData = {
   followUpHours: number;
   followUpTemplateId: string;
   skillSelfAnalysis: boolean;
+  skillQuickFollowUp: boolean;
+  quickFollowUpMinutes: number;
 };
 
 export async function saveAgentProfile(data: AgentProfileData) {

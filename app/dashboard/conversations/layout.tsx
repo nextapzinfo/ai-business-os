@@ -37,16 +37,30 @@ export default async function ConversationsLayout({ children }: { children: Reac
     return bTime - aTime;
   });
 
-  const items = sorted.map((c) => ({
-    id: c.id,
-    clientName: c.client.name,
-    clientPhone: c.client.phone, // added 2026-08-28 — see the search bar in ConversationList.tsx
-    channel: c.channel,
-    status: c.status,
-    aiPaused: c.aiPaused,
-    handoffReason: c.handoffReason,
-    lastMessage: c.messages[0]?.content ?? "No messages yet",
-  }));
+  const items = sorted.map((c) => {
+    const latest = c.messages[0];
+    // Unread = the newest message is from the CUSTOMER and staff hasn't
+    // opened this conversation since it arrived (added 2026-08-30, owner's
+    // own request: "Kono unread message thakle pase blink korbe"). A
+    // CLIENT-sent latest message with lastReadAt still null (never opened)
+    // or older than the message counts as unread; anything the AI or staff
+    // themselves sent last is never "unread" — there's nothing new for
+    // staff to see.
+    const isUnread = Boolean(
+      latest && latest.sender === "CLIENT" && (!c.lastReadAt || latest.createdAt > c.lastReadAt)
+    );
+    return {
+      id: c.id,
+      clientName: c.client.name,
+      clientPhone: c.client.phone, // added 2026-08-28 — see the search bar in ConversationList.tsx
+      channel: c.channel,
+      status: c.status,
+      aiPaused: c.aiPaused,
+      handoffReason: c.handoffReason,
+      lastMessage: latest?.content ?? "No messages yet",
+      isUnread,
+    };
+  });
 
   return (
     <>

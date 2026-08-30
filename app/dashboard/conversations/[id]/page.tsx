@@ -2,6 +2,8 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { sendWhatsAppMessage, sendWhatsAppImageMessage, sendWhatsAppVideoMessage } from "@/lib/whatsapp";
+import { analyzeConversationForInsights } from "@/lib/llm";
+import { logAiUsage } from "@/lib/billing";
 import { put } from "@vercel/blob";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -163,7 +165,12 @@ async function toggleAiPaused(formData: FormData) {
   const resuming = conversation.aiPaused; // currently paused → this click resumes it
   await prisma.conversation.update({
     where: { id: conversation.id },
-    data: { aiPaused: !conversation.aiPaused, ...(resuming ? { handoffReason: null } : {}) },
+    data: {
+      aiPaused: !conversation.aiPaused,
+      ...(resuming
+        ? { handoffReason: null, aiPausedAt: null }
+        : { aiPausedAt: new Date() }), // marks where this handoff window starts, so a resume later knows exactly which messages were part of it
+    },
   });
 
   await logAudit({
@@ -173,7 +180,66 @@ async function toggleAiPaused(formData: FormData) {
     metadata: { conversationId: conversation.id },
   });
 
+  // Immediate self-training on resume (2026-08-30, owner's own request: staff
+  // handling 2-3 lines during a handoff, then transferring back to AI,
+  // should get self-assessed/trained from right away — not wait for the
+  // once-nightly cron, which only ever reviews CLOSED conversations). Only
+  // runs when: (a) this click actually resumed the AI (not a pause), (b) we
+  // know when this handoff started (aiPausedAt was set — always true for a
+  // handoff started after this feature shipped), (c) the owner has "AI
+  // Self-Review" turned on (Agent Studio → Skills) — the exact same toggle
+  // that gates the nightly job, not a second separate setting, and (d)
+  // staff actually said something during the handoff — a pause+resume with
+  // no reply in between has nothing to learn from. Awaited (not
+  // fire-and-forget) so it reliably finishes before this Server Action's
+  // serverless invocation ends, at the cost of the "Resume AI" button
+  // taking a couple of seconds longer to confirm — reliability over
+  // snappiness for something whose entire point is to actually capture the
+  // teaching moment, not silently drop it.
+  if (resuming && conversation.aiPausedAt) {
+    try {
+      const [profile, handoffMessages] = await Promise.all([
+        prisma.agentProfile.findUnique({ where: { organizationId: user.organizationId } }),
+        prisma.message.findMany({
+          where: { conversationId: conversation.id, createdAt: { gte: conversation.aiPausedAt } },
+          orderBy: { createdAt: "asc" },
+        }),
+      ]);
+
+      const staffSpoke = handoffMessages.some((m) => m.sender === "STAFF");
+      if (profile?.skillSelfAnalysis && staffSpoke) {
+        const transcript = handoffMessages.map((m) => ({ sender: m.sender, content: m.content }));
+        const { result, usage } = await analyzeConversationForInsights(transcript, profile.businessName);
+        // Reuses the "self_analysis" usage-log category rather than adding a
+        // new one — same kind of call (analyzeConversationForInsights) as
+        // the nightly cron, just triggered immediately instead of in a
+        // batch; keeps the Billing page's cost breakdown from needing to
+        // know about a 5th category for what's really the same thing.
+        await logAiUsage(user.organizationId, "self_analysis", usage);
+
+        if (result && (result.mistakes || result.unanswered || result.suggestedKnowledge || result.suggestedRules)) {
+          await prisma.handoffInsight.create({
+            data: {
+              organizationId: user.organizationId,
+              conversationId: conversation.id,
+              mistakes: result.mistakes || null,
+              unanswered: result.unanswered || null,
+              suggestedKnowledge: result.suggestedKnowledge || null,
+              suggestedRules: result.suggestedRules || null,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      // Never let a self-training hiccup block or fail the actual "Resume
+      // AI" action — the conversation has already been resumed above by
+      // this point regardless of what happens here.
+      console.error("Handoff self-training failed:", err);
+    }
+  }
+
   revalidatePath(`/dashboard/conversations/${conversationId}`);
+  revalidatePath("/dashboard/training");
 }
 
 export default async function ConversationDetailPage({ params }: { params: { id: string } }) {
@@ -196,6 +262,15 @@ export default async function ConversationDetailPage({ params }: { params: { id:
   ]);
 
   if (!conversation) redirect("/dashboard/conversations");
+
+  // Staff is looking at this conversation right now — mark it read so its
+  // unread-blink dot clears in the list (2026-08-30). Fire-and-forget: never
+  // block rendering the page on this, and never let it fail the page load —
+  // worst case the dot keeps blinking one extra refresh cycle, not a big
+  // deal, versus a broken conversation page.
+  prisma.conversation
+    .update({ where: { id: conversation.id }, data: { lastReadAt: new Date() } })
+    .catch((err: unknown) => console.error("Failed to mark conversation read:", err));
 
   // Full WhatsApp-style history: pull every message from EVERY conversation
   // this client has ever had on this channel, not just the single

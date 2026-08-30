@@ -10,15 +10,42 @@ import {
   fetchAgeBreakdown,
   fetchGenderBreakdown,
   fetchEcommerceFunnel,
+  todayInIndia,
+  daysAgoInIndia,
   type TrafficOverview,
   type TopPageRow,
   type NamedCountRow,
   type EcommerceFunnel,
 } from "@/lib/ga4";
+import { Download } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-const PERIOD_DAYS = 7;
+// Day/Week/Custom report picker — added 2026-08-30, owner's own request:
+// "Session e nos ta dakhabe (kotojon visit korlo) and report download
+// option (days/weekly/customezied date from to)". Resolves whatever the
+// owner picked down to one explicit {startDate, endDate} pair up front, so
+// every stat/chart/list on the page AND the "Download Report" link below
+// all reflect the exact same period — never a "7 days" label on screen next
+// to a downloaded file that's actually a different range.
+function resolvePeriod(searchParams: { period?: string; from?: string; to?: string }): {
+  range: { startDate: string; endDate: string };
+  label: string;
+} {
+  const today = todayInIndia();
+
+  if (searchParams.period === "custom" && searchParams.from && searchParams.to) {
+    return { range: { startDate: searchParams.from, endDate: searchParams.to }, label: "Custom range" };
+  }
+  if (searchParams.period === "1") {
+    return { range: { startDate: today, endDate: today }, label: "Today" };
+  }
+  if (searchParams.period === "30") {
+    return { range: { startDate: daysAgoInIndia(29), endDate: today }, label: "Last 30 days" };
+  }
+  // Default: last 7 days (matches this page's original fixed behavior).
+  return { range: { startDate: daysAgoInIndia(6), endDate: today }, label: "Last 7 days" };
+}
 
 // Website Visitors — added 2026-08-24 per the owner's "Website → GA4 →
 // Banglar Doi OS Dashboard" request. The Live Right Now panel polls its own
@@ -26,7 +53,11 @@ const PERIOD_DAYS = 7;
 // a normal server-rendered snapshot for the last 7 days, refreshed whenever
 // the page itself is opened/navigated to — no need for those heavier report
 // queries to re-run every 30s the way the live count does.
-export default async function VisitorsPage() {
+export default async function VisitorsPage({
+  searchParams,
+}: {
+  searchParams: { period?: string; from?: string; to?: string };
+}) {
   const user = await getCurrentUser();
   if (!user) return null;
 
@@ -48,39 +79,105 @@ export default async function VisitorsPage() {
     );
   }
 
+  const { range, label: periodLabel } = resolvePeriod(searchParams);
+  const activePeriod = searchParams.period === "custom" && searchParams.from && searchParams.to
+    ? "custom"
+    : searchParams.period === "1" || searchParams.period === "30"
+    ? searchParams.period
+    : "7";
+
   // Every report query runs independently and is individually allowed to
   // fail without breaking the rest of the page — a GA4 hiccup on one metric
   // (or, e.g., banglardoi.com's tracking not being live yet so there's
   // simply no data) shouldn't take down the whole dashboard.
   const [overview, topPages, sources, devices, browsers, ages, genders, funnel] = await Promise.all([
-    fetchTrafficOverview(PERIOD_DAYS).catch((): TrafficOverview | null => null),
-    fetchTopPages(PERIOD_DAYS).catch((): TopPageRow[] => []),
-    fetchTrafficSources(PERIOD_DAYS).catch((): NamedCountRow[] => []),
-    fetchDeviceBreakdown(PERIOD_DAYS).catch((): NamedCountRow[] => []),
-    fetchBrowserBreakdown(PERIOD_DAYS).catch((): NamedCountRow[] => []),
+    fetchTrafficOverview(range).catch((): TrafficOverview | null => null),
+    fetchTopPages(range).catch((): TopPageRow[] => []),
+    fetchTrafficSources(range).catch((): NamedCountRow[] => []),
+    fetchDeviceBreakdown(range).catch((): NamedCountRow[] => []),
+    fetchBrowserBreakdown(range).catch((): NamedCountRow[] => []),
     // Age/Gender only return real (non-"Not available") rows once Google
     // signals data collection is turned on in GA4 Admin (owner turned this on
     // 2026-08-25) — see the comment on fetchAgeBreakdown/fetchGenderBreakdown
     // in lib/ga4.ts for why a large "Not available" bucket is normal here.
-    fetchAgeBreakdown(PERIOD_DAYS).catch((): NamedCountRow[] => []),
-    fetchGenderBreakdown(PERIOD_DAYS).catch((): NamedCountRow[] => []),
-    fetchEcommerceFunnel(PERIOD_DAYS).catch((): EcommerceFunnel | null => null),
+    fetchAgeBreakdown(range).catch((): NamedCountRow[] => []),
+    fetchGenderBreakdown(range).catch((): NamedCountRow[] => []),
+    fetchEcommerceFunnel(range).catch((): EcommerceFunnel | null => null),
   ]);
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto">
-      <div>
-        <h1 className="text-xl font-semibold text-gray-900">Website Visitors</h1>
-        <p className="mt-1 text-sm text-gray-500">Live visitor and traffic data from banglardoi.com, via GA4.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-gray-900">Website Visitors</h1>
+          <p className="mt-1 text-sm text-gray-500">Live visitor and traffic data from banglardoi.com, via GA4.</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Plain GET links — no client JS needed, each just re-renders this
+              Server Component with a different ?period. */}
+          <div className="flex overflow-hidden rounded-lg border border-gray-200 text-xs font-medium">
+            {[
+              { key: "1", label: "Day" },
+              { key: "7", label: "Week" },
+              { key: "30", label: "30 Days" },
+            ].map((p) => (
+              <a
+                key={p.key}
+                href={`/dashboard/visitors?period=${p.key}`}
+                className={`px-3 py-1.5 ${
+                  activePeriod === p.key ? "bg-primary text-white" : "bg-white text-gray-600 hover:bg-gray-50"
+                }`}
+              >
+                {p.label}
+              </a>
+            ))}
+          </div>
+
+          {/* Custom date-range form — submits as a plain GET so the resulting
+              URL (?period=custom&from=...&to=...) is shareable/bookmarkable
+              and the Download Report link below can read the same params. */}
+          <form action="/dashboard/visitors" method="get" className="flex items-center gap-1.5">
+            <input type="hidden" name="period" value="custom" />
+            <input
+              type="date"
+              name="from"
+              defaultValue={activePeriod === "custom" ? searchParams.from : undefined}
+              max={todayInIndia()}
+              className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-700"
+            />
+            <span className="text-xs text-gray-400">to</span>
+            <input
+              type="date"
+              name="to"
+              defaultValue={activePeriod === "custom" ? searchParams.to : undefined}
+              max={todayInIndia()}
+              className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-700"
+            />
+            <button
+              type="submit"
+              className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+            >
+              Go
+            </button>
+          </form>
+
+          <a
+            href={`/api/ga4/report?from=${range.startDate}&to=${range.endDate}`}
+            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-light"
+          >
+            <Download size={13} /> Download Report
+          </a>
+        </div>
       </div>
 
       <LiveVisitorsPanel />
 
       {overview && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-          <StatCard label="Sessions (7d)" value={overview.sessions} />
-          <StatCard label="Visitors (7d)" value={overview.totalUsers} />
-          <StatCard label="Page Views (7d)" value={overview.screenPageViews} />
+          <StatCard label={`Sessions (${periodLabel})`} value={overview.sessions} />
+          <StatCard label={`Visitors (${periodLabel})`} value={overview.totalUsers} />
+          <StatCard label={`Page Views (${periodLabel})`} value={overview.screenPageViews} />
           <StatCard label="Engagement Rate" value={`${Math.round(overview.engagementRate * 100)}%`} />
           <StatCard label="Avg. Time on Site" value={formatDuration(overview.averageSessionDuration)} />
         </div>
@@ -88,7 +185,7 @@ export default async function VisitorsPage() {
 
       {overview && overview.byDate.length > 0 && (
         <div className="rounded-xl border border-gray-200 bg-white p-4">
-          <h3 className="text-sm font-semibold text-gray-900">Sessions — last {PERIOD_DAYS} days</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Sessions — {periodLabel}</h3>
           <div className="mt-3 flex items-end gap-1" style={{ height: 100 }}>
             {overview.byDate.map((d) => {
               const max = Math.max(1, ...overview.byDate.map((x) => x.sessions));
@@ -112,7 +209,7 @@ export default async function VisitorsPage() {
 
       {funnel && (
         <div className="rounded-xl border border-gray-200 bg-white p-4">
-          <h3 className="text-sm font-semibold text-gray-900">Ecommerce Funnel — last {PERIOD_DAYS} days</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Ecommerce Funnel — {periodLabel}</h3>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <FunnelStep label="Product Views" value={funnel.itemsViewed} />
             <FunnelStep label="Added to Cart" value={funnel.addToCarts} />

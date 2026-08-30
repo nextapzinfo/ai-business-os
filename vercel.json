@@ -3,6 +3,7 @@
   "framework": "nextjs",
   "crons": [
     { "path": "/api/cron/follow-up", "schedule": "30 3 * * *" },
-    { "path": "/api/cron/self-analysis", "schedule": "0 18 * * *" }
+    { "path": "/api/cron/self-analysis", "schedule": "0 18 * * *" },
+    { "path": "/api/cron/quick-follow-up", "schedule": "*/5 * * * *" }
   ]
 }
