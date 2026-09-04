@@ -1391,7 +1391,7 @@ export async function POST(req: NextRequest) {
       }
       if (name === "check_order_status") {
         try {
-          const orders = await fetchBanglarDoiOrderStatus(client!.phone);
+          const orderNumber = (args.orderNumber as string)?.trim() || undefined; const orders = await fetchBanglarDoiOrderStatus(client!.phone, orderNumber);
           if (orders.length === 0) {
             return "No orders were found for this customer's WhatsApp number — tell them honestly you don't see any orders on file for this number, and ask if they ordered using a different phone number.";
           }
