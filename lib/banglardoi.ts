@@ -87,8 +87,8 @@ async function banglarDoiFetch(path: string): Promise<any> {
 // phone should be the customer's own WhatsApp number (digits, e.g.
 // "919831012345") — Banglar Doi matches on the last 10 digits, so it works
 // regardless of whether a leading "91" is present.
-export async function fetchBanglarDoiOrderStatus(phone: string): Promise<BanglarDoiOrder[]> {
-  const data = await banglarDoiFetch(`/api/integrations/order-status?phone=${encodeURIComponent(phone)}`);
+export async function fetchBanglarDoiOrderStatus(phone: string, orderNumber?: string): Promise<BanglarDoiOrder[]> {
+  const query = orderNumber ? `orderNumber=${encodeURIComponent(orderNumber)}` : `phone=${encodeURIComponent(phone)}`; const data = await banglarDoiFetch(`/api/integrations/order-status?${query}`);
   return (data.orders ?? []) as BanglarDoiOrder[];
 }
 
