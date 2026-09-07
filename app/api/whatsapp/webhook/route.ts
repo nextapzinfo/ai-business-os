@@ -67,6 +67,44 @@ function formatLocationMessage(location: {
   return `📍 Shared location${label ? `: ${label}` : ""}\n${mapsUrl}`;
 }
 
+// Sends the AI’s reply as one or more separate WhatsApp messages instead of
+// a single long block — splitting on blank lines (paragraph breaks), which
+// the system prompt (lib/llm.ts) instructs the model to use between
+// genuinely separate thoughts/topics in one answer. Each part is sent one
+// after another, the way a real person typing on their phone naturally
+// sends a few short texts instead of one big paragraph, rather than
+// everything landing in a single WhatsApp bubble.
+const MAX_WHATSAPP_MESSAGE_PARTS = 4;
+const MIN_WHATSAPP_CHUNK_LENGTH = 20;
+
+function splitIntoWhatsAppMessages(text: string): string[] {
+  const rawParts = text
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (rawParts.length <= 1) return [text.trim()];
+
+  // Merge any very short fragment into the previous part instead of
+  // sending it as its own tiny, oddly-abrupt bubble.
+  const merged: string[] = [];
+  for (const part of rawParts) {
+    if (merged.length > 0 && merged[merged.length - 1].length < MIN_WHATSAPP_CHUNK_LENGTH) {
+      merged[merged.length - 1] = `${merged[merged.length - 1]}\n\n${part}`;
+    } else {
+      merged.push(part);
+    }
+  }
+
+  if (merged.length <= MAX_WHATSAPP_MESSAGE_PARTS) return merged;
+
+  // Too many parts — collapse the overflow into the last allowed message
+  // rather than silently dropping content or spamming the customer.
+  const head = merged.slice(0, MAX_WHATSAPP_MESSAGE_PARTS - 1);
+  const tail = merged.slice(MAX_WHATSAPP_MESSAGE_PARTS - 1).join("\n\n");
+  return [...head, tail];
+}
+
 // Meta calls this once when the webhook URL is configured, to verify ownership.
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
