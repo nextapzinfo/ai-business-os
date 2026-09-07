@@ -1811,7 +1811,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await sendWhatsAppMessage(from, finalAnswer);
+    { const __parts = splitIntoWhatsAppMessages(finalAnswer); for (let __i = 0; __i < __parts.length; __i++) { await sendWhatsAppMessage(from, __parts[__i]); if (__i < __parts.length - 1) await new Promise((resolve) => setTimeout(resolve, 700)); } }
 
     // Actually send the product/event photo determined above (matchedProduct /
     // matchedEvent were precomputed before the AI call so its text reply could
