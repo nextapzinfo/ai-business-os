@@ -114,16 +114,32 @@ export async function fetchLiveProductPriceText(name: string): Promise<string | 
     if (products.length === 0) return null;
     const norm = name.trim().toLowerCase();
     const exact = products.find((p) => p.name.trim().toLowerCase() === norm);
-    const best = exact ?? (products.length === 1 ? products[0] : null);
-    if (!best || best.variants.length === 0) return null;
-    return best.variants
-      .map(
-        (v) =>
-          `${v.label} — ${v.price}${v.minOrderQty > 1 ? ` (min order ${v.minOrderQty})` : ""} — ${
-            v.inStock ? "in stock" : "OUT OF STOCK"
-          }`
-      )
-      .join("; ");
+    // When there’s no single exact match, don’t guess between ambiguous
+    // candidates by picking one — but when the candidates are genuinely a
+    // family of same-name variants (e.g. a search for "Taal Bora" matching
+    // both "Taal Bora (Middium)" and "Taal Bora (Big)"), listing every one
+    // of them, each clearly labelled with its own product name, is the
+    // right behaviour — not silently returning null and letting the
+    // caller fall back to old, separately-typed price text that has no
+    // idea these are now two separate live products.
+    const matches = exact ? [exact] : products;
+    if (matches.length === 0) return null;
+
+    return matches
+      .map((p) => {
+        if (p.variants.length === 0) return null;
+        const variantText = p.variants
+          .map(
+            (v) =>
+              `${v.label} — ${v.price}${v.minOrderQty > 1 ? ` (min order ${v.minOrderQty})` : ""} — ${
+                v.inStock ? "in stock" : "OUT OF STOCK"
+              }`
+          )
+          .join("; ");
+        return matches.length > 1 ? `${p.name}: ${variantText}` : variantText;
+      })
+      .filter(Boolean)
+      .join(" | ");
   } catch (err) {
     console.error("fetchLiveProductPriceText failed:", err);
     return null;
