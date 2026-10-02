@@ -51,6 +51,9 @@ export default async function AgentStudioPage() {
     skillSelfAnalysis: profile?.skillSelfAnalysis ?? false,
     skillQuickFollowUp: profile?.skillQuickFollowUp ?? false,
     quickFollowUpMinutes: profile?.quickFollowUpMinutes ?? 30,
+    skillOwnerAssistant: profile?.skillOwnerAssistant ?? false,
+    ownerAssistantPhone: profile?.ownerAssistantPhone ?? "",
+    ownerDigestTemplateId: profile?.ownerDigestTemplateId ?? "",
   };
 
   const initialDocuments = documents.map((d) => ({

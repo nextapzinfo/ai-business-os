@@ -730,6 +730,68 @@ export default function AgentStudioClient({
               </div>
 
               <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-gray-900">Owner Assistant (WhatsApp)</h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  A personal, privileged WhatsApp line just for you — separate from customer chats on this same
+                  number. Message the AI from your own phone number below any time to ask what's pending
+                  (escalated/unread conversations, self-review findings) or to teach/correct it, exactly like the
+                  Teach AI chat on the Training page, just from WhatsApp instead. The owner's number is never
+                  shown to customers and never treated as a customer.
+                </p>
+                <label className="mt-3 flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={form.skillOwnerAssistant}
+                    onChange={(e) => update("skillOwnerAssistant", e.target.checked)}
+                  />
+                  Enable Owner Assistant
+                </label>
+                {form.skillOwnerAssistant && (
+                  <div className="mt-3 flex flex-col gap-3 border-t border-gray-100 pt-3">
+                    <label className="text-xs font-medium text-gray-600">
+                      Your personal WhatsApp number
+                      <input
+                        type="text"
+                        placeholder="e.g. 8017011018"
+                        value={form.ownerAssistantPhone}
+                        onChange={(e) => update("ownerAssistantPhone", e.target.value)}
+                        className={inputClass}
+                      />
+                      <span className="mt-1 block text-[11px] font-normal text-gray-400">
+                        Message the AI from THIS exact number any time — no template needed, it replies normally.
+                      </span>
+                    </label>
+                    <label className="text-xs font-medium text-gray-600">
+                      Daily digest template (optional)
+                      <select
+                        value={form.ownerDigestTemplateId}
+                        onChange={(e) => update("ownerDigestTemplateId", e.target.value)}
+                        className={inputClass}
+                      >
+                        <option value="">Don't send a daily digest — on-demand only</option>
+                        {approvedTemplates.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name} ({t.language})
+                          </option>
+                        ))}
+                      </select>
+                      <span className="mt-1 block text-[11px] font-normal text-gray-400">
+                        WhatsApp only lets us message you first with an approved template (not free text) — create
+                        one on the Templates page with up to 3 placeholders (needs-a-human count, unread count,
+                        self-review findings count, in that order) and pick it here. Sent once a day, and only when
+                        something is actually pending.
+                      </span>
+                      {approvedTemplates.length === 0 && (
+                        <span className="mt-1 block text-[11px] font-normal text-amber-600">
+                          No approved templates yet — create and get one approved on the Templates page first.
+                        </span>
+                      )}
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
                 <h3 className="text-sm font-semibold text-gray-900">Coming soon</h3>
                 <p className="mt-1 text-xs text-gray-500">
                   <span className="font-medium text-amber-600">Note:</span> automation for this isn't built

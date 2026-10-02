@@ -30,6 +30,9 @@ export type AgentProfileData = {
   skillSelfAnalysis: boolean;
   skillQuickFollowUp: boolean;
   quickFollowUpMinutes: number;
+  skillOwnerAssistant: boolean;
+  ownerAssistantPhone: string;
+  ownerDigestTemplateId: string;
 };
 
 export async function saveAgentProfile(data: AgentProfileData) {

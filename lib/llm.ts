@@ -1324,6 +1324,23 @@ export const ADD_QA_PAIR_TOOL: ToolDefinition = {
   },
 };
 
+// Owner Assistant (2026-10-02) — read-only counterpart to the 4 Teach AI
+// write tools above, used ONLY by askOwnerAssistant below (never by the
+// dashboard Teach AI chat, which has no reason to ask about its own
+// conversations). Backs the owner's own request: "ki ki chat baki ache ...
+// kono Human interface r darkar ache kina" (what chats are pending, does any
+// need a human) — answered from the real Conversation/ConversationInsight/
+// HandoffInsight tables, never guessed or invented.
+export const GET_PENDING_ITEMS_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_pending_items",
+    description:
+      "Look up what currently needs the owner's attention on WhatsApp: conversations waiting on a human (escalated by the AI, or a staff member actively handling one), customer messages with no reply yet, and self-review quality findings not yet reviewed. ALWAYS call this when the owner asks what's pending, what's going on, for an update/status, whether anything needs them personally, or anything in that shape — never answer from memory or guess a number, the real counts can only come from this tool.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+};
+
 // Distinct from askAIWithTools's buildSystemPrompt: that one frames the model
 // as a customer-facing WhatsApp assistant, which is the wrong persona for this
 // internal owner-only chat. This system prompt is intentionally small and
@@ -1348,6 +1365,91 @@ Four tools, pick carefully:
 If you're not confident which applies, ask a short clarifying question instead of guessing or calling a tool.
 
 After a tool call succeeds, confirm briefly and plainly what you saved/updated — don't repeat the full content back at length, just enough for the owner to trust it was understood correctly. Keep replies short — this is a quick back-and-forth, not a report.`;
+
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemPrompt },
+    ...history,
+    { role: "user", content: message },
+  ];
+
+  const first = await callChat(apiKey, messages, tools);
+  let promptTokens = first.usage.promptTokens;
+  let completionTokens = first.usage.completionTokens;
+
+  const toolCalls = first.message.tool_calls as
+    | { id: string; function: { name: string; arguments: string } }[]
+    | undefined;
+
+  if (!toolCalls || toolCalls.length === 0) {
+    return { answer: (first.message.content as string) ?? "", usage: { promptTokens, completionTokens } };
+  }
+
+  messages.push(first.message);
+
+  for (const call of toolCalls) {
+    let args: Record<string, any> = {};
+    try {
+      args = JSON.parse(call.function.arguments || "{}");
+    } catch {
+      // malformed JSON from the model — leave args empty, executeTool can reject it
+    }
+
+    let resultText: string;
+    try {
+      resultText = await executeTool(call.function.name, args);
+    } catch (err) {
+      resultText = `Failed: ${(err as Error).message}`;
+    }
+
+    messages.push({ role: "tool", tool_call_id: call.id, content: resultText });
+  }
+
+  const second = await callChat(apiKey, messages, []);
+  promptTokens += second.usage.promptTokens;
+  completionTokens += second.usage.completionTokens;
+
+  return { answer: (second.message.content as string) ?? "", usage: { promptTokens, completionTokens } };
+}
+
+// Owner Assistant (2026-10-02) — the owner's own personal, privileged
+// WhatsApp channel into this app (see Organization... actually AgentProfile.
+// skillOwnerAssistant/ownerAssistantPhone in schema.prisma, and
+// lib/owner-assistant.ts for the webhook-side routing). Owner's own request,
+// verbatim: "amar personal AI assistant amake help korbe, ki ki chat baki
+// ache ... kono Human interface r darkar ache kina, ba kichu update korle
+// ami sekhane ai ke bolbo - seta thik kore debe" (a personal AI assistant
+// that tells me what chats are pending / whether anything needs a human, and
+// that I can also just tell to fix/update something).
+//
+// Deliberately a SEPARATE function from askTeachAI rather than a parametrized
+// variant of it — askTeachAI is a working, already-shipped dashboard feature;
+// duplicating its small body here (same shape: one OpenAI call, tool_calls
+// loop, second call for the final reply) means this new WhatsApp entry point
+// can never accidentally change dashboard Teach AI's behavior. The two DO
+// share the real tool-execution logic itself (lib/teach-tools.ts's
+// createTeachToolExecutor) — only the system prompt/tool list and calling
+// surface differ here.
+export async function askOwnerAssistant(
+  message: string,
+  history: ChatHistoryMessage[],
+  tools: ToolDefinition[],
+  executeTool: ToolExecutor
+): Promise<AiCallResult> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+
+  const systemPrompt = `You are the business owner's personal admin assistant for their WhatsApp AI Business OS, reaching them directly on their own personal WhatsApp number (a totally separate, privileged channel from the customer-facing sales conversations this same app also runs). Reply in whatever mix of Bengali/English the owner writes in. Keep replies short and conversational — this is a quick WhatsApp chat with the owner, not a report.
+
+Five tools available, pick carefully:
+- get_pending_items — ALWAYS call this when the owner asks what's pending, what's going on, for a status/update, or whether anything needs a human — never answer from memory, always check the real current numbers.
+- update_product_info — ONLY for correcting a NAMED, existing product's own price or description.
+- update_style_rule — a standing rule the AI should follow on EVERY future reply going forward (how it should write/behave, or a general business policy not scoped to one product).
+- add_qa_pair — teaching how to answer a specific kind of question, especially with several phrasings of the same question.
+- add_knowledge_note — a new fact/policy that isn't a correction to one product and isn't naturally a multi-phrasing Q&A.
+
+If the owner is teaching/correcting something and you're not confident which of the 4 write tools applies, ask a short clarifying question instead of guessing. After any write tool succeeds, confirm briefly and plainly what you saved — don't repeat it back at length.
+
+This channel is exactly as privileged as the Teach AI chat on the dashboard — anything saved here goes live for real customers immediately, the same as a dashboard edit.`;
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },

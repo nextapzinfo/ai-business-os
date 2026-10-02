@@ -113,6 +113,33 @@ model AgentProfile {
   // there) rather than reusing those fields.
   skillQuickFollowUp   Boolean  @default(false)
   quickFollowUpMinutes Int      @default(30) // owner chooses 10 or 30 in Agent Studio — see AgentStudioClient.tsx
+
+  // Owner Assistant (2026-10-02), owner's own request: a personal, privileged
+  // WhatsApp channel so the owner can ask "ki ki chat baki ache" (what's
+  // pending) and get a live status report, and teach/correct the AI the same
+  // way Teach AI chat already works on the dashboard — but from their own
+  // phone, since the real Conversations/Training pages live in this app's
+  // dashboard, not inside WhatsApp itself. When skillOwnerAssistant is on and
+  // ownerAssistantPhone is set, any inbound WhatsApp message FROM that exact
+  // number (compared digits-only, country-code-normalized — see
+  // lib/owner-assistant.ts) is routed to a completely separate flow instead
+  // of the customer sales-agent flow — never creates a Client, never enters
+  // the customer Conversations list. See lib/owner-assistant.ts for the full
+  // read (get_pending_items) + write (same 4 tools as Teach AI, factored into
+  // lib/teach-tools.ts so both entry points share one implementation) design.
+  skillOwnerAssistant   Boolean @default(false)
+  ownerAssistantPhone   String? // the one phone number allowed to use this privileged channel — digits only, country code first (e.g. "918017011018"), same format Meta sends as message.from
+  // Optional: an APPROVED MessageTemplate (create it on the Templates page,
+  // any body text/category works — UTILITY recommended) that
+  // /api/cron/owner-digest sends once a day to proactively nudge the owner
+  // when there's something pending, since WhatsApp only allows a business to
+  // initiate contact via an approved template, never free text (see the long
+  // comment in app/api/cron/owner-digest/route.ts). Left unset = no daily
+  // push, the owner can still message the AI anytime on-demand for the same
+  // status (on-demand needs no template — it's always a reply to the owner's
+  // own inbound message). Loose reference, not a hard FK, same convention as
+  // followUpTemplateId above.
+  ownerDigestTemplateId String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }

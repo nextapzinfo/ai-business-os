@@ -20,7 +20,7 @@ export function calcOpenAiCostUsd(promptTokens: number, completionTokens: number
 // failure never breaks the actual customer-facing reply.
 export async function logAiUsage(
   organizationId: string,
-  source: "webhook_reply" | "sandbox_test" | "self_analysis" | "teach_ai_chat",
+  source: "webhook_reply" | "sandbox_test" | "self_analysis" | "teach_ai_chat" | "owner_assistant",
   usage: { promptTokens: number; completionTokens: number } | null | undefined
 ) {
   if (!usage) return;

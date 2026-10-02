@@ -47,6 +47,7 @@ import { fetchBoostedQAChunk } from "@/lib/qa-retrieval";
 import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
 import { logAiUsage } from "@/lib/billing";
+import { handleOwnerAssistantMessage, normalizeOwnerPhone } from "@/lib/owner-assistant";
 import { put } from "@vercel/blob";
 
 // Turns Meta's structured location payload ({latitude, longitude, name?, address?})
@@ -203,6 +204,26 @@ export async function POST(req: NextRequest) {
     const agentProfile = await prisma.agentProfile.findUnique({
       where: { organizationId: organization.id },
     });
+
+    // Owner Assistant (2026-10-02) — the owner's own personal, privileged
+    // WhatsApp channel into this app (see the long comment on
+    // AgentProfile.skillOwnerAssistant in schema.prisma and the top of
+    // lib/owner-assistant.ts for the full "why"). Checked BEFORE any
+    // customer Client/Conversation lookup below — when it matches, this
+    // message never creates a Client, never enters the customer
+    // Conversations list, and never reaches the customer sales-agent prompt;
+    // it's handled entirely by handleOwnerAssistantMessage and the function
+    // returns immediately. Text-only by design (not image/button/location/
+    // order) — those message types aren't meaningful for this channel.
+    if (
+      message.type === "text" &&
+      agentProfile?.skillOwnerAssistant &&
+      agentProfile.ownerAssistantPhone &&
+      normalizeOwnerPhone(from) === normalizeOwnerPhone(agentProfile.ownerAssistantPhone)
+    ) {
+      await handleOwnerAssistantMessage({ organizationId: organization.id, from, text, contactName });
+      return NextResponse.json({ status: "ok" });
+    }
 
     let client = await prisma.client.findFirst({
       where: { organizationId: organization.id, phone: from },
