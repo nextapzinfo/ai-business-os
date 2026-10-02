@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import {
   askOwnerAssistant,
   GET_PENDING_ITEMS_TOOL,
+  GET_TOP_ASKED_PRODUCTS_TOOL,
   UPDATE_PRODUCT_INFO_TOOL,
   ADD_KNOWLEDGE_NOTE_TOOL,
   UPDATE_STYLE_RULE_TOOL,
@@ -12,6 +13,7 @@ import {
 import { createTeachToolExecutor } from "@/lib/teach-tools";
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
 import { logAiUsage } from "@/lib/billing";
+import { getTopAskedProducts, formatTopAskedProductsForTool } from "@/lib/product-mentions";
 
 // Owner Assistant (2026-10-02) — a personal, privileged WhatsApp channel for
 // the business owner, separate from the customer-facing sales-agent flow
@@ -217,6 +219,11 @@ export async function handleOwnerAssistantMessage(params: {
       const snapshot = await getOwnerStatusSnapshot(organizationId);
       return formatOwnerStatusForTool(snapshot);
     }
+    if (name === "get_top_asked_products") {
+      const limit = typeof args.limit === "number" && args.limit > 0 ? Math.floor(args.limit) : 5;
+      const top = await getTopAskedProducts(organizationId, limit);
+      return formatTopAskedProductsForTool(top);
+    }
     return teachExecute(name, args);
   };
 
@@ -225,7 +232,14 @@ export async function handleOwnerAssistantMessage(params: {
     const result = await askOwnerAssistant(
       text,
       history,
-      [GET_PENDING_ITEMS_TOOL, UPDATE_PRODUCT_INFO_TOOL, ADD_KNOWLEDGE_NOTE_TOOL, UPDATE_STYLE_RULE_TOOL, ADD_QA_PAIR_TOOL],
+      [
+        GET_PENDING_ITEMS_TOOL,
+        GET_TOP_ASKED_PRODUCTS_TOOL,
+        UPDATE_PRODUCT_INFO_TOOL,
+        ADD_KNOWLEDGE_NOTE_TOOL,
+        UPDATE_STYLE_RULE_TOOL,
+        ADD_QA_PAIR_TOOL,
+      ],
       executeTool
     );
     if (result.answer) answer = result.answer;

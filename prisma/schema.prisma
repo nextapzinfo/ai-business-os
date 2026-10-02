@@ -71,6 +71,7 @@ model Organization {
   campaigns        Campaign[]
   quickReplies     QuickReply[]
   clientGroups     ClientGroup[]
+  productMentionLogs ProductMentionLog[]
 }
 
 // Configures how the WhatsApp AI presents itself and behaves — replaces the
@@ -745,6 +746,36 @@ model AiUsageLog {
   createdAt        DateTime     @default(now())
 
   @@index([organizationId])
+  @@index([createdAt])
+}
+
+// Owner Assistant (2026-10-02 follow-up), owner's own request: "kon kon
+// product customer besi ask korche seta ki bolte parbe" (can it tell which
+// products customers ask about most). One row per product genuinely named in
+// a CUSTOMER's own incoming WhatsApp message (never the AI's reply, and never
+// a staff/owner message) — logged in app/api/whatsapp/webhook/route.ts right
+// where findAllProductMatches() already confidently identifies every product
+// named in that message (the same matching this app already trusts for
+// price/minimum-order lookups). Deliberately a plain append-only log keyed by
+// productName (not only a Product relation) because a RETAIL org with the
+// live banglardoi.com catalog integration on can have customers naming real
+// products that have no row in this app's own local Product table at all —
+// productId is kept as a loose, nullable reference for the common case where
+// one does exist, never a hard requirement. Aggregated by
+// lib/product-mentions.ts's getTopAskedProducts(), read by the Owner
+// Assistant's get_top_asked_products tool (lib/llm.ts/owner-assistant.ts) —
+// NOT shown anywhere on the dashboard itself, WhatsApp-only per the owner's
+// own chosen scope.
+model ProductMentionLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  productId      String? // Product.id when the matched product has a local row — loose reference, not a hard FK, so a later-deleted Product never breaks old log rows
+  productName    String // always set, even when productId isn't — this is what aggregation groups by, since the live banglardoi.com catalog has no local id at all
+  conversationId String? // loose reference, for future drill-down (e.g. "which customers asked about X") — not used by getTopAskedProducts' current count-only aggregation
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, productName])
   @@index([createdAt])
 }
 

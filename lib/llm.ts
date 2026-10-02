@@ -1341,6 +1341,32 @@ export const GET_PENDING_ITEMS_TOOL: ToolDefinition = {
   },
 };
 
+// Owner Assistant (2026-10-02 follow-up) — owner's own request: "kon kon
+// product customer besi ask korche seta ki bolte parbe" (can it tell which
+// products customers ask about most). All-time cumulative count, grouped by
+// product name — see lib/product-mentions.ts for the real query. This is
+// read-only and WhatsApp-only, same as get_pending_items above — deliberately
+// NOT added to the dashboard Teach AI tool list, since that chat has no
+// reason to ask about its own usage trends.
+export const GET_TOP_ASKED_PRODUCTS_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_top_asked_products",
+    description:
+      "Look up which products customers have asked about the most, all-time, counted from real customer messages (not guessed, not from memory). ALWAYS call this when the owner asks which products are popular/trending, what customers ask about most, or anything in that shape.",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "integer",
+          description: "How many top products to return. Defaults to 5 if not given — only pass a different number if the owner asked for a specific count (e.g. 'top 10').",
+        },
+      },
+      required: [],
+    },
+  },
+};
+
 // Distinct from askAIWithTools's buildSystemPrompt: that one frames the model
 // as a customer-facing WhatsApp assistant, which is the wrong persona for this
 // internal owner-only chat. This system prompt is intentionally small and
@@ -1440,8 +1466,9 @@ export async function askOwnerAssistant(
 
   const systemPrompt = `You are the business owner's personal admin assistant for their WhatsApp AI Business OS, reaching them directly on their own personal WhatsApp number (a totally separate, privileged channel from the customer-facing sales conversations this same app also runs). Reply in whatever mix of Bengali/English the owner writes in. Keep replies short and conversational — this is a quick WhatsApp chat with the owner, not a report.
 
-Five tools available, pick carefully:
+Six tools available, pick carefully:
 - get_pending_items — ALWAYS call this when the owner asks what's pending, what's going on, for a status/update, or whether anything needs a human — never answer from memory, always check the real current numbers.
+- get_top_asked_products — ALWAYS call this when the owner asks which products are popular, trending, or what customers ask about most — never answer from memory or guess.
 - update_product_info — ONLY for correcting a NAMED, existing product's own price or description.
 - update_style_rule — a standing rule the AI should follow on EVERY future reply going forward (how it should write/behave, or a general business policy not scoped to one product).
 - add_qa_pair — teaching how to answer a specific kind of question, especially with several phrasings of the same question.

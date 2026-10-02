@@ -48,6 +48,7 @@ import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
 import { logAiUsage } from "@/lib/billing";
 import { handleOwnerAssistantMessage, normalizeOwnerPhone } from "@/lib/owner-assistant";
+import { logProductMentions } from "@/lib/product-mentions";
 import { put } from "@vercel/blob";
 
 // Turns Meta's structured location payload ({latitude, longitude, name?, address?})
@@ -780,6 +781,17 @@ export async function POST(req: NextRequest) {
 
       const allMentioned = findAllProductMatches(textWords, orgProducts);
       messageNamedProduct = allMentioned.length > 0;
+      // Owner Assistant (2026-10-02 follow-up) — "kon kon product customer
+      // besi ask korche seta ki bolte parbe". Logged right here, from the
+      // CUSTOMER's own incoming message only (never the AI's reply, which can
+      // name products the customer never actually asked about) — see
+      // lib/product-mentions.ts. Fire-and-forget-with-logging: never allowed
+      // to block or break the actual customer reply if this write fails.
+      void logProductMentions(
+        organization.id,
+        allMentioned.map((p) => ({ id: p.id, name: p.name })),
+        conversation.id
+      );
       if (allMentioned.length > 0) {
         const withFullInfo = await prisma.product.findMany({
           where: { id: { in: allMentioned.map((p) => p.id) } },
