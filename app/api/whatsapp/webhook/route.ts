@@ -14,6 +14,7 @@ import {
   CHECK_PRODUCT_STOCK_TOOL,
   applyTerminologySwaps,
   stripHallucinatedProductListings,
+  stripLeakedToolJson,
   validateEntityAssociationClaims,
   type ToolDefinition,
   type ChatHistoryMessage,
@@ -603,6 +604,29 @@ export async function POST(req: NextRequest) {
     const PINCODE_REGEX = /\b[1-9][0-9]{5}\b/;
     const pincodeMatch = text.match(PINCODE_REGEX);
     const effectivePincode: string | null = pincodeMatch ? pincodeMatch[0] : conversation.pincode;
+
+    // Real incident (2026-11-08, owner's own test chat): customer asked only
+    // "Cod hobe?" and the AI answered "700005 PIN-এর জন্য COD নেই" — a PIN
+    // saved weeks earlier that the customer never mentioned in this chat.
+    // A remembered PIN is fine to keep, but it must be CONFIRMED before any
+    // delivery/COD/fee answer is based on it — the customer may be ordering
+    // to a different address this time. "Fresh" = this PIN appears in any
+    // message of the last 24 hours of this conversation — either the
+    // customer typed it, or the AI already asked "আগের বার আপনার ঠিকানা
+    // ছিল … — এবারও কি এখানেই?" (so on the next turn the model sees its own
+    // question plus the customer's yes/no in history, and proceeds normally
+    // instead of asking again forever).
+    const PIN_FRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
+    const pincodeIsRemembered =
+      organization.vertical === "RETAIL" &&
+      !pincodeMatch &&
+      !!conversation.pincode &&
+      !priorMessages.some(
+        (m) =>
+          Date.now() - new Date(m.createdAt).getTime() < PIN_FRESH_WINDOW_MS &&
+          m.content.includes(conversation.pincode as string)
+      );
+
     if (pincodeMatch && conversation.pincode !== pincodeMatch[0]) {
       try {
         await prisma.conversation.update({
@@ -1221,9 +1245,28 @@ export async function POST(req: NextRequest) {
         const pincodeFromAddress = address.match(/\b[1-9][0-9]{5}\b/)?.[0];
         const pincode = pincodeArg && /^[1-9][0-9]{5}$/.test(pincodeArg) ? pincodeArg : pincodeFromAddress;
 
+        // Real incident (2026-11-08, owner's own test chat): customer sent
+        // only "700131" and the model called this tool with
+        // address="700131" — the bare PIN overwrote the real address text,
+        // while the OLD address ("Barabazar, 700005") was still compared
+        // against the new PIN on the next turn, producing a confusing
+        // "your address doesn't match" reply. A PIN-only "address" is not an
+        // address: never store it as Client.address. If the old address on
+        // file belongs to a DIFFERENT PIN it is now stale, so clear it —
+        // the customer is moving to a new area and must give a fresh full
+        // address (the completeness note below asks for it).
+        const isPinOnly = /^[\s\d,.-]*$/.test(address);
+        const oldAddressPin = client!.address?.match(/\b[1-9][0-9]{5}\b/)?.[0] ?? null;
+        const oldAddressIsStale = !!pincode && !!oldAddressPin && oldAddressPin !== pincode;
+        const addressData = isPinOnly
+          ? oldAddressIsStale
+            ? { address: null }
+            : {}
+          : { address };
+
         await prisma.client.update({
           where: { id: client!.id },
-          data: { address, ...(pincode ? { pinCode: pincode } : {}) },
+          data: { ...addressData, ...(pincode ? { pinCode: pincode } : {}) },
         });
         if (pincode && conversation!.pincode !== pincode) {
           await prisma.conversation
@@ -1579,12 +1622,31 @@ export async function POST(req: NextRequest) {
     // buildSystemPrompt simply omits the block in that case rather than
     // stating a number that isn't backed by a real configured zone. RETAIL-
     // vertical only, same gating already used for the Banglar Doi tools.
-    const businessRulesNote =
+    // An address on file that contains a DIFFERENT PIN than the one now in
+    // use is from an older order — comparing it against the new PIN only
+    // produces a false "your address doesn't match" reply (2026-11-08
+    // incident). Skip the mismatch check in that case; the AI asks for the
+    // new full address instead.
+    const addressOnFilePin = client.address?.match(/\b[1-9][0-9]{5}\b/)?.[0] ?? null;
+    const addressForCheck =
+      addressOnFilePin && effectivePincode && addressOnFilePin !== effectivePincode ? null : client.address;
+
+    const rememberedPinNote = pincodeIsRemembered
+      ? `REMEMBERED PIN — NOT GIVEN IN THIS CONVERSATION: PIN ${conversation.pincode}${
+          addressForCheck ? ` (address on file: "${addressForCheck}")` : ""
+        } was saved from an earlier conversation. The customer has NOT mentioned it now, so do NOT answer COD, delivery fee, minimum order or delivery availability as if it were their current address, and never state this PIN as if they just gave it. If their question depends on location, first ask them to confirm, e.g. "আগের বার আপনার ঠিকানা ছিল ${
+          addressForCheck ?? `PIN ${conversation.pincode}`
+        } — এবারও কি এখানেই ডেলিভারি চান?" — and only after they say yes, answer for that PIN. If they give a different PIN or address, use the new one.`
+      : null;
+
+    const rulesForPin =
       organization.vertical === "RETAIL"
         ? await buildBusinessRulesNote(
             organization.id,
-            effectivePincode,
-            client.address,
+            // A remembered (unconfirmed) PIN must not drive the authoritative
+            // delivery block — see rememberedPinNote above.
+            pincodeIsRemembered ? null : effectivePincode,
+            addressForCheck,
             // This turn's own product match wins if there is one, else fall
             // back to whatever this conversation last settled on — same
             // "current message first, then conversation memory" pattern used
@@ -1592,6 +1654,8 @@ export async function POST(req: NextRequest) {
             matchedProduct?.id ?? conversation.lastProductId
           )
         : null;
+    const businessRulesNote =
+      [rememberedPinNote, rulesForPin].filter((s): s is string => !!s).join("\n\n") || null;
 
     // Real incident (2026-08-20, owner's own report): asked "ki ki product
     // ache" (general browse), a 7-item featured carousel was sent, but the
@@ -1809,7 +1873,7 @@ export async function POST(req: NextRequest) {
     // to check against, so the reply is left alone (same conservative, only-
     // check-what-we-can-verify approach as the hallucination filter above).
     let claimChecked = entityChecked;
-    if (organization.vertical === "RETAIL" && effectivePincode) {
+    if (organization.vertical === "RETAIL" && effectivePincode && !pincodeIsRemembered) {
       // Live quote, not this app's own (legacy) DeliveryZone table — see
       // lib/business-rules.ts's 2026-08-20 header note. resolveDeliveryZone
       // is still consulted here, but only to find a zone-restricted
@@ -1830,7 +1894,7 @@ export async function POST(req: NextRequest) {
     // prompt already asks the model to do this, but that's a hint, not a
     // promise; this is the actual enforcement so a saved Word Swap is never
     // silently skipped in what the customer receives.
-    const finalAnswer = applyTerminologySwaps(claimChecked, agentProfile?.brandLanguage);
+    const finalAnswer = applyTerminologySwaps(stripLeakedToolJson(claimChecked), agentProfile?.brandLanguage);
 
     const noKnowledgeMatch = results.length === 0;
 

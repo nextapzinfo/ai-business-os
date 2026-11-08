@@ -492,6 +492,32 @@ function findMatchingVariant(
 // contain the exact figure quoted, may get dropped too (a false negative,
 // just a missing line) — much safer than the alternative (a fake product or
 // price reaching a real customer).
+// Real incident (2026-11-08, owner's own test chat): the customer received a
+// reply starting with the raw line {"address":"700131","pincode":"700131"} —
+// the model echoed its save_customer_address tool arguments into the visible
+// text. A customer reply never legitimately contains a JSON object, so any
+// {...} fragment that parses as a JSON object with string keys is removed
+// before sending. Non-JSON braces (e.g. "{name}" or emoji text) are left
+// alone because they fail JSON.parse.
+export function stripLeakedToolJson(text: string): string {
+  const cleaned = text.replace(/\{\s*"[A-Za-z_][\w-]*"\s*:[^{}]*\}/g, (match) => {
+    try {
+      const parsed = JSON.parse(match);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? "" : match;
+    } catch {
+      return match;
+    }
+  });
+  if (cleaned === text) return text;
+  // Tidy the gap the removal left behind (blank first line, double spaces).
+  return cleaned
+    .split("\n")
+    .map((line) => line.replace(/[ \t]{2,}/g, " ").trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function stripHallucinatedProductListings(text: string, catalogProducts: CatalogProduct[]): string {
   if (!text || catalogProducts.length === 0) return text;
   const realProductsByName = new Map<string, CatalogProduct>();
