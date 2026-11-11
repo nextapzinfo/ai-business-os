@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { AUTO_TAGS } from "@/lib/auto-tags";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { sendWhatsAppTemplateMessage } from "@/lib/whatsapp";
@@ -146,7 +147,13 @@ export default async function BroadcastsPage() {
   // request: "ami jdi chai catagory hisebe or Interest hisebe boradcast
   // korbo"). Client.tags already exists (set on the Clients page's Add/Edit
   // forms) — no new field needed, this just surfaces it here too.
-  const availableTags = Array.from(new Set<string>(clients.flatMap((c) => c.tags))).sort();
+  // CRM Step 2 — automatic tags (VIP/Regular/New/Inactive/Lead) first, then
+  // the staff-typed ones, so e.g. "send to all Inactive" is one tap.
+  const autoTagsInUse = AUTO_TAGS.filter((t) => clients.some((c) => c.autoTags.includes(t)));
+  const typedTags = Array.from(new Set<string>(clients.flatMap((c) => c.tags)))
+    .filter((t) => !(AUTO_TAGS as readonly string[]).includes(t))
+    .sort();
+  const availableTags = [...autoTagsInUse, ...typedTags];
 
   const groupOptions = clientGroups.map((g) => ({
     id: g.id,

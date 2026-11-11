@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refreshClientAutoTags } from "@/lib/auto-tags";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -148,6 +149,9 @@ export async function POST(req: NextRequest) {
       itemsJson: items,
     },
   });
+
+  // CRM Step 2 — keep this customer's automatic tags (VIP/Regular/…) current.
+  await refreshClientAutoTags(client.id);
 
   return NextResponse.json({ ok: true, clientOrderId: clientOrder.id, clientId: client.id });
 }

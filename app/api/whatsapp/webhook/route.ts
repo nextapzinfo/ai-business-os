@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refreshClientAutoTags } from "@/lib/auto-tags";
 import { prisma } from "@/lib/prisma";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import {
@@ -474,6 +475,7 @@ export async function POST(req: NextRequest) {
           totalAmount,
         },
       });
+      await refreshClientAutoTags(client.id); // CRM Step 2 — VIP/Regular/New tags
 
       const billText =
         `আপনার অর্ডার পেয়েছি! 🧾\n\n${itemsSummary}\n\n` +
@@ -1496,6 +1498,7 @@ export async function POST(req: NextRequest) {
             ...(estimatedTotal !== null ? { totalAmount: estimatedTotal } : {}),
           },
         });
+        await refreshClientAutoTags(client!.id); // CRM Step 2 — VIP/Regular/New tags
         await logAudit({
           organizationId: organization!.id,
           action: "ORDER_RECORDED_BY_AI",

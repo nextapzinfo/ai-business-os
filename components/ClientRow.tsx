@@ -31,6 +31,9 @@ export type ClientRowData = {
   address: string | null;
   pinCode: string | null;
   tags: string[];
+  // CRM Step 2 — system-calculated tags (VIP/Regular/New/Inactive/Lead),
+  // shown read-only; see lib/auto-tags.ts.
+  autoTags: string[];
   interestedIn: string | null;
   createdAt: Date;
   productInterests: ProductInterest[];
@@ -89,6 +92,7 @@ export default function ClientRow({
   conversationId,
   updateClient,
   deleteClient,
+  autoTagStyles = {},
 }: {
   client: ClientRowData;
   sourceLabel: { label: string; className: string };
@@ -96,6 +100,7 @@ export default function ClientRow({
   conversationId: string | null;
   updateClient: (formData: FormData) => Promise<void>;
   deleteClient: (formData: FormData) => Promise<void>;
+  autoTagStyles?: Record<string, string>;
 }) {
   const [name, setName] = useState(client.name);
   const [email, setEmail] = useState(client.email ?? "");
@@ -176,7 +181,18 @@ export default function ClientRow({
         <input value={pinCode} onChange={(e) => setPinCode(e.target.value)} placeholder="—" className={`${cellInputClass} min-w-[80px]`} />
       </td>
       <td className="px-4 py-2">
-        <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="—" className={`${cellInputClass} min-w-[130px]`} />
+        <div className="flex flex-col gap-1">
+          {client.autoTags.length > 0 && (
+            <div className="flex flex-wrap gap-1 px-1.5" title="Automatic tags — set by the system from orders">
+              {client.autoTags.map((t) => (
+                <span key={t} className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${autoTagStyles[t] ?? "bg-gray-100 text-gray-700"}`}>
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+          <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="—" className={`${cellInputClass} min-w-[130px]`} />
+        </div>
       </td>
       <td className="px-4 py-2">
         <div className="flex flex-col gap-1">

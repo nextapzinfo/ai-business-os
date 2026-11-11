@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { refreshClientAutoTags } from "@/lib/auto-tags";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
@@ -41,6 +42,7 @@ async function addOrder(formData: FormData) {
     metadata: { orderId: order.id, clientId, items },
   });
 
+  await refreshClientAutoTags(clientId); // CRM Step 2
   revalidatePath("/dashboard/orders");
 }
 
@@ -59,6 +61,7 @@ async function updateOrderStatus(formData: FormData) {
   if (!order) return;
 
   await prisma.order.update({ where: { id: orderId }, data: { status } });
+  await refreshClientAutoTags(order.clientId); // CRM Step 2 — a cancelled order stops counting
 
   await logAudit({
     organizationId: user.organizationId,

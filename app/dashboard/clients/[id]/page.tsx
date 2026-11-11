@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { formatDate, formatDateTime } from "@/lib/formatDate";
 import { computeClientMetrics, formatRupees, unifyOrders } from "@/lib/client-metrics";
+import { AUTO_TAG_HELP, AUTO_TAG_STYLES } from "@/lib/auto-tags";
 
 // /dashboard/clients/[id] — Customer Profile (CRM Step 1, owner's full-CRM
 // plan, 2026-11-11). Everything about one customer on one page: details &
@@ -208,8 +209,13 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
               <span className="mx-2 text-gray-300">·</span>
               Customer since {formatDate(client.createdAt)}
             </p>
-            {(client.tags.length > 0 || client.groupMemberships.length > 0) && (
+            {(client.autoTags.length > 0 || client.tags.length > 0 || client.groupMemberships.length > 0) && (
               <div className="mt-2 flex flex-wrap gap-1.5">
+                {client.autoTags.map((t) => (
+                  <span key={`auto-${t}`} title={`Automatic: ${AUTO_TAG_HELP[t] ?? ""}`} className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${AUTO_TAG_STYLES[t] ?? "bg-gray-100 text-gray-700"}`}>
+                    {t}
+                  </span>
+                ))}
                 {client.tags.map((t) => (
                   <span key={t} className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
                     {t}

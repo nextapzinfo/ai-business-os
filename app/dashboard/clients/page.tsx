@@ -3,8 +3,10 @@ import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { readSheetRange } from "@/lib/googleSheets";
 import { revalidatePath } from "next/cache";
+import { formatDateTime } from "@/lib/formatDate";
 import AddClientForm from "@/components/AddClientForm";
 import ClientRow from "@/components/ClientRow";
+import { AUTO_TAGS, AUTO_TAG_HELP, AUTO_TAG_STYLES, refreshOrgAutoTags } from "@/lib/auto-tags";
 
 // Vercel: importing many customer rows can take a moment.
 export const maxDuration = 60;
@@ -189,6 +191,36 @@ async function deleteClient(formData: FormData) {
   revalidatePath("/dashboard/clients");
 }
 
+// CRM Step 2 — save the auto-tag rules (Organization.crm*) and recalculate.
+async function saveAutoTagRules(formData: FormData) {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+  const num = (key: string, min: number, max: number, fallback: number) => {
+    const n = Math.round(Number(formData.get(key)));
+    return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
+  };
+  await prisma.organization.update({
+    where: { id: user.organizationId },
+    data: {
+      crmRegularGapDays: num("crmRegularGapDays", 7, 365, 35),
+      crmVipSpend: num("crmVipSpend", 100, 10000000, 5000),
+      crmInactiveDays: num("crmInactiveDays", 14, 730, 60),
+    },
+  });
+  await refreshOrgAutoTags(user.organizationId);
+  await logAudit({ organizationId: user.organizationId, userId: user.id, action: "CRM_AUTO_TAG_RULES_UPDATED", metadata: {} });
+  revalidatePath("/dashboard/clients");
+}
+
+async function recalculateAutoTags() {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+  await refreshOrgAutoTags(user.organizationId);
+  revalidatePath("/dashboard/clients");
+}
+
 // Human-readable label + badge color for Client.source. Falls back to
 // treating any unrecognized value (or old rows from before this field
 // existed, which default to "WHATSAPP_DIRECT" at the DB level) sensibly.
@@ -230,12 +262,14 @@ function parseOrderItems(raw: unknown): { productName: string; variantLabel: str
 export default async function ClientsPage({
   searchParams,
 }: {
-  searchParams: { q?: string };
+  searchParams: { q?: string; tag?: string };
 }) {
   const user = await getCurrentUser();
   if (!user) return null;
 
   const q = searchParams?.q?.trim();
+  // ?tag=VIP — show only customers carrying that tag (automatic or typed).
+  const tag = searchParams?.tag?.trim();
 
   const clients = await prisma.client.findMany({
     where: {
@@ -248,6 +282,7 @@ export default async function ClientsPage({
             ],
           }
         : {}),
+      ...(tag ? { AND: [{ OR: [{ autoTags: { has: tag } }, { tags: { has: tag } }] }] } : {}),
     },
     include: {
       productInterests: {
@@ -286,6 +321,33 @@ export default async function ClientsPage({
     })),
   }));
 
+  // Auto-tag counts for the filter chips (whole org) and the current rules.
+  const [tagCounts, org, totalClients, lastTagRun] = await Promise.all([
+    Promise.all(
+      AUTO_TAGS.map(async (t) => ({
+        tag: t,
+        count: await prisma.client.count({ where: { organizationId: user.organizationId, autoTags: { has: t } } }),
+      }))
+    ),
+    prisma.organization.findUnique({
+      where: { id: user.organizationId },
+      select: { crmRegularGapDays: true, crmVipSpend: true, crmInactiveDays: true },
+    }),
+    prisma.client.count({ where: { organizationId: user.organizationId } }),
+    prisma.client.findFirst({
+      where: { organizationId: user.organizationId, autoTagsUpdatedAt: { not: null } },
+      orderBy: { autoTagsUpdatedAt: "desc" },
+      select: { autoTagsUpdatedAt: true },
+    }),
+  ]);
+  const chipHref = (t?: string) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (t) params.set("tag", t);
+    const qs = params.toString();
+    return `/dashboard/clients${qs ? `?${qs}` : ""}`;
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -298,11 +360,80 @@ export default async function ClientsPage({
             placeholder="Search name or phone..."
             className="w-56 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
           />
+          {tag && <input type="hidden" name="tag" value={tag} />}
           <button type="submit" className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
             Search
           </button>
         </form>
       </div>
+
+      {/* CRM Step 2 — automatic tag filters */}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <a
+          href={chipHref()}
+          className={`rounded-full px-3 py-1 text-xs font-medium ${!tag ? "bg-primary text-white" : "border border-gray-300 bg-white text-gray-600 hover:bg-gray-50"}`}
+        >
+          All ({totalClients})
+        </a>
+        {tagCounts.map(({ tag: t, count }) => (
+          <a
+            key={t}
+            href={chipHref(t)}
+            title={AUTO_TAG_HELP[t]}
+            className={`rounded-full px-3 py-1 text-xs font-medium ${tag === t ? "bg-primary text-white" : AUTO_TAG_STYLES[t]}`}
+          >
+            {t} ({count})
+          </a>
+        ))}
+        {tag && !(AUTO_TAGS as readonly string[]).includes(tag) && (
+          <span className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-white">Tag: {tag}</span>
+        )}
+      </div>
+
+      <details className="mt-3 rounded-xl border border-gray-200 bg-white">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-gray-900">
+          Automatic tag rules
+          <span className="ml-2 text-xs font-normal text-gray-500">
+            {lastTagRun?.autoTagsUpdatedAt ? `last updated ${formatDateTime(lastTagRun.autoTagsUpdatedAt)}` : "not calculated yet — press Recalculate now"}
+          </span>
+        </summary>
+        <div className="border-t border-gray-100 p-4">
+          <p className="mb-3 text-xs text-gray-500">
+            These tags are set by the system from real orders (WhatsApp + website) and refresh every night and after every order.
+            Your own typed tags are never changed. <b>New</b> = first order in the last 30 days · <b>Lead</b> = chatted but never ordered.
+          </p>
+          <form action={saveAutoTagRules} className="grid gap-3 sm:grid-cols-4 sm:items-end">
+            <label className="text-xs font-medium text-gray-600">
+              <span className={`mr-1 rounded-full px-2 py-0.5 ${AUTO_TAG_STYLES.Regular}`}>Regular</span> orders at least every
+              <span className="mt-1 flex items-center gap-1">
+                <input name="crmRegularGapDays" type="number" min={7} max={365} defaultValue={org?.crmRegularGapDays ?? 35} className="w-20 rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                days
+              </span>
+            </label>
+            <label className="text-xs font-medium text-gray-600">
+              <span className={`mr-1 rounded-full px-2 py-0.5 ${AUTO_TAG_STYLES.VIP}`}>VIP</span> total spent at least
+              <span className="mt-1 flex items-center gap-1">
+                ₹<input name="crmVipSpend" type="number" min={100} defaultValue={org?.crmVipSpend ?? 5000} className="w-28 rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+              </span>
+            </label>
+            <label className="text-xs font-medium text-gray-600">
+              <span className={`mr-1 rounded-full px-2 py-0.5 ${AUTO_TAG_STYLES.Inactive}`}>Inactive</span> no order for more than
+              <span className="mt-1 flex items-center gap-1">
+                <input name="crmInactiveDays" type="number" min={14} max={730} defaultValue={org?.crmInactiveDays ?? 60} className="w-20 rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                days
+              </span>
+            </label>
+            <button type="submit" className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
+              Save rules &amp; recalculate
+            </button>
+          </form>
+          <form action={recalculateAutoTags} className="mt-3">
+            <button type="submit" className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
+              Recalculate now
+            </button>
+          </form>
+        </div>
+      </details>
 
       <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-gray-900">Add a client</h3>
@@ -368,6 +499,7 @@ export default async function ClientsPage({
                   key={c.id}
                   client={c}
                   sourceLabel={formatSource(c.source)}
+                  autoTagStyles={AUTO_TAG_STYLES}
                   sourceDetail={c.sourceDetail}
                   conversationId={c.conversationId}
                   updateClient={updateClient}
@@ -377,7 +509,7 @@ export default async function ClientsPage({
               {clientRows.length === 0 && (
                 <tr>
                   <td className="px-4 py-6 text-gray-500" colSpan={11}>
-                    {q ? "No clients match your search." : "No clients yet — add your first one above."}
+                    {q || tag ? "No clients match this search / tag." : "No clients yet — add your first one above."}
                   </td>
                 </tr>
               )}
