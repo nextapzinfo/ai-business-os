@@ -141,9 +141,14 @@ export default function ClientRow({
     <tr className="border-b border-gray-50 align-top last:border-0">
       <td className="px-4 py-2">
         <div className="flex items-center gap-2">
-          <div className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white ${avatarColor(client.name)}`}>
+          {/* Avatar opens the Customer Profile page (CRM Step 1). */}
+          <a
+            href={`/dashboard/clients/${client.id}`}
+            title="Open customer profile"
+            className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white ${avatarColor(client.name)}`}
+          >
             {initialOf(name)}
-          </div>
+          </a>
           <input value={name} onChange={(e) => setName(e.target.value)} className={`${cellInputClass} min-w-[110px] font-medium text-gray-900`} />
         </div>
       </td>
@@ -203,6 +208,12 @@ export default function ClientRow({
       <td className="whitespace-nowrap px-4 py-2 text-gray-500">{formatDate(client.createdAt)}</td>
       <td className="px-4 py-2">
         <div className="flex items-center gap-1.5">
+          <a
+            href={`/dashboard/clients/${client.id}`}
+            className="whitespace-nowrap rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Profile
+          </a>
           <button
             type="button"
             onClick={handleSave}
