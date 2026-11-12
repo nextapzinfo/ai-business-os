@@ -7,6 +7,9 @@ import { formatDateTime } from "@/lib/formatDate";
 import AddClientForm from "@/components/AddClientForm";
 import ClientRow from "@/components/ClientRow";
 import { AUTO_TAGS, AUTO_TAG_HELP, AUTO_TAG_STYLES, refreshOrgAutoTags } from "@/lib/auto-tags";
+import { chatTagBackfillStatus } from "@/lib/chat-tags";
+import { chatTagHelp, chatTagRank, chatTagStyle } from "@/lib/chat-tag-styles";
+import ChatTagBackfillButton from "@/components/ChatTagBackfillButton";
 
 // Vercel: importing many customer rows can take a moment.
 export const maxDuration = 60;
@@ -282,7 +285,7 @@ export default async function ClientsPage({
             ],
           }
         : {}),
-      ...(tag ? { AND: [{ OR: [{ autoTags: { has: tag } }, { tags: { has: tag } }] }] } : {}),
+      ...(tag ? { AND: [{ OR: [{ autoTags: { has: tag } }, { chatTags: { has: tag } }, { tags: { has: tag } }] }] } : {}),
     },
     include: {
       productInterests: {
@@ -322,7 +325,7 @@ export default async function ClientsPage({
   }));
 
   // Auto-tag counts for the filter chips (whole org) and the current rules.
-  const [tagCounts, org, totalClients, lastTagRun] = await Promise.all([
+  const [tagCounts, org, totalClients, lastTagRun, chatTagRows, chatStatus] = await Promise.all([
     Promise.all(
       AUTO_TAGS.map(async (t) => ({
         tag: t,
@@ -339,7 +342,26 @@ export default async function ClientsPage({
       orderBy: { autoTagsUpdatedAt: "desc" },
       select: { autoTagsUpdatedAt: true },
     }),
+    prisma.client.findMany({
+      where: { organizationId: user.organizationId, NOT: { chatTags: { isEmpty: true } } },
+      select: { chatTags: true },
+    }),
+    chatTagBackfillStatus(user.organizationId),
   ]);
+
+  // Chat-tag chips (CRM Step 2b): count every tag, then show action tags
+  // first and only the most common products / areas so the row stays short.
+  const chatCounts = new Map<string, number>();
+  for (const r of chatTagRows) for (const t of r.chatTags) chatCounts.set(t, (chatCounts.get(t) ?? 0) + 1);
+  const chatChips = (() => {
+    const all = [...chatCounts.entries()].map(([t, count]) => ({ tag: t, count }));
+    const pick = (prefix: string, max: number) =>
+      all.filter((c) => c.tag.startsWith(prefix)).sort((a, b) => b.count - a.count).slice(0, max);
+    const fixed = all.filter((c) => !c.tag.startsWith("Interested:") && !c.tag.startsWith("Area:"));
+    return [...fixed, ...pick("Interested:", 8), ...pick("Area:", 6)].sort(
+      (a, b) => chatTagRank(a.tag) - chatTagRank(b.tag) || b.count - a.count
+    );
+  })();
   const chipHref = (t?: string) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
@@ -385,10 +407,45 @@ export default async function ClientsPage({
             {t} ({count})
           </a>
         ))}
-        {tag && !(AUTO_TAGS as readonly string[]).includes(tag) && (
+        {tag && !(AUTO_TAGS as readonly string[]).includes(tag) && !chatChips.some((c) => c.tag === tag) && (
           <span className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-white">Tag: {tag}</span>
         )}
       </div>
+
+      {/* CRM Step 2b — tags the AI read from WhatsApp chats */}
+      {chatChips.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-gray-500">From chats:</span>
+          {chatChips.map(({ tag: t, count }) => (
+            <a
+              key={t}
+              href={chipHref(t)}
+              title={chatTagHelp(t)}
+              className={`rounded-full px-3 py-1 text-xs font-medium ${tag === t ? "bg-primary text-white" : chatTagStyle(t)}`}
+            >
+              {t} ({count})
+            </a>
+          ))}
+        </div>
+      )}
+
+      <details className="mt-3 rounded-xl border border-gray-200 bg-white" open={chatStatus.pending > 0}>
+        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-gray-900">
+          Chat tags — AI reads WhatsApp chats
+          <span className="ml-2 text-xs font-normal text-gray-500">
+            {chatStatus.pending > 0 ? `${chatStatus.pending} customers' old chats not read yet` : "all chats read · new messages are tagged instantly"}
+          </span>
+        </summary>
+        <div className="border-t border-gray-100 p-4">
+          <p className="mb-3 text-xs text-gray-500">
+            The AI reads each customer&apos;s WhatsApp chat and tags what they asked about:{" "}
+            <b>Interested: product</b> · <b>Price asked – not bought</b> · <b>Bulk / Corporate</b> · <b>Occasion</b> (wedding, birthday, puja…) ·{" "}
+            <b>Complaint</b> (until it&apos;s resolved) · <b>Area</b>. Press the button once to read all old chats; after that every new customer
+            message updates the tags straight away. &quot;Price asked – not bought&quot; disappears by itself when they order.
+          </p>
+          <ChatTagBackfillButton total={chatStatus.total} pending={chatStatus.pending} />
+        </div>
+      </details>
 
       <details className="mt-3 rounded-xl border border-gray-200 bg-white">
         <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-gray-900">

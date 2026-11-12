@@ -15,31 +15,32 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@prisma/client": "^5.18.0",
+    "@vercel/blob": "latest",
+    "@vercel/functions": "^1.6.0",
+    "bcryptjs": "^2.4.3",
+    "cheerio": "^1.0.0",
+    "google-auth-library": "^9.14.1",
+    "lucide-react": "^0.400.0",
+    "mammoth": "^1.7.2",
     "next": "14.2.5",
+    "next-auth": "^4.24.7",
+    "pdf-parse": "^1.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@prisma/client": "^5.18.0",
-    "next-auth": "^4.24.7",
-    "bcryptjs": "^2.4.3",
-    "zod": "^3.23.8",
-    "google-auth-library": "^9.14.1",
-    "@vercel/blob": "latest",
-    "lucide-react": "^0.400.0",
-    "pdf-parse": "^1.1.1",
-    "mammoth": "^1.7.2",
-    "cheerio": "^1.0.0"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "typescript": "^5.5.4",
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.14.15",
+    "@types/pdf-parse": "^1.1.4",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
-    "@types/bcryptjs": "^2.4.6",
-    "prisma": "^5.18.0",
-    "@types/pdf-parse": "^1.1.4",
-    "tailwindcss": "^3.4.9",
-    "postcss": "^8.4.41",
     "autoprefixer": "^10.4.20",
-    "tsx": "^4.16.5"
+    "postcss": "^8.4.41",
+    "prisma": "^5.18.0",
+    "tailwindcss": "^3.4.9",
+    "tsx": "^4.16.5",
+    "typescript": "^5.5.4"
   }
 }

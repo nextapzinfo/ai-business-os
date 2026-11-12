@@ -10,6 +10,7 @@ type ClientOption = {
   phone: string;
   tags: string[];
   autoTags: string[];
+  chatTags: string[];
   pinCode: string | null;
   interestedIn: string | null;
 };
@@ -94,7 +95,7 @@ export default function ClientCheckboxList({
   function selectByTag(tag: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      clients.filter((c) => c.tags.includes(tag) || c.autoTags.includes(tag)).forEach((c) => next.add(c.id));
+      clients.filter((c) => c.tags.includes(tag) || c.autoTags.includes(tag) || c.chatTags.includes(tag)).forEach((c) => next.add(c.id));
       return next;
     });
   }

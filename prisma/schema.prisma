@@ -181,6 +181,15 @@ model Client {
   // lib/auto-tags.ts. Separate from `tags` above, which stays staff-typed only.
   autoTags          String[]  @default([])
   autoTagsUpdatedAt DateTime?
+  // CRM Step 2b (2026-11-12) — tags the AI reads out of the customer's
+  // WhatsApp chat (Interested: X, Price asked – not bought, Bulk / Corporate,
+  // Occasion: X, Complaint, Area: X). chatSignals = the raw facts; chatTags =
+  // the visible list built from them + real orders (lib/chat-tags.ts).
+  // chatTagsAnalyzedAt = time of the newest message already read (null =
+  // never read; the one-time "Read all old chats" button picks those up).
+  chatTags           String[]  @default([])
+  chatSignals        Json?
+  chatTagsAnalyzedAt DateTime?
   // Where this phone number first came from. "WHATSAPP_DIRECT" = organic
   // contact with no ad/post attribution (the default — set on every
   // webhook-created Client unless a referral is present); "FACEBOOK_AD" /

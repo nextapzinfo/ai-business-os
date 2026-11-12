@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { AUTO_TAGS } from "@/lib/auto-tags";
+import { chatTagRank } from "@/lib/chat-tag-styles";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
 import { sendWhatsAppTemplateMessage } from "@/lib/whatsapp";
@@ -153,7 +154,16 @@ export default async function BroadcastsPage() {
   const typedTags = Array.from(new Set<string>(clients.flatMap((c) => c.tags)))
     .filter((t) => !(AUTO_TAGS as readonly string[]).includes(t))
     .sort();
-  const availableTags = [...autoTagsInUse, ...typedTags];
+  // CRM Step 2b — tags read from WhatsApp chats (Price asked, Interested: …,
+  // Occasion: …) come next, most useful first.
+  const chatTagsInUse = Array.from(new Set<string>(clients.flatMap((c) => c.chatTags))).sort(
+    (a, b) => chatTagRank(a) - chatTagRank(b) || a.localeCompare(b)
+  );
+  const availableTags = [
+    ...autoTagsInUse,
+    ...chatTagsInUse,
+    ...typedTags.filter((t) => !chatTagsInUse.includes(t)),
+  ];
 
   const groupOptions = clientGroups.map((g) => ({
     id: g.id,

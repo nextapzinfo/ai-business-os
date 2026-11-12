@@ -1817,6 +1817,43 @@ Respond ONLY with a JSON object with exactly these four string fields (empty str
   }
 }
 
+// Generic "read this, answer in JSON" call — added 2026-11-12 for CRM chat
+// tags (lib/chat-tags.ts). Same model/settings as every other call here.
+// Returns json: null when the model's output wasn't valid JSON.
+export async function callJsonCompletion(
+  system: string,
+  user: string,
+  maxTokens = 500
+): Promise<{ json: unknown | null; usage: TokenUsage }> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+  const res = await fetch(OPENAI_CHAT_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      max_completion_tokens: maxTokens,
+      reasoning_effort: OPENAI_REASONING_EFFORT,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenAI JSON call failed: ${res.status} ${errText}`);
+  }
+  const data = await res.json();
+  const usage = extractUsage(data);
+  try {
+    return { json: JSON.parse((data.choices[0].message.content as string) ?? ""), usage };
+  } catch {
+    return { json: null, usage };
+  }
+}
+
 // Added 2026-08-30 for the Quick Follow-up cron (see AgentProfile.
 // skillQuickFollowUp) — a short, natural check-in when the customer hasn't
 // replied to the AI's last message in a while, mirroring what the owner

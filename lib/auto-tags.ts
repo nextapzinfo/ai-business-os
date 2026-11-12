@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { computeClientMetrics, unifyOrders, type ClientMetrics } from "@/lib/client-metrics";
+import { rebuildChatTags } from "@/lib/chat-tags";
 
 // ── Automatic customer tags (CRM Step 2, owner's rules, 2026-11-11) ──────
 // Calculated by the system from each customer's real orders (WhatsApp +
@@ -94,14 +95,23 @@ function sameTags(a: string[], b: string[]) {
 // auto-tag problem must never break taking an order).
 export async function refreshClientAutoTags(clientId: string): Promise<void> {
   try {
-    const client = await prisma.client.findUnique({ where: { id: clientId }, select: { id: true, organizationId: true, autoTags: true, ...orderSelect } });
+    const client = await prisma.client.findUnique({
+      where: { id: clientId },
+      select: { id: true, organizationId: true, autoTags: true, chatTags: true, chatSignals: true, ...orderSelect },
+    });
     if (!client) return;
     const rules = await getAutoTagRules(client.organizationId);
     const m = computeClientMetrics(unifyOrders(client.orders, client.websiteOrders));
     const next = computeAutoTags(m, client._count.conversations > 0, rules);
+    // Chat tags depend on orders too ("Price asked – not bought" clears once they order).
+    const chatNext = rebuildChatTags(client.chatSignals, client.chatTags, m.lastOrderAt);
     await prisma.client.update({
       where: { id: client.id },
-      data: sameTags(client.autoTags, next) ? { autoTagsUpdatedAt: new Date() } : { autoTags: next, autoTagsUpdatedAt: new Date() },
+      data: {
+        autoTagsUpdatedAt: new Date(),
+        ...(sameTags(client.autoTags, next) ? {} : { autoTags: next }),
+        ...(chatNext ? { chatTags: chatNext } : {}),
+      },
     });
   } catch (err) {
     console.error("refreshClientAutoTags failed", clientId, err);
@@ -122,7 +132,7 @@ export async function refreshOrgAutoTags(organizationId: string): Promise<{ chec
   for (;;) {
     const batch = await prisma.client.findMany({
       where: { organizationId },
-      select: { id: true, autoTags: true, ...orderSelect },
+      select: { id: true, autoTags: true, chatTags: true, chatSignals: true, ...orderSelect },
       orderBy: { id: "asc" },
       take: PAGE,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
@@ -134,9 +144,16 @@ export async function refreshOrgAutoTags(organizationId: string): Promise<{ chec
       checked++;
       const m = computeClientMetrics(unifyOrders(c.orders, c.websiteOrders), now);
       const next = computeAutoTags(m, c._count.conversations > 0, rules);
-      if (!sameTags(c.autoTags, next)) {
+      const chatNext = rebuildChatTags(c.chatSignals, c.chatTags, m.lastOrderAt, now);
+      const autoChanged = !sameTags(c.autoTags, next);
+      if (autoChanged || chatNext) {
         changed++;
-        updates.push(prisma.client.update({ where: { id: c.id }, data: { autoTags: next, autoTagsUpdatedAt: now } }));
+        updates.push(
+          prisma.client.update({
+            where: { id: c.id },
+            data: { ...(autoChanged ? { autoTags: next, autoTagsUpdatedAt: now } : {}), ...(chatNext ? { chatTags: chatNext } : {}) },
+          })
+        );
       }
     }
     if (updates.length) await prisma.$transaction(updates);

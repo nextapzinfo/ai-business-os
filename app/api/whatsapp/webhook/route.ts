@@ -1,5 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { refreshClientAutoTags } from "@/lib/auto-tags";
+import { refreshClientChatTags } from "@/lib/chat-tags";
+import { waitUntil } from "@vercel/functions";
+
+// CRM Step 2b (2026-11-12, owner: "jokhon kono chat hobe, tokhon seta
+// instantly tagging hoe jabe") — re-read the latest part of this customer's
+// chat and update their chat tags. Runs in the background (waitUntil) so the
+// customer's reply is never delayed; refreshClientChatTags never throws.
+function tagChatInBackground(clientId: string) {
+  try {
+    waitUntil(refreshClientChatTags(clientId));
+  } catch (err) {
+    console.error("chat-tag background start failed", err);
+  }
+}
 import { prisma } from "@/lib/prisma";
 import { embedText, toVectorLiteral } from "@/lib/embeddings";
 import {
@@ -364,6 +378,7 @@ export async function POST(req: NextRequest) {
           imageUrl,
         },
       });
+      if ((message.image?.caption as string)?.trim()) tagChatInBackground(client.id);
 
       if (conversation.aiPaused) {
         await logAudit({
@@ -540,6 +555,7 @@ export async function POST(req: NextRequest) {
       await prisma.message.create({
         data: { conversationId: conversation.id, sender: "CLIENT", content: text },
       });
+      tagChatInBackground(client.id);
     }
 
     // First message of a brand-new conversation: send the configured greeting

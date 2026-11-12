@@ -7,6 +7,8 @@ import { logAudit } from "@/lib/audit";
 import { formatDate, formatDateTime } from "@/lib/formatDate";
 import { computeClientMetrics, formatRupees, unifyOrders } from "@/lib/client-metrics";
 import { AUTO_TAG_HELP, AUTO_TAG_STYLES } from "@/lib/auto-tags";
+import { refreshClientChatTags } from "@/lib/chat-tags";
+import { chatTagHelp, chatTagStyle } from "@/lib/chat-tag-styles";
 
 // /dashboard/clients/[id] — Customer Profile (CRM Step 1, owner's full-CRM
 // plan, 2026-11-11). Everything about one customer on one page: details &
@@ -58,6 +60,18 @@ async function updateProfile(formData: FormData) {
   await logAudit({ organizationId: user.organizationId, userId: user.id, action: "CLIENT_UPDATED", metadata: { clientId, from: "profile" } });
   revalidatePath(`/dashboard/clients/${clientId}`);
   revalidatePath("/dashboard/clients");
+}
+
+// CRM Step 2b — read this customer's whole WhatsApp chat again and redo the chat tags.
+async function rereadChat(formData: FormData) {
+  "use server";
+  const user = await getCurrentUser();
+  if (!user) return;
+  const clientId = String(formData.get("clientId") ?? "");
+  const client = await prisma.client.findFirst({ where: { id: clientId, organizationId: user.organizationId }, select: { id: true } });
+  if (!client) return;
+  await refreshClientChatTags(client.id, "full");
+  revalidatePath(`/dashboard/clients/${client.id}`);
 }
 
 async function addReminder(formData: FormData) {
@@ -209,10 +223,15 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
               <span className="mx-2 text-gray-300">·</span>
               Customer since {formatDate(client.createdAt)}
             </p>
-            {(client.autoTags.length > 0 || client.tags.length > 0 || client.groupMemberships.length > 0) && (
+            {(client.autoTags.length > 0 || client.chatTags.length > 0 || client.tags.length > 0 || client.groupMemberships.length > 0) && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {client.autoTags.map((t) => (
                   <span key={`auto-${t}`} title={`Automatic: ${AUTO_TAG_HELP[t] ?? ""}`} className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${AUTO_TAG_STYLES[t] ?? "bg-gray-100 text-gray-700"}`}>
+                    {t}
+                  </span>
+                ))}
+                {client.chatTags.map((t) => (
+                  <span key={`chat-${t}`} title={`From chat: ${chatTagHelp(t)}`} className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${chatTagStyle(t)}`}>
                     {t}
                   </span>
                 ))}
@@ -242,6 +261,16 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
           >
             WhatsApp ↗
           </a>
+          <form action={rereadChat}>
+            <input type="hidden" name="clientId" value={client.id} />
+            <button
+              type="submit"
+              title="AI reads this customer's whole WhatsApp chat again and updates the chat tags"
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              Re-read chat
+            </button>
+          </form>
         </div>
       </div>
 
