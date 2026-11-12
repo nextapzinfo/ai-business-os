@@ -111,6 +111,7 @@ const SOURCE_LABELS: Record<string, string> = {
   INSTAGRAM_AD: "Instagram Ad",
   INSTAGRAM_POST: "Instagram Post",
   WEBSITE: "Website",
+  EVENT: "Event (QR shop)",
   MANUAL: "Manual",
   IMPORTED: "Imported",
 };
@@ -167,7 +168,7 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
       orders: { orderBy: { createdAt: "desc" }, select: { id: true, items: true, status: true, totalAmount: true, createdAt: true } },
       websiteOrders: {
         orderBy: { placedAt: "desc" },
-        select: { id: true, orderNumber: true, status: true, totalInRupees: true, placedAt: true, itemsJson: true },
+        select: { id: true, orderNumber: true, status: true, totalInRupees: true, placedAt: true, itemsJson: true, channel: true },
       },
       productInterests: { include: { product: { select: { name: true } } }, orderBy: { updatedAt: "desc" } },
       reminders: { orderBy: { dueDate: "asc" } },
@@ -276,7 +277,7 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
 
       {/* ── Lifetime numbers ───────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        <Stat label="Total spent" value={formatRupees(m.totalSpent)} sub={m.orderCount ? `${m.websiteOrderCount} website · ${m.whatsappOrderCount} WhatsApp` : "No orders yet"} />
+        <Stat label="Total spent" value={formatRupees(m.totalSpent)} sub={m.orderCount ? `${m.websiteOrderCount} website · ${m.whatsappOrderCount} WhatsApp${m.eventOrderCount ? ` · ${m.eventOrderCount} event` : ""}` : "No orders yet"} />
         <Stat label="Orders" value={String(m.orderCount)} />
         <Stat label="Average order" value={m.averageOrder !== null ? formatRupees(m.averageOrder) : "—"} />
         <Stat label="Last order" value={relativeDays(m.daysSinceLastOrder)} sub={m.lastOrderAt ? formatDate(m.lastOrderAt) : undefined} />
@@ -392,7 +393,7 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
             </div>
           </Card>
 
-          <Card title={`Orders (${orders.length})`} right={<span className="text-xs text-gray-500">WhatsApp + banglardoi.com</span>}>
+          <Card title={`Orders (${orders.length})`} right={<span className="text-xs text-gray-500">WhatsApp + banglardoi.com + events</span>}>
             {orders.length === 0 ? (
               <p className="text-sm text-gray-500">No orders yet.</p>
             ) : (
@@ -400,8 +401,8 @@ export default async function ClientProfilePage({ params }: { params: { id: stri
                 {orders.map((o) => (
                   <details key={`${o.kind}-${o.id}`} className="group rounded-lg border border-gray-100">
                     <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${o.kind === "WEBSITE" ? "bg-violet-50 text-violet-700" : "bg-emerald-50 text-emerald-700"}`}>
-                        {o.kind === "WEBSITE" ? "WEBSITE" : "WHATSAPP"}
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${o.kind === "WEBSITE" ? "bg-violet-50 text-violet-700" : o.kind === "EVENT" ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-700"}`}>
+                        {o.kind}
                       </span>
                       <span className="font-medium text-gray-800">{o.label}</span>
                       <span className="text-gray-500">{formatDate(o.placedAt)}</span>

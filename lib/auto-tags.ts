@@ -83,7 +83,7 @@ export async function getAutoTagRules(organizationId: string): Promise<AutoTagRu
 
 const orderSelect = {
   orders: { select: { id: true, items: true, status: true, totalAmount: true, createdAt: true } },
-  websiteOrders: { select: { id: true, orderNumber: true, status: true, totalInRupees: true, placedAt: true, itemsJson: true } },
+  websiteOrders: { select: { id: true, orderNumber: true, status: true, totalInRupees: true, placedAt: true, itemsJson: true, channel: true } },
   _count: { select: { conversations: true } },
 } as const;
 

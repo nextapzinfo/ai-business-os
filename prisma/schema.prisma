@@ -604,6 +604,10 @@ model ClientOrder {
   // above). Json rather than a child table since this is always written
   // and read as one whole snapshot per order, never queried per-item.
   itemsJson      Json
+  // Where the sale happened: "WEBSITE" (banglardoi.com order-sync) or
+  // "EVENT" (Banglar Doi OS Event Shop / QR bill, added 2026-11-12 — see
+  // app/api/integrations/bms/bill). Both count as real purchases in the CRM.
+  channel        String   @default("WEBSITE")
 
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt

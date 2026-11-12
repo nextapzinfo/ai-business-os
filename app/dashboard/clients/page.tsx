@@ -234,6 +234,7 @@ const SOURCE_LABELS: Record<string, { label: string; className: string }> = {
   INSTAGRAM_AD: { label: "Instagram Ad", className: "bg-pink-50 text-pink-700" },
   INSTAGRAM_POST: { label: "Instagram Post", className: "bg-pink-50 text-pink-700" },
   WEBSITE: { label: "Website", className: "bg-violet-50 text-violet-700" },
+  EVENT: { label: "Event", className: "bg-amber-50 text-amber-800" },
   MANUAL: { label: "Manual", className: "bg-gray-100 text-gray-600" },
   IMPORTED: { label: "Imported", className: "bg-gray-100 text-gray-600" },
 };

@@ -177,7 +177,7 @@ async function lastCountedOrderAt(clientId: string): Promise<Date | null> {
     where: { id: clientId },
     select: {
       orders: { select: { id: true, items: true, status: true, totalAmount: true, createdAt: true } },
-      websiteOrders: { select: { id: true, orderNumber: true, status: true, totalInRupees: true, placedAt: true, itemsJson: true } },
+      websiteOrders: { select: { id: true, orderNumber: true, status: true, totalInRupees: true, placedAt: true, itemsJson: true, channel: true } },
     },
   });
   if (!c) return null;

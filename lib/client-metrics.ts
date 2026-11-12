@@ -27,7 +27,7 @@ export function isCountedSale(status: string): boolean {
   return !NOT_A_SALE.has(status.toUpperCase());
 }
 
-export type OrderSourceKind = "WEBSITE" | "WHATSAPP";
+export type OrderSourceKind = "WEBSITE" | "WHATSAPP" | "EVENT";
 
 export type UnifiedOrderItem = { name: string; variant: string | null; quantity: number; total: number | null };
 
@@ -59,12 +59,13 @@ export function parseWebsiteItems(raw: unknown): UnifiedOrderItem[] {
 
 export function unifyOrders(
   whatsappOrders: { id: string; items: string; status: string; totalAmount: number | null; createdAt: Date }[],
-  websiteOrders: { id: string; orderNumber: string; status: string; totalInRupees: number; placedAt: Date; itemsJson: unknown }[]
+  websiteOrders: { id: string; orderNumber: string; status: string; totalInRupees: number; placedAt: Date; itemsJson: unknown; channel?: string | null }[]
 ): UnifiedOrder[] {
   const list: UnifiedOrder[] = [
     ...websiteOrders.map((o) => ({
       id: o.id,
-      kind: "WEBSITE" as const,
+      // ClientOrder also holds Banglar Doi OS Event Shop bills (channel EVENT).
+      kind: (o.channel === "EVENT" ? "EVENT" : "WEBSITE") as OrderSourceKind,
       label: o.orderNumber,
       status: o.status,
       total: o.totalInRupees,
@@ -100,6 +101,7 @@ export type ClientMetrics = {
   favouriteProducts: { name: string; quantity: number; orders: number }[];
   websiteOrderCount: number;
   whatsappOrderCount: number;
+  eventOrderCount: number;
 };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -147,6 +149,7 @@ export function computeClientMetrics(orders: UnifiedOrder[], now = new Date()): 
       .slice(0, 5),
     websiteOrderCount: real.filter((o) => o.kind === "WEBSITE").length,
     whatsappOrderCount: real.filter((o) => o.kind === "WHATSAPP").length,
+    eventOrderCount: real.filter((o) => o.kind === "EVENT").length,
   };
 }
 
