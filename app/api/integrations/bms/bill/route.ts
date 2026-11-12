@@ -104,8 +104,8 @@ export async function POST(req: NextRequest) {
     "",
     `*Total: ${rupees(total)}* · Paid by ${body.paymentMethod === "online" ? "UPI" : "Cash"}`,
     billUrl ? `\nFull bill: ${billUrl}` : null,
-    body.reviewUrl ? `\n⭐ ভালো লাগলে Google-এ একটা রিভিউ দেবেন: ${body.reviewUrl}` : null,
-    `\nধন্যবাদ ${firstName}! আবার আসবেন 🙏`,
+    body.reviewUrl ? `\n⭐ Enjoyed it? Please leave us a Google review: ${body.reviewUrl}` : null,
+    `\nThank you, ${firstName}! Please visit again 🙏`,
   ]
     .filter((l) => l !== null)
     .join("\n");
