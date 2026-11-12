@@ -119,6 +119,7 @@ export default function ConversationReplyBox({
     if (textRef.current && !textRef.current.value.trim()) {
       textRef.current.value = qr.captionText ?? "";
       setHasText(!!qr.captionText?.trim());
+      requestAnimationFrame(autoResize);
     }
   }
 
@@ -138,13 +139,40 @@ export default function ConversationReplyBox({
     if (textRef.current) {
       textRef.current.value = qr.captionText ?? "";
       setHasText(!!qr.captionText?.trim());
+      requestAnimationFrame(autoResize);
     }
+  }
+
+  // Grow the box with the text (WhatsApp-style): always at least 2 lines
+  // tall, up to ~7 lines, then it scrolls. Owner's request 2026-11-12:
+  // "atleast 2 line visible on chat - write box".
+  function autoResize() {
+    const el = textRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
   }
 
   function handleTextChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const val = e.target.value;
     setHasText(val.trim().length > 0);
     setSlashQuery(val.startsWith("/") ? val.slice(1) : null);
+    autoResize();
+  }
+
+  // Enter = send, Shift+Enter = new line (owner's request 2026-11-12, same
+  // as WhatsApp on a computer). On a phone/tablet the keyboard's Enter keeps
+  // making a new line and the round send button sends — also like WhatsApp.
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+    if (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches) return;
+    e.preventDefault();
+    // While the "/" Quick Reply list is open, Enter picks the first match.
+    if (slashQuery !== null && slashMatches.length > 0) {
+      pickQuickReplyFromSlash(slashMatches[0]);
+      return;
+    }
+    if (!sending && hasContent) formRef.current?.requestSubmit();
   }
 
   const slashMatches =
@@ -192,6 +220,8 @@ export default function ConversationReplyBox({
             clearQuickReply();
             setHasText(false);
             setSlashQuery(null);
+            requestAnimationFrame(autoResize);
+            textRef.current?.focus();
           }
         }}
         className="flex items-end gap-2"
@@ -203,7 +233,7 @@ export default function ConversationReplyBox({
         {/* The pill-shaped field — matches the real WhatsApp input bar: emoji
             icon on the left, everything else (Quick Reply, Send Template,
             Attach) as small icon "signs" on the right, in one row. */}
-        <div className="flex flex-1 items-center gap-1 rounded-3xl bg-white px-2 py-1.5 shadow-sm">
+        <div className="flex flex-1 items-end gap-1 rounded-3xl bg-white px-2 py-1.5 shadow-sm">
           <button
             type="button"
             onClick={() => textRef.current?.focus()}
@@ -216,10 +246,11 @@ export default function ConversationReplyBox({
             <textarea
               ref={textRef}
               name="text"
-              placeholder='Message, or type "/" for a Quick Reply'
-              rows={1}
+              placeholder='Message — Enter to send, Shift+Enter for new line, "/" for a Quick Reply'
+              rows={2}
               onChange={handleTextChange}
-              className="max-h-24 w-full resize-none bg-transparent py-1 text-[14.5px] leading-snug text-gray-900 outline-none placeholder:text-gray-400"
+              onKeyDown={handleKeyDown}
+              className="block max-h-[168px] min-h-[46px] w-full resize-none overflow-y-auto bg-transparent px-1 py-1 text-[14.5px] leading-[19px] text-gray-900 outline-none placeholder:text-gray-400"
             />
             {/* "/" slash-command Quick Reply lookup, WhatsApp-style — added
                 2026-08-28, see the slashQuery state comment above. */}
