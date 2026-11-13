@@ -47,6 +47,11 @@ export async function POST(req: NextRequest) {
     items?: BillItem[];
     template?: string;
     templateLanguage?: string;
+    // false = only record the sale in the CRM (sent at Confirm); the
+    // customer's own "Send bill to my WhatsApp" tap calls again with true.
+    // Owner 2026-11-13: WhatsApp bill is optional, the permanent copy lives
+    // in their banglardoi.com account.
+    sendWhatsApp?: boolean;
   };
   try {
     body = await req.json();
@@ -91,6 +96,10 @@ export async function POST(req: NextRequest) {
   });
   await refreshClientAutoTags(client.id);
 
+  if (body.sendWhatsApp === false) {
+    return NextResponse.json({ ok: true, sent: "skipped", reason: "not_requested" });
+  }
+
   // 2. WhatsApp bill.
   const firstName = (body.name ?? "").trim() || (client.name !== client.phone ? client.name : "") || "Customer";
   const billUrl = (body.billUrl ?? "").trim();
@@ -104,6 +113,7 @@ export async function POST(req: NextRequest) {
     "",
     `*Total: ${rupees(total)}* · Paid by ${body.paymentMethod === "online" ? "UPI" : "Cash"}`,
     billUrl ? `\nFull bill: ${billUrl}` : null,
+    `All your Banglar Doi purchases: https://www.banglardoi.com/account`,
     body.reviewUrl ? `\n⭐ Enjoyed it? Please leave us a Google review: ${body.reviewUrl}` : null,
     `\nThank you, ${firstName}! Please visit again 🙏`,
   ]
