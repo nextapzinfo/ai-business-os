@@ -52,11 +52,24 @@ export async function POST(req: NextRequest) {
     // Owner 2026-11-13: WhatsApp bill is optional, the permanent copy lives
     // in their banglardoi.com account.
     sendWhatsApp?: boolean;
+    // "delete": the bill was deleted in Banglar Doi OS (e.g. a test bill).
+    action?: string;
   };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (body.action === "delete") {
+    const invoice = (body.invoiceNo ?? "").trim();
+    if (!invoice) return NextResponse.json({ error: "Missing invoiceNo" }, { status: 400 });
+    const existing = await prisma.clientOrder.findFirst({ where: { orderNumber: invoice, channel: "EVENT" }, select: { id: true, clientId: true } });
+    if (existing) {
+      await prisma.clientOrder.delete({ where: { id: existing.id } });
+      if (existing.clientId) await refreshClientAutoTags(existing.clientId);
+    }
+    return NextResponse.json({ ok: true, deleted: existing ? 1 : 0 });
   }
 
   const phone = normalizeIndianPhone(body.phone);
