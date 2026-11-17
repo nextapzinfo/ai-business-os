@@ -55,6 +55,8 @@ function avatarColor(seed: string) {
   return AVATAR_COLORS[idx];
 }
 
+const cellInputBase =
+  "rounded border border-transparent bg-transparent px-1.5 py-1 text-sm text-gray-700 hover:border-gray-200 focus:border-primary focus:bg-white focus:outline-none";
 const cellInputClass =
   "w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm text-gray-700 hover:border-gray-200 focus:border-primary focus:bg-white focus:outline-none";
 
@@ -114,6 +116,7 @@ export default function ClientRow({
   const [pending, startTransition] = useTransition();
   const [justSaved, setJustSaved] = useState(false);
   const [ordersOpen, setOrdersOpen] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
 
   // No conversation yet for this client — land on the plain list with their
@@ -174,37 +177,78 @@ export default function ClientRow({
           {sourceLabel.label}
         </span>
       </td>
+      {/* Email + Address + Pin in ONE compact cell, and tags folded into a
+          single chip that opens on click (owner 2026-11-17: "tag gulo puro
+          line by line ache - prochur space nichhe ... email and address
+          aksathe kore dao, tag ta short koro - Lead e click korle dropdown
+          e details asbe"). */}
       <td className="px-4 py-2">
-        <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="—" className={`${cellInputClass} min-w-[140px]`} />
-      </td>
-      <td className="px-4 py-2">
-        <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="—" className={`${cellInputClass} min-w-[160px]`} />
-      </td>
-      <td className="px-4 py-2">
-        <input value={pinCode} onChange={(e) => setPinCode(e.target.value)} placeholder="—" className={`${cellInputClass} min-w-[80px]`} />
-      </td>
-      <td className="px-4 py-2">
-        <div className="flex flex-col gap-1">
-          {client.autoTags.length > 0 && (
-            <div className="flex flex-wrap gap-1 px-1.5" title="Automatic tags — set by the system from orders">
-              {client.autoTags.map((t) => (
-                <span key={t} className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${autoTagStyles[t] ?? "bg-gray-100 text-gray-700"}`}>
-                  {t}
-                </span>
-              ))}
-            </div>
-          )}
-          {client.chatTags.length > 0 && (
-            <div className="flex flex-wrap gap-1 px-1.5">
-              {client.chatTags.map((t) => (
-                <span key={t} title={chatTagHelp(t)} className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${chatTagStyle(t)}`}>
-                  {t}
-                </span>
-              ))}
-            </div>
-          )}
-          <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="—" className={`${cellInputClass} min-w-[130px]`} />
+        <div className="flex min-w-[220px] flex-col">
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email —" className={`${cellInputClass} py-0.5 text-xs`} />
+          <div className="flex w-full gap-1">
+            <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Address —" className={`${cellInputBase} min-w-0 flex-1 py-0.5 text-xs`} />
+            <input value={pinCode} onChange={(e) => setPinCode(e.target.value)} placeholder="Pin" className={`${cellInputBase} w-16 flex-none py-0.5 text-xs`} />
+          </div>
         </div>
+      </td>
+      <td className="px-4 py-2">
+        {(() => {
+          const manual = tags.split(",").map((t) => t.trim()).filter(Boolean);
+          const all = [...client.autoTags, ...client.chatTags, ...manual];
+          const first = all[0];
+          const firstClass = client.autoTags.length
+            ? autoTagStyles[first] ?? "bg-gray-100 text-gray-700"
+            : client.chatTags.length
+              ? chatTagStyle(first)
+              : "bg-gray-100 text-gray-700";
+          return (
+            <div className="min-w-[110px]">
+              <button
+                type="button"
+                onClick={() => setTagsOpen((v) => !v)}
+                title={all.join(", ") || "Add tags"}
+                className="flex items-center gap-1 whitespace-nowrap rounded-full px-0.5 py-0.5 text-[11px] font-medium hover:bg-gray-50"
+              >
+                {first ? (
+                  <span className={`rounded-full px-2 py-0.5 ${firstClass}`}>{first.length > 18 ? first.slice(0, 17) + "…" : first}</span>
+                ) : (
+                  <span className="px-1 text-gray-400">+ tag</span>
+                )}
+                {all.length > 1 && <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-gray-600">+{all.length - 1}</span>}
+                <span className="text-gray-400">{tagsOpen ? "▲" : "▼"}</span>
+              </button>
+              {tagsOpen && (
+                <div className="mt-1 w-[230px] space-y-1.5 rounded-lg border border-gray-200 bg-white p-2 shadow-sm">
+                  {client.autoTags.length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-gray-400">Automatic (orders)</p>
+                      <div className="mt-0.5 flex flex-wrap gap-1">
+                        {client.autoTags.map((t) => (
+                          <span key={t} className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${autoTagStyles[t] ?? "bg-gray-100 text-gray-700"}`}>{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {client.chatTags.length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-gray-400">From WhatsApp chat</p>
+                      <div className="mt-0.5 flex flex-wrap gap-1">
+                        {client.chatTags.map((t) => (
+                          <span key={t} title={chatTagHelp(t)} className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${chatTagStyle(t)}`}>{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-gray-400">My tags (comma separated)</p>
+                    <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="e.g. Corporate, Friend" className="mt-0.5 w-full rounded border border-gray-200 px-1.5 py-1 text-xs focus:border-primary focus:outline-none" />
+                    <p className="mt-0.5 text-[10px] text-gray-400">Press Save on the row to keep changes.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </td>
       <td className="px-4 py-2">
         <div className="flex flex-col gap-1">
@@ -265,11 +309,11 @@ export default function ClientRow({
     </tr>
     {ordersOpen && client.orders.length > 0 && (
       <tr className="border-b border-gray-50 bg-gray-50/60 last:border-0">
-        {/* 11 columns total (Name/Phone/Source/Email/Address/Pin/Tags/
+        {/* 9 columns total (Name/Phone/Source/Email & Address/Tags/
            Interested In/Orders/Added/Actions) — this panel spans all of
            them so it reads as "attached to" the row above rather than
            sitting in one narrow cell. */}
-        <td colSpan={11} className="px-4 py-2">
+        <td colSpan={9} className="px-4 py-2">
           <div className="space-y-1.5">
             {client.orders.map((order) => (
               <div key={order.id} className="overflow-hidden rounded-lg border border-gray-200 bg-white">

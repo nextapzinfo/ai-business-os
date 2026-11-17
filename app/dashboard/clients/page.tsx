@@ -535,15 +535,13 @@ export default async function ClientsPage({
           instead of being cut off. */}
       <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1000px] text-left text-sm">
+          <table className="w-full min-w-[920px] text-left text-sm">
             <thead>
               <tr className="border-b border-gray-100 text-xs text-gray-500">
                 <th className="px-4 py-3 font-medium">Name</th>
                 <th className="px-4 py-3 font-medium">Phone</th>
                 <th className="px-4 py-3 font-medium">Source</th>
-                <th className="px-4 py-3 font-medium">Email</th>
-                <th className="px-4 py-3 font-medium">Address</th>
-                <th className="px-4 py-3 font-medium">Pin Code</th>
+                <th className="px-4 py-3 font-medium">Email &amp; Address</th>
                 <th className="px-4 py-3 font-medium">Tags</th>
                 <th className="px-4 py-3 font-medium">Interested In</th>
                 <th className="px-4 py-3 font-medium">Orders</th>
@@ -566,7 +564,7 @@ export default async function ClientsPage({
               ))}
               {clientRows.length === 0 && (
                 <tr>
-                  <td className="px-4 py-6 text-gray-500" colSpan={11}>
+                  <td className="px-4 py-6 text-gray-500" colSpan={9}>
                     {q || tag ? "No clients match this search / tag." : "No clients yet — add your first one above."}
                   </td>
                 </tr>
