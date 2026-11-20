@@ -12,7 +12,10 @@ import {
   syncBizRange,
   eventPerformance,
   bmsSyncConfigured,
+  financeSummary,
+  cashShortReport,
 } from "@/lib/biz-analyst";
+import { customerInsights } from "@/lib/biz-marketing";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -118,6 +121,12 @@ export default async function BusinessAnalystPage({ searchParams }: { searchPara
     prisma.messageTemplate.findMany({ where: { organizationId: org, status: "APPROVED" }, select: { metaTemplateName: true } }),
   ]);
   const dayMax = Math.max(1, ...last30.rows.map((r) => r.sales));
+  const [insights, shorts, finance] = await Promise.all([
+    customerInsights(org),
+    cashShortReport(org, monthStart, yesterday < monthStart ? monthStart : yesterday),
+    financeSummary(monthStart, today).catch(() => null),
+  ]);
+  const expenseTotal = finance ? finance.day_expenses_by_purpose.reduce((s, e) => s + e.amount, 0) + finance.other_expenses_by_category.reduce((s, e) => s + e.amount, 0) : 0;
 
   return (
     <div className="flex h-full flex-col gap-5 overflow-y-auto pb-10">
@@ -188,6 +197,72 @@ export default async function BusinessAnalystPage({ searchParams }: { searchPara
         </div>
         <p className="mt-2 text-xs text-gray-500">Rough profit = sales − goods cost (cost price) − day expenses. Full event P&amp;L with rent is in Banglar Doi OS → Locations → Report.</p>
       </section>
+
+      <h2 className="mt-2 text-base font-semibold text-gray-900">Marketing — customers</h2>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Card label="Customers" value={insights.totalCustomers.toLocaleString("en-IN")} sub={`${insights.buyers} have bought · ${insights.neverOrdered} never ordered`} />
+        <Card label="Repeat buyers" value={`${insights.repeatRatePercent}%`} sub={`${insights.repeatBuyers} bought 2+ times`} />
+        <Card label="New this month" value={String(insights.newThisMonth)} sub={`Last month ${insights.newLastMonth}`} />
+        <Card label="Lapsed (60+ days)" value={String(insights.noOrderFor60DaysButBoughtBefore)} sub="Bought before, nothing since — win-back offer" tone={insights.noOrderFor60DaysButBoughtBefore > 0 ? "bad" : undefined} />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <section className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-2">
+          <h3 className="mb-2 text-sm font-semibold text-gray-900">Top customers</h3>
+          <table className="w-full text-left text-sm">
+            <thead className="text-xs uppercase text-gray-500"><tr><th className="py-1">Name</th><th>Orders</th><th className="text-right">Spend</th><th className="text-right">Last order</th></tr></thead>
+            <tbody className="divide-y divide-gray-100">
+              {insights.topSpenders.map((c) => (
+                <tr key={c.phone}><td className="py-1.5">{c.name}<span className="block text-xs text-gray-500">{c.phone}</span></td><td>{c.orders}</td><td className="text-right tabular-nums">{rupees(c.spend)}</td><td className="text-right text-gray-600">{c.lastOrder?.split("-").reverse().join("/") ?? "—"}</td></tr>
+              ))}
+              {!insights.topSpenders.length && <tr><td colSpan={4} className="py-2 text-gray-500">No orders recorded yet.</td></tr>}
+            </tbody>
+          </table>
+        </section>
+        <section className="rounded-xl border border-gray-200 bg-white p-4">
+          <h3 className="mb-2 text-sm font-semibold text-gray-900">Where customers come from</h3>
+          <ul className="space-y-1 text-sm">
+            {insights.bySource.map((r) => <li key={r.name} className="flex justify-between"><span className="text-gray-700">{r.name.replace(/_/g, " ").toLowerCase()}</span><b>{r.customers}</b></li>)}
+          </ul>
+          <h3 className="mb-2 mt-4 text-sm font-semibold text-gray-900">Customer tags</h3>
+          <ul className="space-y-1 text-sm">
+            {insights.byAutoTag.map((r) => <li key={r.name} className="flex justify-between"><span className="text-gray-700">{r.name}</span><b>{r.customers}</b></li>)}
+          </ul>
+          <p className="mt-3 text-xs text-gray-500">Ask on WhatsApp: “60 din kena nei emon customer der list banao” — it saves a group you can broadcast to.</p>
+        </section>
+      </div>
+
+      <h2 className="mt-2 text-base font-semibold text-gray-900">Finance — this month</h2>
+      {!finance && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Finance data needs Banglar Doi OS plugin 0.47.0 or newer.</div>}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Card label="We owe vendors" value={finance ? rupees(finance.total_vendor_pending) : "—"} sub={finance ? `${finance.vendors.filter((v) => v.pending > 0).length} vendors with dues` : undefined} tone={finance && finance.total_vendor_pending > 0 ? "bad" : undefined} />
+        <Card label="Purchases" value={finance ? rupees(finance.purchases_in_period) : "—"} sub={finance ? `Paid ${rupees(finance.vendor_paid_in_period.cash + finance.vendor_paid_in_period.online)}` : undefined} />
+        <Card label="Expenses" value={finance ? rupees(expenseTotal) : "—"} sub={finance ? `Cash handed over ${rupees(finance.fund_transferred)}` : undefined} />
+        <Card label="Cash short (net)" value={rupees(shorts.totalNetShort)} sub={shorts.worstDays[0] ? `Worst: ${shorts.worstDays[0].location} ${shorts.worstDays[0].date.split("-").reverse().join("/")}` : "No short days"} tone={shorts.totalNetShort > 0 ? "bad" : "good"} />
+      </div>
+      {finance && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section className="rounded-xl border border-gray-200 bg-white p-4">
+            <h3 className="mb-2 text-sm font-semibold text-gray-900">Vendor dues</h3>
+            <table className="w-full text-left text-sm">
+              <thead className="text-xs uppercase text-gray-500"><tr><th className="py-1">Vendor</th><th>Bills</th><th>Oldest</th><th className="text-right">Pending</th></tr></thead>
+              <tbody className="divide-y divide-gray-100">
+                {finance.vendors.filter((v) => v.pending > 0.5).slice(0, 10).map((v) => (
+                  <tr key={v.vendor}><td className="py-1.5">{v.vendor}</td><td>{v.due_bills}</td><td className="text-gray-600">{v.oldest_due_date?.split("-").reverse().join("/") ?? "—"}</td><td className="text-right font-medium tabular-nums text-red-600">{rupees(v.pending)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+          <section className="rounded-xl border border-gray-200 bg-white p-4">
+            <h3 className="mb-2 text-sm font-semibold text-gray-900">Expenses by purpose</h3>
+            <Bars rows={[...finance.day_expenses_by_purpose.map((e) => ({ name: e.purpose, sales: e.amount })), ...finance.other_expenses_by_category.map((e) => ({ name: e.category, sales: e.amount }))].slice(0, 10)} max={Math.max(1, ...finance.day_expenses_by_purpose.map((e) => e.amount), ...finance.other_expenses_by_category.map((e) => e.amount))} />
+            <h3 className="mb-2 mt-4 text-sm font-semibold text-gray-900">Cash short by location</h3>
+            <ul className="space-y-1 text-sm">
+              {shorts.byLocation.slice(0, 6).map((r) => <li key={r.name} className="flex justify-between"><span className="text-gray-700">{r.name}</span><b className={r.netShort > 0 ? "text-red-600" : "text-emerald-700"}>{rupees(r.netShort)}</b></li>)}
+              {!shorts.byLocation.length && <li className="text-gray-500">No day-end money entered yet.</li>}
+            </ul>
+          </section>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <section className="rounded-xl border border-gray-200 bg-white p-4">

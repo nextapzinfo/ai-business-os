@@ -37,6 +37,7 @@ type BmsLocation = {
   sales: number;
   closed: boolean;
   money_entered: boolean;
+  entered_by?: string;
   cash_sale: number;
   online: number;
   expense: number;
@@ -96,6 +97,7 @@ export async function syncBizDay(organizationId: string, date: string): Promise<
         short: l.short,
         closed: l.closed,
         moneyEntered: l.money_entered,
+        enteredBy: l.entered_by || "",
         expensesJson: l.expenses,
       })),
     }),
@@ -371,4 +373,75 @@ export async function dailyBriefText(organizationId: string, date = addDays(istT
   lines.push(`This month: *${rupees(tp.achieved)}*` + (tp.target ? ` of ${rupees(tp.target)} (${tp.percent}%)` : ""));
   if (tp.neededPerDay) lines.push(`Need ${rupees(tp.neededPerDay)}/day for the next ${tp.daysLeft} days`);
   return { text: lines.join("\n"), totalSales: day.totalSales, month: tp };
+}
+
+// ------------------------------------------------------------------ finance
+
+/** Live from Banglar Doi OS: vendor dues, purchases, expenses, rent. */
+export async function financeSummary(from: string, to: string) {
+  const secret = process.env.BMS_INTEGRATION_SECRET || process.env.BANGLARDOI_INTEGRATION_SECRET;
+  if (!secret) throw new Error("BMS_INTEGRATION_SECRET is not set");
+  const res = await fetch(`${BMS_URL}/wp-json/bdos/v1/analytics/finance?from=${from}&to=${to}&_=${Date.now()}`, {
+    headers: { Authorization: `Bearer ${secret}` },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Banglar Doi OS answered ${res.status} (update the plugin to 0.47.0+)`);
+  return (await res.json()) as {
+    vendors: { vendor: string; pending: number; due_bills: number; oldest_due_date: string | null; purchased_in_period: number }[];
+    total_vendor_pending: number;
+    purchases_in_period: number;
+    vendor_paid_in_period: { cash: number; online: number };
+    day_expenses_by_purpose: { purpose: string; amount: number }[];
+    other_expenses_by_category: { category: string; amount: number }[];
+    fund_transferred: number;
+    events_rent: { event: string; dates: string; rent_agreed: number; rent_paid: number }[];
+  };
+}
+
+/** Cash short / excess by location and by who entered the day's money. */
+export async function cashShortReport(organizationId: string, from: string, to: string) {
+  const days = await prisma.bizDay.findMany({
+    where: { organizationId, date: { gte: asDate(from), lte: asDate(to) }, moneyEntered: true },
+  });
+  const byLoc = new Map<string, { short: number; days: number; shortDays: number }>();
+  const byStaff = new Map<string, { short: number; days: number; shortDays: number }>();
+  const worst: { date: string; location: string; enteredBy: string; short: number }[] = [];
+  for (const d of days) {
+    const s = d.short ?? 0;
+    for (const [map, key] of [[byLoc, d.location], [byStaff, d.enteredBy || "unknown"]] as const) {
+      const r = map.get(key) ?? { short: 0, days: 0, shortDays: 0 };
+      r.short += s;
+      r.days += 1;
+      if (s > 50) r.shortDays += 1;
+      map.set(key, r);
+    }
+    if (s > 50) worst.push({ date: ymd(d.date), location: d.location, enteredBy: d.enteredBy, short: Math.round(s) });
+  }
+  const list = (m: Map<string, { short: number; days: number; shortDays: number }>) =>
+    [...m.entries()].map(([name, r]) => ({ name, netShort: Math.round(r.short), daysEntered: r.days, daysShortOver50: r.shortDays })).sort((a, b) => b.netShort - a.netShort);
+  return {
+    from,
+    to,
+    totalNetShort: Math.round(days.reduce((s, d) => s + (d.short ?? 0), 0)),
+    note: "Positive = less money collected than products sold (short). Negative = excess.",
+    byLocation: list(byLoc),
+    byStaff: list(byStaff),
+    worstDays: worst.sort((a, b) => b.short - a.short).slice(0, 10),
+  };
+}
+
+/** Wastage qty and loss at cost price, by product. */
+export async function wastageReport(organizationId: string, from: string, to: string) {
+  const rows = await prisma.bizSale.findMany({
+    where: { organizationId, date: { gte: asDate(from), lte: asDate(to) }, wastageQty: { gt: 0 } },
+  });
+  const map = new Map<string, { qty: number; loss: number; sold: number }>();
+  for (const r of rows) {
+    const m = map.get(r.product) ?? { qty: 0, loss: 0, sold: 0 };
+    m.qty += r.wastageQty;
+    m.loss += r.wastageQty * r.costPrice;
+    map.set(r.product, m);
+  }
+  const products = [...map.entries()].map(([product, m]) => ({ product, wastedQty: m.qty, lossAtCost: Math.round(m.loss) })).sort((a, b) => b.lossAtCost - a.lossAtCost);
+  return { from, to, totalLossAtCost: products.reduce((s, p) => s + p.lossAtCost, 0), products: products.slice(0, 15) };
 }

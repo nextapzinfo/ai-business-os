@@ -845,6 +845,7 @@ model BizDay {
   short          Float?
   closed         Boolean  @default(false)
   moneyEntered   Boolean  @default(false)
+  enteredBy      String   @default("")
   expensesJson   Json?
   syncedAt       DateTime @default(now())
 
@@ -898,4 +899,28 @@ model BizSettings {
   lastSyncAt        DateTime?
   lastSyncNote      String?
   updatedAt         DateTime @updatedAt
+}
+
+// WhatsApp closing entry (owner 2026-11-21): names the owner writes
+// ("Kaloo", "B.malai", "Patuli") remembered against the real Banglar Doi OS
+// product / location, so the next closing message matches straight away.
+model BizAlias {
+  id             String   @id @default(cuid())
+  organizationId String
+  kind           String   @default("product") // "product" | "location"
+  alias          String // normalized text
+  targetId       Int
+  targetName     String
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, kind, alias])
+}
+
+// The closing preview waiting for the owner's "হ্যাঁ" (one per organization).
+model BizPendingClosing {
+  id             String   @id @default(cuid())
+  organizationId String   @unique
+  payload        Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
