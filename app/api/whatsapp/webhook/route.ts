@@ -64,6 +64,7 @@ import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
 import { logAiUsage } from "@/lib/billing";
 import { handleOwnerAssistantMessage, normalizeOwnerPhone } from "@/lib/owner-assistant";
+import { transcribeWhatsAppAudio } from "@/lib/transcribe";
 import { logProductMentions } from "@/lib/product-mentions";
 import { put } from "@vercel/blob";
 
@@ -163,7 +164,8 @@ export async function POST(req: NextRequest) {
         message.type !== "button" &&
         message.type !== "location" &&
         message.type !== "image" &&
-        message.type !== "order")
+        message.type !== "order" &&
+        message.type !== "audio")
     ) {
       return NextResponse.json({ status: "ignored" });
     }
@@ -178,15 +180,18 @@ export async function POST(req: NextRequest) {
     // `isImage` block below) can hand its vision-derived description into
     // the exact same RAG/AI pipeline used for typed questions, instead of
     // needing a second answer-generation path.
+    // "audio" = a voice note. Only the owner's own Owner Assistant number
+    // uses it (transcribed below); for customers it stays ignored as before.
+    const isAudio = message.type === "audio";
     let text =
-      isImage || isOrder
+      isImage || isOrder || isAudio
         ? ""
         : message.type === "button"
         ? (message.button?.text as string)
         : message.type === "location"
         ? formatLocationMessage(message.location)
         : (message.text.body as string);
-    if (!isImage && !isOrder && !text) {
+    if (!isImage && !isOrder && !isAudio && !text) {
       return NextResponse.json({ status: "ignored" });
     }
     const contactName = value.contacts?.[0]?.profile?.name ?? from;
@@ -232,14 +237,30 @@ export async function POST(req: NextRequest) {
     // it's handled entirely by handleOwnerAssistantMessage and the function
     // returns immediately. Text-only by design (not image/button/location/
     // order) — those message types aren't meaningful for this channel.
-    if (
-      message.type === "text" &&
-      agentProfile?.skillOwnerAssistant &&
-      agentProfile.ownerAssistantPhone &&
-      normalizeOwnerPhone(from) === normalizeOwnerPhone(agentProfile.ownerAssistantPhone)
-    ) {
-      await handleOwnerAssistantMessage({ organizationId: organization.id, from, text, contactName });
+    const fromOwner =
+      Boolean(agentProfile?.skillOwnerAssistant && agentProfile.ownerAssistantPhone) &&
+      normalizeOwnerPhone(from) === normalizeOwnerPhone(agentProfile!.ownerAssistantPhone!);
+    if (fromOwner && (message.type === "text" || isAudio)) {
+      let ownerText = text;
+      let heard: string | undefined;
+      if (isAudio) {
+        try {
+          heard = await transcribeWhatsAppAudio(message.audio?.id as string);
+        } catch (err) {
+          console.error("Owner voice note transcription failed:", err);
+        }
+        if (!heard) {
+          await sendWhatsAppMessage(from, "🎤 দুঃখিত, ভয়েস মেসেজটা বুঝতে পারিনি। আর একবার একটু স্পষ্ট করে বলুন, বা লিখে পাঠান।");
+          return NextResponse.json({ status: "ok" });
+        }
+        ownerText = heard;
+      }
+      await handleOwnerAssistantMessage({ organizationId: organization.id, from, text: ownerText, contactName, heard });
       return NextResponse.json({ status: "ok" });
+    }
+    if (isAudio) {
+      // Customer voice notes: not handled yet (unchanged behaviour).
+      return NextResponse.json({ status: "ignored" });
     }
 
     let client = await prisma.client.findFirst({

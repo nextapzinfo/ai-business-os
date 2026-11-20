@@ -176,8 +176,10 @@ export async function handleOwnerAssistantMessage(params: {
   from: string;
   text: string;
   contactName: string;
+  /** Set when the message was a voice note: what we heard. */
+  heard?: string;
 }): Promise<void> {
-  const { organizationId, from, text, contactName } = params;
+  const { organizationId, from, text, contactName, heard } = params;
 
   let client = await prisma.client.findFirst({
     where: { organizationId, phone: from, source: OWNER_ASSISTANT_CLIENT_SOURCE },
@@ -212,7 +214,7 @@ export async function handleOwnerAssistantMessage(params: {
     .reverse()
     .map((m) => ({ role: m.sender === "AI" ? "assistant" : "user", content: m.content }));
 
-  await prisma.message.create({ data: { conversationId: conversation.id, sender: "CLIENT", content: text } });
+  await prisma.message.create({ data: { conversationId: conversation.id, sender: "CLIENT", content: heard ? `🎤 ${text}` : text } });
 
   const { executeTool: teachExecute } = createTeachToolExecutor(organizationId, undefined, "whatsapp_owner_assistant");
   const executeTool: ToolExecutor = async (name, args) => {
@@ -249,6 +251,7 @@ export async function handleOwnerAssistantMessage(params: {
       bizAnalystPromptAddon()
     );
     if (result.answer) answer = result.answer;
+    if (heard) answer = `🎤 _"${heard}"_\n\n${answer}`;
     await logAiUsage(organizationId, "owner_assistant", result.usage);
   } catch (err) {
     console.error("Owner Assistant reply failed:", err);
