@@ -14,6 +14,7 @@ import { createTeachToolExecutor } from "@/lib/teach-tools";
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
 import { logAiUsage } from "@/lib/billing";
 import { getTopAskedProducts, formatTopAskedProductsForTool } from "@/lib/product-mentions";
+import { BIZ_TOOLS, isBizTool, executeBizTool, bizAnalystPromptAddon } from "@/lib/biz-analyst-tools";
 
 // Owner Assistant (2026-10-02) — a personal, privileged WhatsApp channel for
 // the business owner, separate from the customer-facing sales-agent flow
@@ -224,6 +225,9 @@ export async function handleOwnerAssistantMessage(params: {
       const top = await getTopAskedProducts(organizationId, limit);
       return formatTopAskedProductsForTool(top);
     }
+    if (isBizTool(name)) {
+      return executeBizTool(organizationId, name, args);
+    }
     return teachExecute(name, args);
   };
 
@@ -239,8 +243,10 @@ export async function handleOwnerAssistantMessage(params: {
         ADD_KNOWLEDGE_NOTE_TOOL,
         UPDATE_STYLE_RULE_TOOL,
         ADD_QA_PAIR_TOOL,
+        ...BIZ_TOOLS,
       ],
-      executeTool
+      executeTool,
+      bizAnalystPromptAddon()
     );
     if (result.answer) answer = result.answer;
     await logAiUsage(organizationId, "owner_assistant", result.usage);

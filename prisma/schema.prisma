@@ -818,3 +818,84 @@ model WhatsAppCostLog {
   @@index([organizationId])
   @@index([createdAt])
 }
+
+// ---------------------------------------------------------------------------
+// Business Analyst (2026-11-20, owner: "amar akta marketing AI agent darkar je
+// amake amar business r analysis korbe sale dekhe ... sales and marketing,
+// finance ta dekbe"). Daily snapshot copied every night from Banglar Doi OS
+// (app.banglardoi.com /wp-json/bdos/v1/analytics/day) so the owner-only
+// analyst can answer from real numbers fast. Read-only copies — the source
+// of truth stays in Banglar Doi OS. Rows for a day are replaced on every
+// re-sync, so later edits there flow through.
+model BizDay {
+  id             String   @id @default(cuid())
+  organizationId String
+  date           DateTime @db.Date
+  locationId     Int
+  location       String
+  locationType   String
+  startDate      String?
+  endDate        String?
+  sales          Float    @default(0)
+  cashSale       Float    @default(0)
+  online         Float    @default(0)
+  expense        Float    @default(0)
+  fundTransfer   Float    @default(0)
+  collected      Float    @default(0)
+  short          Float?
+  closed         Boolean  @default(false)
+  moneyEntered   Boolean  @default(false)
+  expensesJson   Json?
+  syncedAt       DateTime @default(now())
+
+  @@unique([organizationId, date, locationId])
+  @@index([organizationId, date])
+}
+
+model BizSale {
+  id             String   @id @default(cuid())
+  organizationId String
+  date           DateTime @db.Date
+  locationId     Int
+  location       String
+  locationType   String
+  productId      Int
+  product        String
+  sku            String   @default("")
+  vendor         String   @default("")
+  costPrice      Float    @default(0)
+  qty            Float    @default(0)
+  value          Float    @default(0)
+  posQty         Float    @default(0)
+  counterQty     Float    @default(0)
+  wastageQty     Float    @default(0)
+
+  @@unique([organizationId, date, locationId, productId])
+  @@index([organizationId, date])
+  @@index([organizationId, productId])
+}
+
+// Monthly sales target the owner sets (dashboard or by telling the analyst
+// on WhatsApp). month = "YYYY-MM".
+model BizTarget {
+  id             String   @id @default(cuid())
+  organizationId String
+  month          String
+  amount         Float
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, month])
+}
+
+model BizSettings {
+  id                String   @id @default(cuid())
+  organizationId    String   @unique
+  // Approved WhatsApp template used for the morning brief when the owner
+  // hasn't messaged in the last 24 h (WhatsApp rule). Variables in order:
+  // {{1}} yesterday's sales, {{2}} this month so far, {{3}} % of target.
+  briefTemplateName String?
+  briefEnabled      Boolean  @default(true)
+  lastSyncAt        DateTime?
+  lastSyncNote      String?
+  updatedAt         DateTime @updatedAt
+}

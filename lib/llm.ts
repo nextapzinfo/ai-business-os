@@ -1485,7 +1485,8 @@ export async function askOwnerAssistant(
   message: string,
   history: ChatHistoryMessage[],
   tools: ToolDefinition[],
-  executeTool: ToolExecutor
+  executeTool: ToolExecutor,
+  extraSystem = ""
 ): Promise<AiCallResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
@@ -1502,7 +1503,7 @@ Six tools available, pick carefully:
 
 If the owner is teaching/correcting something and you're not confident which of the 4 write tools applies, ask a short clarifying question instead of guessing. After any write tool succeeds, confirm briefly and plainly what you saved — don't repeat it back at length.
 
-This channel is exactly as privileged as the Teach AI chat on the dashboard — anything saved here goes live for real customers immediately, the same as a dashboard edit.`;
+This channel is exactly as privileged as the Teach AI chat on the dashboard — anything saved here goes live for real customers immediately, the same as a dashboard edit.${extraSystem}`;
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
@@ -1514,39 +1515,39 @@ This channel is exactly as privileged as the Teach AI chat on the dashboard — 
   let promptTokens = first.usage.promptTokens;
   let completionTokens = first.usage.completionTokens;
 
-  const toolCalls = first.message.tool_calls as
-    | { id: string; function: { name: string; arguments: string } }[]
-    | undefined;
-
-  if (!toolCalls || toolCalls.length === 0) {
-    return { answer: (first.message.content as string) ?? "", usage: { promptTokens, completionTokens } };
+  // Up to 3 tool rounds (2026-11-20): the Business Analyst sometimes needs
+  // one answer before it knows what to ask next (e.g. target progress, then
+  // the product breakdown). Plain owner-assistant turns still take one.
+  let current = first;
+  for (let round = 0; round < 3; round++) {
+    const toolCalls = current.message.tool_calls as
+      | { id: string; function: { name: string; arguments: string } }[]
+      | undefined;
+    if (!toolCalls || toolCalls.length === 0) {
+      return { answer: (current.message.content as string) ?? "", usage: { promptTokens, completionTokens } };
+    }
+    messages.push(current.message);
+    for (const call of toolCalls) {
+      let args: Record<string, any> = {};
+      try {
+        args = JSON.parse(call.function.arguments || "{}");
+      } catch {
+        // malformed JSON from the model — leave args empty, executeTool can reject it
+      }
+      let resultText: string;
+      try {
+        resultText = await executeTool(call.function.name, args);
+      } catch (err) {
+        resultText = `Failed: ${(err as Error).message}`;
+      }
+      messages.push({ role: "tool", tool_call_id: call.id, content: resultText });
+    }
+    current = await callChat(apiKey, messages, round < 2 ? tools : []);
+    promptTokens += current.usage.promptTokens;
+    completionTokens += current.usage.completionTokens;
   }
 
-  messages.push(first.message);
-
-  for (const call of toolCalls) {
-    let args: Record<string, any> = {};
-    try {
-      args = JSON.parse(call.function.arguments || "{}");
-    } catch {
-      // malformed JSON from the model — leave args empty, executeTool can reject it
-    }
-
-    let resultText: string;
-    try {
-      resultText = await executeTool(call.function.name, args);
-    } catch (err) {
-      resultText = `Failed: ${(err as Error).message}`;
-    }
-
-    messages.push({ role: "tool", tool_call_id: call.id, content: resultText });
-  }
-
-  const second = await callChat(apiKey, messages, []);
-  promptTokens += second.usage.promptTokens;
-  completionTokens += second.usage.completionTokens;
-
-  return { answer: (second.message.content as string) ?? "", usage: { promptTokens, completionTokens } };
+  return { answer: (current.message.content as string) ?? "", usage: { promptTokens, completionTokens } };
 }
 
 export type ToolExecutor = (name: string, args: Record<string, any>) => Promise<string>;
