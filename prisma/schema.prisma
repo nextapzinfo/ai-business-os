@@ -146,6 +146,13 @@ model AgentProfile {
   // own inbound message). Loose reference, not a hard FK, same convention as
   // followUpTemplateId above.
   ownerDigestTemplateId String?
+  // Owner alerts (2026-11-26, owner: "conversation e kau message korle
+  // instant ami take reply dite pachhi na ... mobile e sathe sathe
+  // notification and open kore reply"). Each customer message can be
+  // forwarded to ownerAssistantPhone on WhatsApp (swipe-reply = answer the
+  // customer) and pushed to phones that turned on notifications.
+  ownerNotifyMode       String  @default("IMPORTANT") // ALL | IMPORTANT | OFF
+  ownerNotifyTemplateId String? // approved template used when the 24-hour window to the owner is closed ({{1}} name, {{2}} message)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -302,6 +309,7 @@ model Conversation {
   lastFollowUpAt DateTime?    // set when the AI Follow-up cron sends a nudge template — prevents sending more than once
   lastQuickFollowUpAt DateTime? // set when the quick-follow-up cron sends its free-text nudge (see AgentProfile.skillQuickFollowUp) — compared against the latest message's own createdAt (not just "is this set") so a NEW unanswered AI message later in the same conversation can still trigger another nudge
   lastReadAt     DateTime?    // set to now() every time staff opens this conversation's detail page (2026-08-30, owner's own request: unread conversations should blink in the list). Single shared value, not per-staff-user — this app has one staff view, not per-agent inboxes. A conversation is "unread" whenever its latest message is from CLIENT and is newer than this (or this is still null, e.g. a brand-new conversation nobody has opened yet) — see conversations/layout.tsx's `isUnread` computation.
+  aiResumeAt     DateTime?    // set when the owner answers from WhatsApp (owner alerts) — the AI quietly takes the chat back after this
   aiPausedAt     DateTime?    // set when staff pauses the AI (handoff starts), cleared when AI resumes — used only to slice out exactly the messages sent during THIS handoff window (see toggleAiPaused in conversations/[id]/page.tsx) so the immediate self-training review below only looks at what staff actually said this time, not the whole conversation history.
   lastProductId  String?      // last Product this conversation clearly resolved to (RAG match or send_product_photo tool) — lets a context-only "pic ache?" follow-up (no product name repeated) still find the right product. Loose reference, not a hard FK, so a deleted product doesn't break the conversation.
   lastTopicDocumentId String? // last Document (knowledge doc / Event) this conversation clearly resolved to — same loose-reference, "current message first, then memory" pattern as lastProductId above, but for topic/document-level continuity instead of a single product (topic-continuity fix, Aug 2026). Lets a generic follow-up like "kiki ache?" or "ar ki ki pabo?" that repeats no distinctive word still anchor to the document/Event just discussed, instead of falling through to whatever RAG's fuzzy top-5 search happens to guess. Loose reference, not a hard FK, so a deleted document doesn't break the conversation.
@@ -923,4 +931,42 @@ model BizPendingClosing {
   payload        Json
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+}
+
+
+// A customer-message alert sent to the owner's WhatsApp (2026-11-26). The
+// owner swipe-replies to it; Meta sends the alert's message id back as
+// context.id, which finds the customer conversation to answer.
+model OwnerNotice {
+  id             String   @id @default(cuid())
+  organizationId String
+  wamid          String   @unique
+  conversationId String
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+}
+
+// Phone / browser push for staff (2026-11-26) — "Turn on notifications" on
+// the Notifications page saves the browser's subscription here.
+model PushSubscription {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  endpoint       String   @unique
+  p256dh         String
+  auth           String
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+}
+
+// The app's own web-push (VAPID) key pair, made once on first use so no
+// extra Vercel setting is needed.
+model PushConfig {
+  id         String   @id @default("default")
+  publicKey  String
+  privateKey String
+  createdAt  DateTime @default(now())
 }

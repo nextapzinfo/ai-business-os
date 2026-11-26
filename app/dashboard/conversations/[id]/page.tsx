@@ -119,7 +119,7 @@ async function sendManualReply(formData: FormData) {
   // IS the response to that handoff, so the "needs you" badge should clear.
   await prisma.conversation.update({
     where: { id: conversation.id },
-    data: { aiPaused: true, handoffReason: null },
+    data: { aiPaused: true, handoffReason: null, aiResumeAt: null },
   });
 
   await logAudit({
@@ -167,6 +167,7 @@ async function toggleAiPaused(formData: FormData) {
     where: { id: conversation.id },
     data: {
       aiPaused: !conversation.aiPaused,
+      aiResumeAt: null,
       ...(resuming
         ? { handoffReason: null, aiPausedAt: null }
         : { aiPausedAt: new Date() }), // marks where this handoff window starts, so a resume later knows exactly which messages were part of it

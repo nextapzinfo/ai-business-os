@@ -1,6 +1,8 @@
 const WHATSAPP_API_BASE = "https://graph.facebook.com/v21.0";
 
-export async function sendWhatsAppMessage(to: string, text: string): Promise<void> {
+// Returns Meta's message id (wamid) — owner alerts (2026-11-26) keep it so
+// a swipe-reply can be matched back to the customer. Callers may ignore it.
+export async function sendWhatsAppMessage(to: string, text: string): Promise<string | undefined> {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!accessToken || !phoneNumberId) {
@@ -24,6 +26,12 @@ export async function sendWhatsAppMessage(to: string, text: string): Promise<voi
   if (!res.ok) {
     const errText = await res.text();
     throw new Error(`WhatsApp send failed: ${res.status} ${errText}`);
+  }
+  try {
+    const data = (await res.json()) as { messages?: { id?: string }[] };
+    return data.messages?.[0]?.id;
+  } catch {
+    return undefined;
   }
 }
 
@@ -306,7 +314,7 @@ export async function sendWhatsAppTemplateMessage(
   languageCode: string,
   bodyVariables: string[] = [],
   headerImageUrl?: string
-): Promise<void> {
+): Promise<string | undefined> {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!accessToken || !phoneNumberId) {
@@ -350,6 +358,12 @@ export async function sendWhatsAppTemplateMessage(
   if (!res.ok) {
     const errText = await res.text();
     throw new Error(`WhatsApp template send failed: ${res.status} ${errText}`);
+  }
+  try {
+    const data = (await res.json()) as { messages?: { id?: string }[] };
+    return data.messages?.[0]?.id;
+  } catch {
+    return undefined;
   }
 }
 

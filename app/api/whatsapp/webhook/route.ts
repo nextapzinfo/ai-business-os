@@ -64,6 +64,7 @@ import { logAudit } from "@/lib/audit";
 import { appendSheetRow } from "@/lib/googleSheets";
 import { logAiUsage } from "@/lib/billing";
 import { handleOwnerAssistantMessage, normalizeOwnerPhone } from "@/lib/owner-assistant";
+import { notifyOwnerAfterCustomerMessage, handleOwnerAlertReply } from "@/lib/owner-notify";
 import { transcribeWhatsAppAudio } from "@/lib/transcribe";
 import { logProductMentions } from "@/lib/product-mentions";
 import { put } from "@vercel/blob";
@@ -141,6 +142,26 @@ export async function GET(req: NextRequest) {
 // Meta calls this every time a message (or status update) happens on the connected number.
 export async function POST(req: NextRequest) {
   const body = await req.json();
+  const startedAt = new Date();
+  const res = await handleIncoming(body);
+  // Owner alerts (2026-11-26): tell the owner's WhatsApp + phones about this
+  // customer message (and what the AI answered). Never allowed to break the webhook.
+  try {
+    const value = body?.entry?.[0]?.changes?.[0]?.value;
+    const msg = value?.messages?.[0];
+    const phoneNumberId = value?.metadata?.phone_number_id;
+    if (msg?.from && phoneNumberId) {
+      const org = await prisma.organization.findUnique({ where: { whatsappPhoneNumberId: phoneNumberId } });
+      if (org) await notifyOwnerAfterCustomerMessage({ organizationId: org.id, from: msg.from as string, since: startedAt });
+    }
+  } catch (err) {
+    console.error("Owner alert failed:", err);
+  }
+  return res;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function handleIncoming(body: any): Promise<NextResponse> {
 
   try {
     const entry = body.entry?.[0];
@@ -255,6 +276,12 @@ export async function POST(req: NextRequest) {
         }
         ownerText = heard;
       }
+      // Swipe-reply to a customer alert → the answer goes to that customer.
+      const quotedId = message.context?.id as string | undefined;
+      if (quotedId && ownerText.trim()) {
+        const handled = await handleOwnerAlertReply({ organizationId: organization.id, ownerPhone: from, contextId: quotedId, text: ownerText });
+        if (handled) return NextResponse.json({ status: "ok" });
+      }
       await handleOwnerAssistantMessage({ organizationId: organization.id, from, text: ownerText, contactName, heard });
       return NextResponse.json({ status: "ok" });
     }
@@ -348,6 +375,15 @@ export async function POST(req: NextRequest) {
         });
         isNewConversation = true;
       }
+    }
+
+    // The owner answered this chat from WhatsApp (owner alerts): the AI
+    // stayed quiet for a few hours — after that it takes the chat back.
+    if (conversation.aiPaused && conversation.aiResumeAt && conversation.aiResumeAt < new Date()) {
+      conversation = await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { aiPaused: false, aiResumeAt: null, aiPausedAt: null, handoffReason: null },
+      });
     }
 
     // Customer sent a photo. Most commonly this IS a payment screenshot for
