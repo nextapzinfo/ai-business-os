@@ -970,3 +970,22 @@ model PushConfig {
   privateKey String
   createdAt  DateTime @default(now())
 }
+
+// WhatsApp Trainer (2026-11-27, owner: "8017011018 ... trainer hisebe ...
+// instruction ba edit ba rules sob update korte parbe"). Every change to the
+// AI's rules / persona / greeting / tone / words / notes made from the
+// owner's WhatsApp is first PENDING (shown "before → after"), applied only
+// after the owner's "হ্যাঁ", and keeps the old value so "undo" can restore it.
+model TrainerChange {
+  id             String    @id @default(cuid())
+  organizationId String
+  kind           String // add_rule | edit_rule | delete_rule | set_persona | set_greeting | set_tone | set_language | words | delete_note
+  summary        String
+  payload        Json
+  before         Json?
+  status         String    @default("PENDING") // PENDING | APPLIED | UNDONE | CANCELLED
+  createdAt      DateTime  @default(now())
+  appliedAt      DateTime?
+
+  @@index([organizationId, status])
+}

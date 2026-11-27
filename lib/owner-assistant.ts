@@ -1,3 +1,4 @@
+import { TRAINER_TOOLS, isTrainerTool, executeTrainerTool, trainerPromptAddon } from "@/lib/trainer-tools";
 import { prisma } from "@/lib/prisma";
 import {
   askOwnerAssistant,
@@ -230,6 +231,9 @@ export async function handleOwnerAssistantMessage(params: {
     if (isBizTool(name)) {
       return executeBizTool(organizationId, name, args);
     }
+    if (isTrainerTool(name)) {
+      return executeTrainerTool(organizationId, name, args);
+    }
     return teachExecute(name, args);
   };
 
@@ -246,9 +250,10 @@ export async function handleOwnerAssistantMessage(params: {
         UPDATE_STYLE_RULE_TOOL,
         ADD_QA_PAIR_TOOL,
         ...BIZ_TOOLS,
+        ...TRAINER_TOOLS,
       ],
       executeTool,
-      bizAnalystPromptAddon()
+      bizAnalystPromptAddon() + trainerPromptAddon()
     );
     if (result.answer) answer = result.answer;
     if (heard) answer = `🎤 _"${heard}"_\n\n${answer}`;

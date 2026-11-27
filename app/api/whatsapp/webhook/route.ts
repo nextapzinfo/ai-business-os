@@ -65,6 +65,7 @@ import { appendSheetRow } from "@/lib/googleSheets";
 import { logAiUsage } from "@/lib/billing";
 import { handleOwnerAssistantMessage, normalizeOwnerPhone } from "@/lib/owner-assistant";
 import { notifyOwnerAfterCustomerMessage, handleOwnerAlertReply } from "@/lib/owner-notify";
+import { buildCustomerMemoryNote } from "@/lib/customer-memory";
 import { transcribeWhatsAppAudio } from "@/lib/transcribe";
 import { logProductMentions } from "@/lib/product-mentions";
 import { put } from "@vercel/blob";
@@ -1809,6 +1810,14 @@ async function handleIncoming(body: any): Promise<NextResponse> {
     // actually named in this message, ahead of fuzzy RAG chunks that can pull
     // in a similar-sounding product's numbers by mistake (see comment above
     // findAllProductMatches).
+    // Customer memory (2026-11-27) — who this customer is to us, so the AI
+    // talks like someone who remembers a regular.
+    let customerMemoryNote = "";
+    try {
+      customerMemoryNote = await buildCustomerMemoryNote(organization.id, client.id, conversation.id);
+    } catch (err) {
+      console.error("Customer memory note failed:", err);
+    }
     const { answer, usage } = await askAIWithTools(
       text,
       [
@@ -1821,7 +1830,7 @@ async function handleIncoming(body: any): Promise<NextResponse> {
       tools,
       executeTool,
       history,
-      photoNote,
+      [photoNote, customerMemoryNote].filter(Boolean).join("\n\n"),
       catalogProducts,
       businessRulesNote
     );
