@@ -1,3 +1,4 @@
+import { suggestLearningFromStaffReply } from "@/lib/reply-learning";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/getCurrentUser";
 import { logAudit } from "@/lib/audit";
@@ -128,6 +129,14 @@ async function sendManualReply(formData: FormData) {
     action: "MANUAL_REPLY_SENT",
     metadata: { conversationId: conversation.id, delivered: !sendError, error: sendError, mediaType, viaQuickReply: !!quickReplyId },
   });
+
+  // Learn from the owner's replies (2026-11-27): offer on the owner's
+  // WhatsApp to remember a reusable answer. Typed text only, not Quick Replies.
+  if (!sendError && !mediaUrl && !quickReplyId && caption) {
+    await suggestLearningFromStaffReply({ organizationId: user.organizationId, conversationId: conversation.id, staffText: caption }).catch((err) =>
+      console.error("Reply learning failed:", err)
+    );
+  }
 
   revalidatePath(`/dashboard/conversations/${conversationId}`);
 }

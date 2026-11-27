@@ -2,6 +2,7 @@ import webpush from "web-push";
 import { prisma } from "@/lib/prisma";
 import { sendWhatsAppMessage, sendWhatsAppTemplateMessage } from "@/lib/whatsapp";
 import { normalizeOwnerPhone } from "@/lib/owner-assistant";
+import { suggestLearningFromStaffReply } from "@/lib/reply-learning";
 
 // Owner alerts (2026-11-26). Owner: "AI business OS e conversation e kau
 // message korle instant ami take reply dite pachhi na ... mobile e sathe
@@ -175,7 +176,7 @@ export async function handleOwnerAlertReply(params: {
   text: string;
 }): Promise<boolean> {
   const notice = await prisma.ownerNotice.findUnique({ where: { wamid: params.contextId } });
-  if (!notice || notice.organizationId !== params.organizationId) return false;
+  if (!notice || notice.organizationId !== params.organizationId || notice.kind === "LEARN") return false;
   const conversation = await prisma.conversation.findFirst({
     where: { id: notice.conversationId, organizationId: params.organizationId },
     include: { client: true },
@@ -224,5 +225,10 @@ export async function handleOwnerAlertReply(params: {
     ? `⚠️ ${name}-কে পাঠানো যায়নি (${clip(error, 120)}). ২৪ ঘণ্টার বেশি পুরোনো chat হলে শুধু template পাঠানো যায়।`
     : `✓ ${name}-কে পাঠানো হলো।\n🤖 AI এই chat-এ ${AI_QUIET_HOURS} ঘণ্টা চুপ থাকবে। এখনই চালু করতে এই মেসেজে Reply করে লিখুন: *AI on*`;
   await remember(await sendWhatsAppMessage(params.ownerPhone, ack).catch(() => undefined));
+  if (!error) {
+    await suggestLearningFromStaffReply({ organizationId: params.organizationId, conversationId: conversation.id, staffText: text }).catch((err) =>
+      console.error("Reply learning failed:", err)
+    );
+  }
   return true;
 }

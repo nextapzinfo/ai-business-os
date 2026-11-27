@@ -153,6 +153,7 @@ model AgentProfile {
   // customer) and pushed to phones that turned on notifications.
   ownerNotifyMode       String  @default("IMPORTANT") // ALL | IMPORTANT | OFF
   ownerNotifyTemplateId String? // approved template used when the 24-hour window to the owner is closed ({{1}} name, {{2}} message)
+  learnFromReplies      Boolean @default(true) // 2026-11-27: after the owner/staff answers a customer by hand, offer (on the owner's WhatsApp) to remember it as a Trained Q&A
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -942,6 +943,8 @@ model OwnerNotice {
   organizationId String
   wamid          String   @unique
   conversationId String
+  kind           String   @default("CUSTOMER_ALERT") // CUSTOMER_ALERT (swipe-reply goes to the customer) | LEARN (swipe-reply answers "remember this?")
+  trainerChangeId String?
   createdAt      DateTime @default(now())
 
   @@index([organizationId])

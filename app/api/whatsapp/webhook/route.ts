@@ -66,6 +66,7 @@ import { logAiUsage } from "@/lib/billing";
 import { handleOwnerAssistantMessage, normalizeOwnerPhone } from "@/lib/owner-assistant";
 import { notifyOwnerAfterCustomerMessage, handleOwnerAlertReply } from "@/lib/owner-notify";
 import { buildCustomerMemoryNote } from "@/lib/customer-memory";
+import { handleLearnNoticeReply } from "@/lib/reply-learning";
 import { transcribeWhatsAppAudio } from "@/lib/transcribe";
 import { logProductMentions } from "@/lib/product-mentions";
 import { put } from "@vercel/blob";
@@ -280,6 +281,8 @@ async function handleIncoming(body: any): Promise<NextResponse> {
       // Swipe-reply to a customer alert → the answer goes to that customer.
       const quotedId = message.context?.id as string | undefined;
       if (quotedId && ownerText.trim()) {
+        const learned = await handleLearnNoticeReply({ organizationId: organization.id, ownerPhone: from, contextId: quotedId, text: ownerText });
+        if (learned) return NextResponse.json({ status: "ok" });
         const handled = await handleOwnerAlertReply({ organizationId: organization.id, ownerPhone: from, contextId: quotedId, text: ownerText });
         if (handled) return NextResponse.json({ status: "ok" });
       }

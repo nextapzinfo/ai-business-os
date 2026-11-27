@@ -73,7 +73,7 @@ export const TRAINER_TOOLS: ToolDefinition[] = [
         properties: {
           kind: {
             type: "string",
-            enum: ["add_rule", "edit_rule", "delete_rule", "set_persona", "set_greeting", "set_tone", "set_language", "words", "delete_note"],
+            enum: ["add_rule", "edit_rule", "delete_rule", "set_persona", "set_greeting", "set_tone", "set_language", "words", "delete_note", "set_learning"],
           },
           rule_number: { type: "integer", description: "edit_rule / delete_rule: the number from get_ai_setup." },
           text: {
@@ -94,6 +94,7 @@ export const TRAINER_TOOLS: ToolDefinition[] = [
           },
           replace_remove: { type: "array", items: { type: "string" }, description: "'from' words to stop replacing." },
           note: { type: "string", description: "delete_note: the note's exact title (or id) from get_ai_setup." },
+          enabled: { type: "boolean", description: "set_learning: true = after the owner answers a customer by hand, offer to remember it; false = stop offering." },
         },
         required: ["kind"],
       },
@@ -158,6 +159,7 @@ TRAINER (2026-11-27). The owner trains the customer AI from here. Think like a c
 - Prefer update_style_rule ONLY when the owner explicitly says "just add it now"; otherwise use propose_ai_change kind add_rule.
 - "undo" → undo_last_ai_change. "ki change korechi" → list_ai_changes.
 - "test: …" or "customer jodi … bole?" → test_customer_reply and show the reply exactly; after applying a change, offer one quick test.
+- LEARNING FROM REPLIES: after the owner answers a customer by hand, the system may send the owner a "📚 শিখে রাখব?" message. If the owner then says "হ্যাঁ" (without replying to anything else), confirm_ai_change saves it as a Trained Q&A. "শেখা বন্ধ/চালু করো" → propose_ai_change kind set_learning.
 - Rewrite the owner's words into a clear, general rule the AI can follow, in the same language mix the owner uses, and keep rules short.`;
 }
 
@@ -345,6 +347,15 @@ async function propose(organizationId: string, a: Record<string, unknown>): Prom
       preview = `📝 শব্দের তালিকা:\n${changes.join("\n")}`;
       break;
     }
+    case "set_learning": {
+      const on = a.enabled !== false && String(a.enabled).toLowerCase() !== "false";
+      summary = on ? "Turn ON learning from your replies" : "Turn OFF learning from your replies";
+      preview = on
+        ? "📚 আপনি নিজে কোনো ক্রেতাকে উত্তর দিলে, AI জিজ্ঞেস করবে সেটা শিখে রাখবে কি না।"
+        : "📚 আপনার উত্তর থেকে শেখার প্রস্তাব আর আসবে না।";
+      payload = { kind, value: on };
+      break;
+    }
     case "delete_note": {
       const key = String(a.note || "").trim();
       if (!key) return "Which note? Give its exact title from get_ai_setup.";
@@ -363,14 +374,33 @@ async function propose(organizationId: string, a: Record<string, unknown>): Prom
       return "Unknown change kind.";
   }
 
-  await prisma.trainerChange.updateMany({ where: { organizationId, status: "PENDING" }, data: { status: "CANCELLED" } });
+  // A new trainer proposal replaces the older trainer proposal — but leaves
+  // "remember this reply?" suggestions (learn_qa) alone; those are answered
+  // separately by replying to their own message.
+  await prisma.trainerChange.updateMany({ where: { organizationId, status: "PENDING", kind: { not: "learn_qa" } }, data: { status: "CANCELLED" } });
   await prisma.trainerChange.create({ data: { organizationId, kind, summary, payload: payload as object } });
   return `PREVIEW — nothing changed yet. Send the owner this and ask "ঠিক আছে? হ্যাঁ লিখলে চালু হবে":\n\n${preview}`;
 }
 
+const LEARN_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
 async function confirm(organizationId: string): Promise<string> {
-  const ch = await prisma.trainerChange.findFirst({ where: { organizationId, status: "PENDING" }, orderBy: { createdAt: "desc" } });
-  if (!ch || Date.now() - ch.createdAt.getTime() > PENDING_MAX_AGE_MS) return "NO_PENDING: nothing is waiting (or it is older than 2 hours). Propose the change again.";
+  // A plain "হ্যাঁ" confirms the latest trainer proposal; if there is none,
+  // the latest "remember this reply?" suggestion.
+  let ch = await prisma.trainerChange.findFirst({ where: { organizationId, status: "PENDING", kind: { not: "learn_qa" } }, orderBy: { createdAt: "desc" } });
+  if (ch && Date.now() - ch.createdAt.getTime() > PENDING_MAX_AGE_MS) ch = null;
+  if (!ch) {
+    ch = await prisma.trainerChange.findFirst({ where: { organizationId, status: "PENDING", kind: "learn_qa", createdAt: { gte: new Date(Date.now() - LEARN_MAX_AGE_MS) } }, orderBy: { createdAt: "desc" } });
+  }
+  if (!ch) return "NO_PENDING: nothing is waiting (or it is older than 2 hours). Propose the change again.";
+  return applyTrainerChange(organizationId, ch.id);
+}
+
+// Applies one PENDING change by id. answerOverride: for learn_qa, the owner
+// replied with a corrected answer instead of "হ্যাঁ".
+export async function applyTrainerChange(organizationId: string, changeId: string, answerOverride?: string): Promise<string> {
+  const ch = await prisma.trainerChange.findFirst({ where: { id: changeId, organizationId, status: "PENDING" } });
+  if (!ch) return "NO_PENDING: that change is no longer waiting.";
   const pl = ch.payload as Record<string, unknown>;
   const p = await prisma.agentProfile.findUnique({ where: { organizationId } });
   let before: Record<string, unknown> = {};
@@ -421,6 +451,30 @@ async function confirm(organizationId: string): Promise<string> {
       await prisma.document.delete({ where: { id: doc.id } });
       break;
     }
+    case "set_learning":
+      before = { field: "learnFromReplies", value: p?.learnFromReplies ?? true };
+      data.learnFromReplies = pl.value !== false;
+      break;
+    case "learn_qa": {
+      const topic = String(pl.topic || "").trim() || "Owner reply";
+      const questions = (Array.isArray(pl.questions) ? pl.questions : []).map(String).filter(Boolean);
+      const answer = (answerOverride || String(pl.answer || "")).trim();
+      if (!questions.length || !answer) return "Nothing to save.";
+      const content = `Trained Q&A — "${topic}"
+
+A customer might ask this in different ways, for example:
+${questions.map((q) => `- ${q}`).join("\n")}
+
+Answer using one of these approved answers, in your own natural words — stay faithful to what they say, don't contradict them:
+- ${answer}`;
+      const doc = await prisma.document.create({ data: { organizationId, title: `Q&A: ${topic}`, fileUrl: "teach-ai-qa", status: "PENDING" } });
+      await processKnowledgeContent(organizationId, doc.id, content);
+      before = { createdDocumentId: doc.id };
+      if (answerOverride) {
+        await prisma.trainerChange.update({ where: { id: ch.id }, data: { payload: { ...pl, answer } as object } });
+      }
+      break;
+    }
   }
   if (Object.keys(data).length) {
     await prisma.agentProfile.upsert({ where: { organizationId }, update: data, create: { organizationId, ...data } });
@@ -433,8 +487,10 @@ async function confirm(organizationId: string): Promise<string> {
 async function undo(organizationId: string): Promise<string> {
   const ch = await prisma.trainerChange.findFirst({ where: { organizationId, status: "APPLIED" }, orderBy: [{ appliedAt: "desc" }, { createdAt: "desc" }] });
   if (!ch) return "Nothing to undo.";
-  const b = (ch.before || {}) as { field?: string; value?: unknown; note?: { title: string; content: string | null; fileUrl: string } };
-  if (b.field) {
+  const b = (ch.before || {}) as { field?: string; value?: unknown; note?: { title: string; content: string | null; fileUrl: string }; createdDocumentId?: string };
+  if (b.createdDocumentId) {
+    await prisma.document.deleteMany({ where: { organizationId, id: b.createdDocumentId } });
+  } else if (b.field) {
     await prisma.agentProfile.update({ where: { organizationId }, data: { [b.field]: b.value ?? null } });
   } else if (b.note) {
     const doc = await prisma.document.create({ data: { organizationId, title: b.note.title, fileUrl: b.note.fileUrl || "teach-ai-chat", status: "PENDING" } });

@@ -18,6 +18,7 @@ async function saveAlertSettings(formData: FormData) {
     data: {
       ownerNotifyMode: ["ALL", "IMPORTANT", "OFF"].includes(mode) ? mode : "IMPORTANT",
       ownerNotifyTemplateId: tpl || null,
+      learnFromReplies: formData.get("learnFromReplies") === "on",
     },
   });
   revalidatePath("/dashboard/notifications");
@@ -73,6 +74,12 @@ export default async function NotificationsPage() {
             </select>
             <span className="mt-1 block text-xs font-normal text-gray-500">
               Templates পাতায় একটা UTILITY template বানান, যেমন: <i>নতুন মেসেজ — {"{{1}}"}: {"{{2}}"}। উত্তর দিতে এই মেসেজে Reply করুন।</i> Approve হলে এখানে বেছে নিন।
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-sm text-gray-700">
+            <input type="checkbox" name="learnFromReplies" defaultChecked={profile?.learnFromReplies !== false} className="mt-1" />
+            <span>
+              📚 <b>আমার উত্তর থেকে শেখো</b> — আপনি নিজে কোনো ক্রেতাকে উত্তর দিলে (দাম, নিয়ম, ডেলিভারি ইত্যাদি), AI WhatsApp-এ জিজ্ঞেস করবে "শিখে রাখব?"। Reply করে <b>হ্যাঁ</b> লিখলে তবেই শিখবে।
             </span>
           </label>
           <button className="rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white">Save</button>
